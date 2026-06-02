@@ -1,0 +1,10 @@
+.env
+.env.dutchie
+*.pyc
+__pycache__/
+*.sqlite3
+.venv/
+venv/
+.uv/
+staticfiles/
+.DS_Store

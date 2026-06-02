@@ -1,0 +1,91 @@
+# Happy Time Budtender — self-contained stack for a VPS.
+# No inbound ports are published except via the Cloudflare tunnel, so the
+# website reaches this service over TLS without exposing the origin.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${SQL_DATABASE:-budtender}
+      POSTGRES_USER: ${SQL_USER:-budtender}
+      POSTGRES_PASSWORD: ${SQL_PASSWORD:-change-me}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SQL_USER:-budtender}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    command: sh -c "python manage.py makemigrations budtender --noinput && python manage.py migrate --noinput"
+    env_file:
+      - .env
+      - .env.dutchie
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: .
+    command: gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-5} --worker-class gthread --threads ${GUNICORN_THREADS:-4} --timeout 60 --keep-alive 5 --max-requests 1000 --max-requests-jitter 100
+    env_file:
+      - .env
+      - .env.dutchie
+    expose:
+      - "8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; urllib.request.urlopen('http://localhost:8000/api/v1/health/')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  celery-worker:
+    build: .
+    command: celery -A core worker -l info --concurrency 2
+    env_file:
+      - .env
+      - .env.dutchie
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  celery-beat:
+    build: .
+    command: celery -A core beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file:
+      - .env
+      - .env.dutchie
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Cloudflare tunnel — the ONLY way in. Routes your public hostname to `web`.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  pgdata:

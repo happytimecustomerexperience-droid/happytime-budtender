@@ -1,0 +1,20 @@
+[project]
+name = "happytime-budtender"
+version = "0.1.0"
+description = "Happy Time AI Budtender — self-contained suggestions + pairing backend (Dutchie-synced, margin-first)."
+requires-python = ">=3.13"
+dependencies = [
+    "Django>=5.2,<5.3",
+    "djangorestframework>=3.16",
+    "psycopg[binary]>=3.2",
+    "redis>=5.2",
+    "celery>=5.4",
+    "django-celery-beat>=2.7",
+    "gunicorn>=23.0",
+    "requests>=2.32",
+    "python-dotenv>=1.0",
+    "phonenumbers>=8.13",
+]
+
+[tool.uv]
+package = false
