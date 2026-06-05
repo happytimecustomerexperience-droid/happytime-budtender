@@ -14,9 +14,28 @@ from django.core.cache import cache
 from django.utils.text import slugify
 
 from . import dutchie
-from .models import STORES, CustomerProfile, Product, SuggestedProduct
+from .models import STORES, CustomerProfile, Product, SuggestedProduct, SyncState
 
 STORE_SLUGS = [s[0] for s in STORES]
+
+# How stale the inventory may get before a fresh pull is forced. Suggestions are
+# only ever drawn from in-stock products, so keeping this fresh is what prevents
+# recommending something that has since sold out.
+INVENTORY_MAX_AGE = timedelta(hours=24)
+
+
+def inventory_is_stale(location_slug: str, max_age: timedelta = INVENTORY_MAX_AGE) -> bool:
+    """True if `location_slug` has never synced or its last refresh is older than
+    `max_age` (default 24h). Defensive: if the SyncState table isn't present yet
+    (older DB not migrated), return False so we never crash or thrash — the
+    frequent beat sync keeps stock fresh and the ranking still filters in-stock."""
+    try:
+        st = SyncState.objects.filter(location_slug=location_slug).first()
+    except Exception:
+        return False
+    if not st or not st.last_synced_at:
+        return True
+    return (datetime.now(timezone.utc) - st.last_synced_at) >= max_age
 
 # Dutchie omits unitCost on ~half of SKUs. Treating those as 100% margin
 # (price − 0) falsely floats them to the top of every "highest margin" ranking.
@@ -73,6 +92,28 @@ def sync_inventory(location_slug: str) -> int:
         Product.objects.filter(location_slug=location_slug).exclude(sku__in=seen).update(
             availability=False, quantity_on_hand=0
         )
+        # Stamp the refresh time ONLY on a real pull (rows came back). A 0-row
+        # result means creds/API are unavailable — leave the store marked stale so
+        # the guard keeps retrying and admins can see it was never refreshed.
+        # Defensive: tolerate the SyncState table not existing yet (unmigrated DB).
+        try:
+            SyncState.objects.update_or_create(
+                location_slug=location_slug,
+                defaults={"last_synced_at": datetime.now(timezone.utc), "item_count": len(seen)},
+            )
+        except Exception:
+            pass
+
+        # Precompute the questionnaire facets (subtypes/sizes/price-bands) into the
+        # cache so the steps load INSTANTLY and one container serves many users
+        # without re-scanning per request. Bump the version (invalidates the prior
+        # snapshot) then warm the common queries. Best-effort — never fail a sync.
+        try:
+            from .facets import bump_version, warm
+            bump_version(location_slug)
+            warm(location_slug)
+        except Exception:
+            pass
     return len(seen)
 
 
@@ -82,6 +123,26 @@ def sync_inventory_all() -> dict:
     # Re-bucket products on every inventory refresh so margins/velocity stay current.
     classify_products_all()
     return counts
+
+
+@shared_task
+def ensure_inventory_fresh(max_age_hours: int = 24) -> dict:
+    """Staleness guard: for each store, if its inventory hasn't been refreshed in
+    the last `max_age_hours`, pull fresh now. Cheap no-op when already fresh — this
+    is the 'check last refreshed, and if it's ≥24h old pull the fresh inventory'
+    safety net that guarantees suggestions never come from stale stock."""
+    max_age = timedelta(hours=max_age_hours)
+    out: dict = {}
+    refreshed = False
+    for s in STORE_SLUGS:
+        if inventory_is_stale(s, max_age):
+            out[s] = sync_inventory(s)
+            refreshed = True
+        else:
+            out[s] = "fresh"
+    if refreshed:
+        classify_products_all()
+    return out
 
 
 @shared_task
@@ -134,6 +195,7 @@ def sync_transactions(location_slug: str, days: int = 365) -> int:
                 "strain": prod.strain if prod else "",
                 "strain_type": prod.strain_type if prod else "",
                 "bucket": prod.bucket if prod else "",
+                "dominant_terpene": prod.dominant_terpene if prod else "",
                 "price_z": float(prod.price_z) if prod else 0.0,
                 "qty": float(it.get("quantity", 1) or 1),
                 "unit_price": float(it.get("unitPrice") or 0),
@@ -188,6 +250,37 @@ def recompute_affinity(phone: str) -> bool:
     profile.bucket_mix = _normalize_counter(bucket)
     profile.total_orders = total
 
+    # Terpene affinity: purchase_history doesn't carry terpene, so join each
+    # purchased SKU → its product's dominant terpene. This ACTIVATES the terpene
+    # term in ranking._affinity_score (the field was defined but never populated).
+    terp: Counter = Counter()
+    sku_list = [h.get("sku") for h in hist if h.get("sku")]
+    terp_by_sku: dict[str, str] = {}
+    if sku_list:
+        for sku_, dt in (Product.objects.filter(sku__in=sku_list)
+                         .exclude(dominant_terpene="")
+                         .values_list("sku", "dominant_terpene")):
+            terp_by_sku.setdefault(sku_, dt)
+    for h in hist:
+        # Prefer the terpene captured at sync time (permanent); else join the
+        # current product. (Dutchie sends 0% terpene for this account today, so
+        # this stays empty until that data appears — then it lights up for free.)
+        dt = h.get("dominant_terpene") or terp_by_sku.get(h.get("sku"))
+        if dt:
+            terp[dt] += int(h.get("times_bought", 1) or 1)
+    profile.terpene_affinity = _normalize_counter(terp)
+
+    # Most-recent purchase timestamp (feeds the recency boost in ranking).
+    last_dts = [h.get("last_bought_at") for h in hist if h.get("last_bought_at")]
+    if last_dts:
+        def _aware(d):
+            dt = datetime.fromisoformat(str(d).replace("Z", "+00:00"))
+            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+        try:
+            profile.last_purchase_at = max(_aware(d) for d in last_dts)
+        except (ValueError, TypeError):
+            pass
+
     # Quality tier from mean price-z of what they buy (vs that item's peers).
     mean_pz = (price_z_sum / price_z_n) if price_z_n else 0.0
     profile.price_tier = "top" if mean_pz >= 0.4 else ("value" if mean_pz <= -0.4 else "mid")
@@ -200,26 +293,62 @@ def recompute_affinity(phone: str) -> bool:
     profile.computed_at = datetime.now(timezone.utc)
     profile.save(update_fields=[
         "brand_affinity", "category_affinity", "strain_type_affinity",
-        "subcategory_affinity", "bucket_mix", "price_tier", "novelty_score",
-        "total_orders", "computed_at",
+        "subcategory_affinity", "terpene_affinity", "bucket_mix", "price_tier",
+        "novelty_score", "total_orders", "last_purchase_at", "computed_at",
     ])
     return True
 
 
 @shared_task
 def build_copurchase(location_slug: str) -> int:
-    """Build a simple 'frequently bought together' matrix into Redis."""
-    pairs: dict[str, Counter] = defaultdict(Counter)
+    """Build the 'frequently bought together' matrices into Redis from customer
+    purchase histories, weighted by CONFIDENCE — each customer's lifetime set is a
+    basket and confidence(A→B) = P(A∧B)/P(A) is literally 'what fraction of people
+    who bought A also bought B', the right measure for an UPSELL ('what people
+    usually pair'). (Lift is for surprising associations — it would filter out a
+    universally-popular complement like a cart, which is exactly what we DO want to
+    upsell — so we use confidence, not lift.) A ≥ MIN_CO co-buyer gate kills noise:
+      • pair:{loc}:{sku}      -> {sku: confidence}            exact-SKU
+      • pairattr:{loc}:{attr} -> {category|size: confidence}  durable (survives SKU rotation)
+    A dict is written for EVERY anchor (empty when nothing qualifies) so a rebuild
+    leaves no stale weights — the historical universe only grows between runs.
+    pair_for restricts candidates to COMPLEMENT categories, so same-category
+    confidences in the matrix are simply never queried."""
+    from .pairing import pair_attr_key
+    MIN_CO = 3  # ignore pairs fewer than 3 customers co-bought (kills noise)
+
+    sku_single: Counter = Counter()
+    attr_single: Counter = Counter()
+    sku_pair: dict[str, Counter] = defaultdict(Counter)
+    attr_pair: dict[str, Counter] = defaultdict(Counter)
     for profile in CustomerProfile.objects.all().iterator():
-        skus = [h.get("sku") for h in (profile.purchase_history or []) if h.get("sku")]
+        hist = profile.purchase_history or []
+        skus = sorted({h.get("sku") for h in hist if h.get("sku")})
+        attrs = sorted({pair_attr_key(h.get("category"), h.get("subcategory"))
+                        for h in hist if h.get("category")})
+        for s in skus:
+            sku_single[s] += 1
         for i, a in enumerate(skus):
             for b in skus[i + 1:]:
-                pairs[a][b] += 1
-                pairs[b][a] += 1
-    for sku, counter in pairs.items():
-        total = sum(counter.values()) or 1
-        cache.set(f"pair:{location_slug}:{sku}", {k: v / total for k, v in counter.items()}, timeout=None)
-    return len(pairs)
+                sku_pair[a][b] += 1
+                sku_pair[b][a] += 1
+        for a in attrs:
+            attr_single[a] += 1
+        for i, a in enumerate(attrs):
+            for b in attrs[i + 1:]:
+                attr_pair[a][b] += 1
+                attr_pair[b][a] += 1
+
+    def emit(prefix: str, single: Counter, pairmat: dict[str, Counter]) -> None:
+        for a, ca in single.items():
+            ca = ca or 1
+            weights = {b: round(co / ca, 4)            # confidence(a→b) ∈ [0,1]
+                       for b, co in pairmat.get(a, {}).items() if co >= MIN_CO}
+            cache.set(f"{prefix}:{location_slug}:{a}", weights, timeout=None)
+
+    emit("pair", sku_single, sku_pair)
+    emit("pairattr", attr_single, attr_pair)
+    return len(attr_single)
 
 
 @shared_task

@@ -12,14 +12,23 @@ falls back to its local catalog.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 import requests
 from django.conf import settings
+from django.core.cache import cache
 from django.utils.text import slugify
 
 logger = logging.getLogger(__name__)
 POS_API_BASE = "https://api.pos.dutchie.com"
 TIMEOUT = 120
+
+# Inventory packages not modified in this many days are treated as stale "zombie"
+# stock — leftover quantity that lingers in /reporting/inventory but is no longer
+# on the live sales-floor menu. A real, selling package gets modified as units
+# move; one untouched for months (qty never reconciled to 0) 404s on Shop Now.
+# This was THE cause of suggesting products the consumer menu doesn't carry.
+FRESH_DAYS = 60
 
 def _norm_category(raw: str) -> str:
     """Map Dutchie's free-form categories (e.g. 'DOH Approved Flower',
@@ -86,6 +95,18 @@ def _to_float(v) -> float:
         return 0.0
 
 
+def _stale(last_modified, max_age_days: int = FRESH_DAYS) -> bool:
+    """True if an inventory package hasn't changed in > max_age_days (zombie stock
+    not on the live menu). Missing/unparseable date → NOT stale (fail-open: never
+    drop a product over a parse error)."""
+    s = str(last_modified or "")[:10]
+    try:
+        d = datetime.strptime(s, "%Y-%m-%d").date()
+    except ValueError:
+        return False
+    return (datetime.now(timezone.utc).date() - d).days > max_age_days
+
+
 # ── Inventory (per store, via POS key) ───────────────────────────────────────
 def _get_inventory(api_key: str) -> list[dict]:
     """In-stock items. /reporting/inventory carries qty + price + unitCost +
@@ -112,15 +133,59 @@ def _extract_thc(item: dict) -> float | None:
     return _to_float(direct) if direct else None
 
 
+_RETIRED_TTL = 3600  # refresh the retired-product list hourly
+
+
+def _off_menu_product_ids(api_key: str, location_slug: str) -> set[str]:
+    """Dutchie productIds that are NOT on the live consumer menu, per the /products
+    catalog of record. /reporting/inventory (our stock feed) is a SUPERSET of the
+    menu — it lists back-office stock the published menu doesn't carry — so we
+    subtract anything the catalog marks as:
+      • RETIRED             — isActive is False (archived / off the sales floor)
+      • not online-for-sale — onlineAvailable / onlineProduct is False
+      • not e-comm listed   — ecomCategory 'N/A' (never categorized for the menu, so
+                              it can't be browsed there). This was the "fresh +
+                              in-stock + every flag green but still not on the menu"
+                              leak (e.g. SnickleFritz LR Sugar White Runtz 1g).
+
+    Cached hourly: /products is a large, slow-changing catalog, so we don't refetch
+    it on every 10-min inventory sync. FAIL-OPEN — on a fetch error we return an
+    empty set ('don't filter') rather than risk dropping the whole catalog, and we
+    do NOT cache the failure so the next sync retries."""
+    ck = f"dutchie:offmenu_pids:{location_slug}"
+    cached = cache.get(ck)
+    if cached is not None:
+        return cached
+    prods = _pos_get(api_key, "/products")
+    if not isinstance(prods, list):
+        return set()
+    off: set[str] = set()
+    for p in prods:
+        pid = p.get("productId")
+        if pid is None:
+            continue
+        if (p.get("isActive") is False
+                or p.get("onlineAvailable") is False
+                or p.get("onlineProduct") is False
+                or str(p.get("ecomCategory") or "").strip().upper() == "N/A"):
+            off.add(str(pid))
+    cache.set(ck, off, timeout=_RETIRED_TTL)
+    return off
+
+
 def fetch_inventory(location_slug: str) -> list[dict]:
     """Normalized in-stock rows for one store (incl. cost for margin).
 
     Sourced entirely from /reporting/inventory (8k rows incl. unitCost), so a
-    sync is a single call per store.
+    sync is a single call per store. We drop rows that aren't really on the live
+    menu, so Shop Now never 404s: RETIRED products (POS isActive=False) AND STALE
+    zombie packages (lastModifiedDateUtc older than FRESH_DAYS — leftover stock
+    the POS snapshot never reconciled to 0).
     """
     key = _store(location_slug).get("pos_key")
     if not key:
         return []
+    off_menu = _off_menu_product_ids(key, location_slug)
     # Aggregate by productId so a product split across multiple inventory
     # packages becomes ONE sellable entry with its TRUE total stock — and so we
     # never suggest the same product twice. Only items with a retail (rec) price
@@ -138,6 +203,17 @@ def fetch_inventory(location_slug: str) -> list[dict]:
         price = _to_float(_first(item, "unitPrice", "recUnitPrice", "price", default=0))
         if price <= 0:
             continue  # no retail price → not on the menu / not for sale
+        # NOT ON THE LIVE MENU (retired / not online-sale-configured / not e-comm
+        # categorized, per /products): the POS stock feed lists it but the consumer
+        # menu doesn't, so Shop Now 404s. Skip.
+        if off_menu and str(_first(item, "productId", default="")) in off_menu:
+            continue
+        # STALE: a package not modified in months is leftover zombie stock — the
+        # POS snapshot never reconciled it to 0, but it isn't on the live menu, so
+        # Shop Now 404s. Drop per-package BEFORE aggregation, so a product that
+        # ALSO has a fresh package keeps only that real, sellable stock.
+        if _stale(_first(item, "lastModifiedDateUtc", default="")):
+            continue
         pid = str(_first(item, "productId", "sku", "packageId", "inventoryId", default=name))
         if pid in agg:
             agg[pid]["quantity_on_hand"] += int(qty)

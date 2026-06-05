@@ -26,7 +26,11 @@ services:
 
   migrate:
     build: .
-    command: sh -c "python manage.py makemigrations budtender --noinput && python manage.py migrate --noinput"
+    # Apply the committed migrations. --fake-initial records 0001_initial as
+    # applied when its tables already exist (existing prod/dev DBs) instead of
+    # trying to recreate them, so the analytics tables are stored durably and
+    # deterministically. No runtime makemigrations (that was ephemeral/fragile).
+    command: sh -c "python manage.py migrate --noinput --fake-initial"
     env_file:
       - .env
       - .env.dutchie
@@ -36,7 +40,11 @@ services:
 
   web:
     build: .
-    command: gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-5} --worker-class gthread --threads ${GUNICORN_THREADS:-4} --timeout 60 --keep-alive 5 --max-requests 1000 --max-requests-jitter 100
+    # Warm the questionnaire facet cache BEFORE serving, so the steps are instant
+    # on the very first request after a `docker compose up`/restart (Redis is
+    # flushed on restart; warming only-on-sync left a cold window). `|| true` keeps
+    # a warm hiccup from blocking startup; `exec` hands PID 1 to gunicorn.
+    command: sh -c "python manage.py warm_facets || true; exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-5} --worker-class gthread --threads ${GUNICORN_THREADS:-4} --timeout 60 --keep-alive 5 --max-requests 1000 --max-requests-jitter 100"
     env_file:
       - .env
       - .env.dutchie

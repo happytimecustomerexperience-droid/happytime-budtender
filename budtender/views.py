@@ -15,9 +15,13 @@ from rest_framework.views import APIView
 from .models import (AnalyticsEvent, ChatMessage, ChatSession, CustomerProfile,
                      Feedback, Product, SuggestedProduct)
 from .pairing import pair_for
-from .ranking import rank_products
+from . import facets
+from .ranking import (CATEGORY_BY_SLOTKEY, MIN_STOCK, available_sizes,
+                      price_bands, product_subtype, rank_products,
+                      subtype_label, _size_match)
 from .serializers import profile_summary, public_message, public_product
-from .tasks import _normalize_phone, recompute_affinity
+from .tasks import (_normalize_phone, ensure_inventory_fresh,
+                    inventory_is_stale, recompute_affinity)
 
 
 def _hash_phone(raw: str) -> str:
@@ -76,6 +80,15 @@ class ProductSearchView(APIView):
                 session.phone = profile.phone
                 session.save(update_fields=["customer", "phone"])
 
+        # Freshness guard: if this store's inventory is ≥24h stale, kick off an
+        # async refresh so suggestions self-heal to live stock. Never blocks the
+        # response (and the ranking below already filters to in-stock SKUs).
+        if inventory_is_stale(location):
+            try:
+                ensure_inventory_fresh.delay()
+            except Exception:
+                pass
+
         ranked = rank_products(location, slots, profile, limit=limit, exclude_skus=exclude)
         results = [public_product(p, rank=i + 1, why_this=why) for i, (p, why) in enumerate(ranked)]
 
@@ -86,6 +99,228 @@ class ProductSearchView(APIView):
                     sku=r["sku"], kind="primary", source=session.channel,
                 )
         return Response({"results": results, "source": "vps"})
+
+
+class PriceBandsView(APIView):
+    """Data-driven budget buckets for a store+category+size, so the
+    questionnaire's price step is granular and relevant to the subcategory."""
+
+    def post(self, request):
+        slots = request.data.get("slots") or request.data or {}
+        location = slots.get("store") or request.data.get("location") or "yakima"
+        category = facets.resolve_category(slots.get("category"))
+        # Served from the precomputed cache (warmed on every inventory sync); a cold
+        # combo is computed once + cached. The request path does NO product scan.
+        return Response(facets.bands(location, category, slots.get("size"), slots.get("subcategory")))
+
+
+class SubtypesView(APIView):
+    """Granular product subtypes that actually exist in live inventory for a
+    store+category — e.g. concentrates → rosin / live resin / RSO / diamonds;
+    edibles → gummies / chocolate / peanut butter cups / lollipops. DATA-DRIVEN:
+    new forms appear automatically as soon as a matching SKU is synced, so the
+    questionnaire's subtype step is never hardcoded."""
+
+    def post(self, request):
+        slots = request.data.get("slots") or request.data or {}
+        location = slots.get("store") or request.data.get("location") or "yakima"
+        category = facets.resolve_category(slots.get("category"))
+        return Response({"subtypes": facets.subtypes(location, category)})
+
+
+class SizesView(APIView):
+    """Distinct SIZES that actually exist in live inventory for a store+category
+    (+ optional subtype) — flower's real weights (1/2/3.5/4/7/8/14/28g), a
+    pre-roll's pack counts (single, 1pk…28pk). DATA-DRIVEN: a new weight/pack
+    appears as soon as a matching SKU syncs, so the questionnaire's size step is
+    never hardcoded. Categories with no reliable size axis (e.g. edibles) return
+    an empty list and the questionnaire skips the step."""
+
+    def post(self, request):
+        slots = request.data.get("slots") or request.data or {}
+        location = slots.get("store") or request.data.get("location") or "yakima"
+        category = facets.resolve_category(slots.get("category"))
+        return Response({"sizes": facets.sizes(location, category, slots.get("subcategory"))})
+
+
+class DohOptionsView(APIView):
+    """Whether the 'DOH-certified only?' question is a REAL choice for the current
+    filters — i.e. the matching in-stock set has BOTH DOH and non-DOH products. The
+    questionnaire SKIPS the DOH step when it isn't (all-DOH = redundant; none-DOH =
+    a dead end), so we never offer a cert filter that can't be fulfilled."""
+
+    def post(self, request):
+        slots = request.data.get("slots") or request.data or {}
+        location = slots.get("store") or request.data.get("location") or "yakima"
+        category = facets.resolve_category(slots.get("category"))
+        return Response(facets.doh(location, category, slots.get("size"), slots.get("subcategory"),
+                                   slots.get("price_min"), slots.get("price_max")))
+
+
+class AnalyticsSummaryView(APIView):
+    """Chatbot/menu funnel counts — unique visitors, chat usage, messages, clicks,
+    'show me something else', and timing. Read-only; powers the owner dashboard.
+    Counts come from AnalyticsEvent; unique visitors dedupe on props.visitor_id."""
+
+    def post(self, request):
+        from datetime import timedelta
+
+        days = int((request.data or {}).get("days", 30))
+        since = timezone.now() - timedelta(days=days)
+        qs = AnalyticsEvent.objects.filter(ts__gte=since)
+
+        def ev(name):
+            return qs.filter(event_type=name)
+
+        def uniq_visitors(q):
+            seen = set()
+            for props in q.values_list("props", flat=True):
+                vid = (props or {}).get("visitor_id")
+                if vid:
+                    seen.add(vid)
+            return len(seen)
+
+        opens = ev("chat_open").count()
+        searches = ev("chat_search").count()
+        rec_views = ev("chat_recommend_view").count()
+        shop_clicks = ev("chat_product_click").count()
+        sme = ev("chat_show_me_something_else")
+        sme_count = sme.count()
+        # Avg seconds a visitor reviewed picks before asking for fresh ones.
+        durations = [
+            float(p.get("ms_since_results"))
+            for p in sme.values_list("props", flat=True)
+            if isinstance(p, dict) and isinstance(p.get("ms_since_results"), (int, float))
+        ]
+        avg_sme_s = round(sum(durations) / len(durations) / 1000, 1) if durations else None
+        user_msgs = ev("chat_message").filter(props__role="user").count()
+
+        # ── Single pass over the window for the JSON-prop breakdowns ──
+        from collections import Counter
+        from django.db.models import Avg, Count
+
+        daily, device, loc, cat_ctr, click_ctr = Counter(), Counter(), Counter(), Counter(), Counter()
+        # Engagement accumulators — all schema-free, read straight from props JSON:
+        dwell_ms: list[float] = []          # chat_session_end.duration_ms = "how long they stay"
+        results_dwell_ms: list[float] = []  # chat_stage_dwell.ms for the RESULTS stage
+        total_opens = reopens = 0           # chat_open.open_index (a reopen is index > 1)
+        post_reopen_clicks = 0              # suggestion/pairing/upsell clicks with is_reopen=true
+        upsell_views = upsell_clicks = 0    # post-reopen pairing-modal funnel (view → click)
+        CLICK_EVENTS = {"chat_product_click", "chat_pairing_click", "chat_pair_upsell_click"}
+        for etype, props, lslug, ts in qs.values_list("event_type", "props", "location_slug", "ts"):
+            p = props or {}
+            daily[ts.date().isoformat()] += 1
+            if p.get("device_type"):
+                device[str(p["device_type"])] += 1
+            if lslug:
+                loc[str(lslug)] += 1
+            if etype == "chat_search" and p.get("category"):
+                cat_ctr[str(p["category"])] += 1
+            elif etype == "chat_product_click" and p.get("sku"):
+                click_ctr[str(p["sku"])] += 1
+            elif etype == "chat_open":
+                total_opens += 1
+                idx = p.get("open_index")
+                if (isinstance(idx, (int, float)) and idx > 1) or p.get("is_reopen") is True:
+                    reopens += 1
+            elif etype == "chat_session_end":
+                d = p.get("duration_ms")
+                if isinstance(d, (int, float)) and d >= 0:
+                    dwell_ms.append(float(d))
+            elif etype == "chat_stage_dwell":
+                if p.get("stage") == "RESULTS" and isinstance(p.get("ms"), (int, float)):
+                    results_dwell_ms.append(float(p["ms"]))
+            elif etype == "chat_pair_upsell_view":
+                upsell_views += 1
+            elif etype == "chat_pair_upsell_click":
+                upsell_clicks += 1
+            # Separate (not elif): a click event already matched above still counts here.
+            if etype in CLICK_EVENTS and p.get("is_reopen") is True:
+                post_reopen_clicks += 1
+
+        # ── Engagement summaries from the accumulators ──
+        def _dur_stats(ms_list):
+            if not ms_list:
+                return (None, None, 0)
+            s = sorted(ms_list)
+            n = len(s)
+            med = s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+            return (round(sum(s) / n / 1000, 1), round(med / 1000, 1), n)
+
+        dwell_avg_s, dwell_med_s, dwell_n = _dur_stats(dwell_ms)
+        results_avg_s, _, _ = _dur_stats(results_dwell_ms)
+        prim_impressions = SuggestedProduct.objects.filter(shown_at__gte=since, kind="primary").count()
+        suggestion_ctr = round(shop_clicks / prim_impressions, 3) if prim_impressions else None
+        pair_upsell_ctr = round(upsell_clicks / upsell_views, 3) if upsell_views else None
+
+        # ── Which products get suggested / clicked (the merchandising view) ──
+        sugg = list(SuggestedProduct.objects.filter(shown_at__gte=since, kind="primary")
+                    .values("sku").annotate(n=Count("id")).order_by("-n")[:12])
+        pairs = list(SuggestedProduct.objects.filter(shown_at__gte=since, kind="pairing")
+                     .values("sku").annotate(n=Count("id")).order_by("-n")[:12])
+        clicked = click_ctr.most_common(12)
+        want = {s["sku"] for s in sugg} | {s["sku"] for s in pairs} | {s for s, _ in clicked}
+        name_by_sku: dict[str, str] = {}
+        for sku_, name_ in Product.objects.filter(sku__in=list(want)).values_list("sku", "name"):
+            name_by_sku.setdefault(sku_, name_)
+        nm = lambda s: name_by_sku.get(s, s)
+        click_n = dict(clicked)
+
+        fb_qs = Feedback.objects.filter(ts__gte=since)
+        avg_rating = fb_qs.filter(rating__isnull=False).aggregate(a=Avg("rating"))["a"]
+
+        return Response({
+            "window_days": days,
+            "unique_visitors": uniq_visitors(qs),
+            "total_events": qs.count(),
+            "chat": {
+                "opens": opens,
+                "unique_chat_users": uniq_visitors(ev("chat_open")),
+                "user_messages_sent": user_msgs,
+                "questionnaire_searches": searches,
+                "recommendation_views": rec_views,
+                "show_me_something_else_clicks": sme_count,
+                "avg_seconds_reviewing_before_refresh": avg_sme_s,
+            },
+            "conversions": {
+                "shop_now_clicks": shop_clicks,
+                "pairing_addon_clicks": ev("chat_pairing_click").count(),
+                "pair_upsell_clicks": upsell_clicks,
+                "open_to_shopnow_rate": round(shop_clicks / opens, 3) if opens else None,
+                "view_to_shopnow_rate": round(shop_clicks / rec_views, 3) if rec_views else None,
+                # Of the suggestions the budtender showed, what share got a Shop-Now click.
+                "suggestion_impressions": prim_impressions,
+                "suggestion_ctr": suggestion_ctr,
+                # Clicks on suggestions shown AFTER the visitor reopened the chatbot.
+                "post_reopen_clicks": post_reopen_clicks,
+                "pair_upsell_views": upsell_views,
+                "pair_upsell_ctr": pair_upsell_ctr,
+            },
+            # How long visitors stay + how often they come back into the panel.
+            "engagement": {
+                "avg_dwell_seconds": dwell_avg_s,
+                "median_dwell_seconds": dwell_med_s,
+                "sessions_ended": dwell_n,
+                "total_opens": total_opens,
+                "reopens": reopens,
+                "reopen_rate": round(reopens / total_opens, 3) if total_opens else None,
+                "avg_results_view_seconds": results_avg_s,
+            },
+            "menu_embed": {
+                "product_views": ev("dutchie_product_view").count(),
+                "add_to_cart": ev("dutchie_add_to_cart").count(),
+                "checkout_started": ev("dutchie_checkout").count(),
+            },
+            "top_suggested_products": [{"sku": s["sku"], "name": nm(s["sku"]), "suggested": s["n"],
+                                        "clicked": click_n.get(s["sku"], 0)} for s in sugg],
+            "top_clicked_products": [{"sku": s, "name": nm(s), "clicks": n} for s, n in clicked],
+            "top_pairings_suggested": [{"sku": s["sku"], "name": nm(s["sku"]), "count": s["n"]} for s in pairs],
+            "category_interest": [{"category": c, "searches": n} for c, n in cat_ctr.most_common(10)],
+            "by_location": dict(loc),
+            "by_device": dict(device),
+            "daily_activity": [{"date": d, "events": daily[d]} for d in sorted(daily)],
+            "feedback": {"count": fb_qs.count(), "avg_rating": round(avg_rating, 2) if avg_rating else None},
+        })
 
 
 class PairingView(APIView):
@@ -102,9 +337,9 @@ class PairingView(APIView):
         if anchor is None and slug:
             anchor = Product.objects.filter(location_slug=location, slug=str(slug)).first()
 
-        pair, reason = pair_for(location, anchor, profile)
+        pair, reason, reason_text, strength = pair_for(location, anchor, profile)
         if not pair:
-            return Response({"pairing": None, "reason_code": "none"})
+            return Response({"pairing": None, "reason_code": "none", "reason_text": "", "strength": 0.0})
 
         session = ChatSession.objects.filter(session_token=request.data.get("session_token", "")).first()
         SuggestedProduct.objects.create(
@@ -112,7 +347,10 @@ class PairingView(APIView):
             kind="pairing", source=(session.channel if session else "menu"),
             paired_with_sku=(anchor.sku if anchor else ""), reason_code=reason,
         )
-        return Response({"pairing": public_product(pair), "reason_code": reason})
+        return Response({
+            "pairing": public_product(pair), "reason_code": reason,
+            "reason_text": reason_text, "strength": strength,
+        })
 
 
 class ResumeByPhoneView(APIView):

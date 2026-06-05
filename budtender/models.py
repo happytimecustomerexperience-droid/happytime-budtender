@@ -62,6 +62,20 @@ class Product(models.Model):
         return f"{self.name} @ {self.location_slug}"
 
 
+class SyncState(models.Model):
+    """When each store's inventory was last successfully refreshed from Dutchie.
+    Suggestions are only ever served against in-stock products; this record lets a
+    staleness guard force a fresh pull if the inventory is older than 24h, so we
+    never recommend something that has since sold out."""
+    location_slug = models.CharField(max_length=32, unique=True, db_index=True, choices=STORES)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    item_count = models.IntegerField(default=0)  # in-stock SKUs in the last pull
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"SyncState({self.location_slug} @ {self.last_synced_at})"
+
+
 class CustomerProfile(models.Model):
     phone = models.CharField(max_length=20, unique=True, db_index=True)  # E.164
     total_orders = models.IntegerField(default=0)
