@@ -146,16 +146,29 @@ def ensure_inventory_fresh(max_age_hours: int = 24) -> dict:
 
 
 @shared_task
-def sync_transactions(location_slug: str, days: int = 365) -> int:
-    """Build customer purchase history from detailed transactions.
+def sync_transactions(location_slug: str, days: int = 90) -> int:
+    """Build customer purchase history + sales velocity from detailed transactions.
 
     `/reporting/transactions?includeDetail=true` gives each sale's line items
     (productId, qty, unitPrice, unitWeight, isReturned) + a `customerId`. We map
     customerId→phone via the customers list, and productId→Product (our synced,
     classified inventory) to attach brand/category/strain/strain_type/subcategory/
-    bucket. Returns and voids are skipped.
+    bucket.
+
+    CORRECTNESS (what counts as a real sale for velocity):
+      • Returns + voids are skipped (header isVoid/isReturn, line isReturned).
+      • Only lines that resolve to a real, synced Product count — trade samples
+        and other non-sellable items never become Products, so they can't inflate
+        velocity.
+      • Velocity = recency-blended NET units/day, 0.7·(28d) + 0.3·(84d), stored to
+        Redis `vel:{loc}` and consumed by classify_products → Product.velocity.
+    90 days keeps both the velocity windows and recent affinity FRESH.
     """
     now = datetime.now(timezone.utc)
+    cutoff_28 = now - timedelta(days=28)
+    cutoff_84 = now - timedelta(days=84)
+    u28: Counter = Counter()   # net units sold per sku, last 28 days
+    u84: Counter = Counter()   # net units sold per sku, last 84 days
     # customerId → phone (prefer mobile).
     phone_by_id: dict[str, str] = {}
     for c in dutchie.get_customers(location_slug):
@@ -179,6 +192,7 @@ def sync_transactions(location_slug: str, days: int = 365) -> int:
         if not phone:
             continue
         bought_at = tx.get("transactionDate") or tx.get("lastModifiedDateUTC") or now.isoformat()
+        bought_dt = dutchie._parse_iso(bought_at)
         for it in (tx.get("items") or []):
             if it.get("isReturned"):
                 continue
@@ -186,6 +200,13 @@ def sync_transactions(location_slug: str, days: int = 365) -> int:
             if not pid:
                 continue
             prod = prod_by_pid.get(pid)
+            qty = float(it.get("quantity", 1) or 1)
+            # Sales velocity: count NET units only for real, sellable products
+            # (prod resolved). `prod is None` ⇒ trade sample / non-sellable, excluded.
+            if prod is not None and qty > 0 and bought_dt is not None and bought_dt >= cutoff_84:
+                u84[prod.sku] += qty
+                if bought_dt >= cutoff_28:
+                    u28[prod.sku] += qty
             by_phone[phone].append({
                 "product_id": pid,
                 "sku": prod.sku if prod else pid,
@@ -197,12 +218,20 @@ def sync_transactions(location_slug: str, days: int = 365) -> int:
                 "bucket": prod.bucket if prod else "",
                 "dominant_terpene": prod.dominant_terpene if prod else "",
                 "price_z": float(prod.price_z) if prod else 0.0,
-                "qty": float(it.get("quantity", 1) or 1),
+                "qty": qty,
                 "unit_price": float(it.get("unitPrice") or 0),
                 "bought_at": bought_at,
             })
     for phone, lines in by_phone.items():
         _fold_history(phone, lines)
+
+    # Recency-blended velocity (units/day): recent 28d weighted 0.7, trailing 84d
+    # 0.3 — the dashboard's method, so picks track what's selling NOW. Stored in
+    # Redis for classify_products to fold into Product.velocity (no schema change).
+    skus = set(u28) | set(u84)
+    velocity = {s: round(0.7 * (u28[s] / 28.0) + 0.3 * (u84[s] / 84.0), 4) for s in skus}
+    cache.set(f"vel:{location_slug}", velocity, timeout=14 * 24 * 3600)
+    classify_products(location_slug)   # propagate fresh velocity → Product.velocity + buckets
     return len(by_phone)
 
 
@@ -381,15 +410,11 @@ def classify_products(location_slug: str) -> int:
 
     from .ranking import size_label
 
-    # Velocity proxy: lifetime units bought per sku across all customers. Until
-    # transaction↔inventory SKUs are fully aligned (subsystem 2) this is sparse,
-    # so traffic-driver detection simply won't fire and items fall to core.
-    vel: Counter = Counter()
-    for prof in CustomerProfile.objects.all().iterator():
-        for h in (prof.purchase_history or []):
-            sku = str(h.get("sku") or "")
-            if sku:
-                vel[sku] += int(h.get("times_bought", 1) or 1)
+    # Sales velocity = recency-blended NET units/day per sku, computed in
+    # sync_transactions from REAL sales only (returns/voids/trade-samples excluded)
+    # and cached in Redis. Empty until the first transactions sync → traffic
+    # detection simply won't fire and items fall to core (safe default).
+    vel: dict = cache.get(f"vel:{location_slug}") or {}
 
     prods = list(Product.objects.filter(location_slug=location_slug, availability=True))
     for p in prods:

@@ -11,28 +11,38 @@ from django.core.cache import cache
 from .models import CustomerProfile, ManualPairing, Product
 from .ranking import _affinity_score, _quality_fit
 
-# Pair should be a DIFFERENT consumption method than the anchor.
-COMPLEMENT = {
-    "flower": ["vape-cartridges", "edibles", "pre-rolls"],
-    "pre-rolls": ["flower", "edibles"],
-    "concentrates": ["vape-cartridges", "flower"],
-    "vape-cartridges": ["flower", "edibles"],
-    "disposable-vapes": ["flower", "edibles"],
-    "edibles": ["tinctures", "flower"],
-    "beverages": ["edibles", "flower"],
-    "tinctures": ["edibles", "flower"],
-    "topicals": ["edibles", "tinctures"],
+# The add-on is a LIGHTER, cheaper category than the anchor — a grab-and-go
+# impulse buy, not a second main purchase. Each anchor maps to lighter categories
+# ONLY, ordered by how natural the attachment is (pre-rolls lead — highest
+# attachment rate in cannabis retail). So a 3.5g flower → pre-roll, a cart →
+# edible. Heavier/equal categories are intentionally absent.
+LADDER_COMPLEMENTS = {
+    "flower":           ["pre-rolls", "edibles", "beverages"],
+    "concentrates":     ["pre-rolls", "edibles", "beverages"],
+    "vape-cartridges":  ["pre-rolls", "edibles", "beverages"],
+    "disposable-vapes": ["pre-rolls", "edibles", "beverages"],
+    "pre-rolls":        ["edibles", "beverages"],
+    "edibles":          ["beverages", "tinctures"],
+    "beverages":        ["edibles", "tinctures"],
+    "tinctures":        ["edibles", "beverages"],
+    "topicals":         ["edibles", "tinctures"],
 }
-DEFAULT_COMPLEMENT = ["edibles", "flower", "vape-cartridges"]
+DEFAULT_COMPLEMENT = ["pre-rolls", "edibles", "beverages"]
+
+# A pair must be SIGNIFICANTLY cheaper than the anchor. Research: cross-sell
+# converts best around ~25% of the main item's price (acceptable-additional-spend
+# + contrast effect); we hard-gate at <=50% and reward the ~25% sweet spot.
+MAX_PAIR_PRICE_RATIO = 0.50   # hard gate: pair.price <= 50% of anchor.price
+IDEAL_PAIR_PRICE_RATIO = 0.25 # sweet spot the price_fit term peaks at
 
 # Pairing score weights (relative; need not sum to 1). The pair is chosen on
 # ATTRIBUTES — category/subcategory(size)/brand/price/profit-bucket/affinity and
 # real co-purchase — NEVER the product name, so it stays right as stock rotates.
-W_BASKET = 0.45      # "people/you bought these together" (sku-co, attr-co, repeat)
-W_CUSTOMER = 0.30    # feels like theirs (brand/size/tier/strain/terpene affinity)
-W_COMPLEMENT = 0.20  # a sensible DIFFERENT format than the anchor
-W_MARGIN = 0.20      # business profit
-W_PRICE = 0.10       # sane add-on price band
+W_BASKET = 0.40      # "people/you bought these together" (sku-co, attr-co, repeat)
+W_CUSTOMER = 0.25    # feels like theirs (brand/size/tier/strain/terpene affinity)
+W_LADDER = 0.15      # earlier in the lighter ladder = more natural add-on
+W_MARGIN = 0.15      # business profit
+W_PRICEFIT = 0.25    # near the ~25% impulse-price sweet spot
 RECENT_DAYS = 30
 MIN_STOCK = 3        # owner policy: never pair anything with fewer than 3 on hand
 
@@ -101,12 +111,12 @@ def _reason_text(reason_code: str, anchor: Product | None, pair: Product | None,
     if reason_code == "bought_before_not_recent":
         return f"You've loved this before — it's been a minute, and it pairs great with your {acat}."
     if reason_code == "popular_pair":
-        return f"Folks who grab a {acat} almost always add a {pcat} like this — it rounds out the sesh."
+        return f"Folks who grab a {acat} almost always toss in a {pcat} like this — an easy add-on."
     if reason_code == "your_brand" and pair and pair.brand:
         return f"It's {pair.brand} — right in your wheelhouse — and a different way to enjoy the night."
     if reason_code == "your_lane":
         return f"Matches your taste and complements the {acat} you just picked."
-    return f"A {pcat} is the natural sidekick to your {acat} — they go great together."
+    return f"Round out your {acat} with this {pcat} — a quick, cheap add-on."
 
 
 def pair_for(location: str, anchor: Product | None, profile: CustomerProfile | None):
@@ -125,7 +135,7 @@ def pair_for(location: str, anchor: Product | None, profile: CustomerProfile | N
         if forced:
             return forced, "staff_pick", _reason_text("staff_pick", anchor, forced, profile), 1.0
 
-    complements = COMPLEMENT.get(anchor.category, DEFAULT_COMPLEMENT)
+    complements = LADDER_COMPLEMENTS.get(anchor.category, DEFAULT_COMPLEMENT)
     qs = Product.objects.filter(
         location_slug=location, availability=True, quantity_on_hand__gte=MIN_STOCK, category__in=complements
     ).exclude(sku=anchor.sku)
@@ -133,27 +143,30 @@ def pair_for(location: str, anchor: Product | None, profile: CustomerProfile | N
     if not candidates:
         return None, "none", "", 0.0
 
-    # Keep the add-on sensible relative to the anchor (no $2000 pairing for a
-    # $40 flower). Scoring still applies *within* this ceiling.
-    ceiling = max(float(anchor.price) * 1.6, 25.0)
-    capped = [p for p in candidates if float(p.price) <= ceiling]
-    if capped:
-        candidates = capped
+    # SIGNIFICANTLY cheaper than the anchor — a true impulse add-on. Hard gate at
+    # <=50% of the anchor price. If nothing lighter-and-cheaper is in stock, show
+    # NO pair (an honest miss beats a bad upsell).
+    anchor_price = float(anchor.price) or 1.0
+    candidates = [p for p in candidates if float(p.price) <= MAX_PAIR_PRICE_RATIO * anchor_price]
+    if not candidates:
+        return None, "none", "", 0.0
 
     hist = _history_index(profile)
     margins = [float(p.margin) for p in candidates]
     m_lo, m_hi = min(margins), max(margins)
     span = (m_hi - m_lo) or 1.0
-    anchor_price = float(anchor.price) or 1.0
 
     best, best_score = None, -1.0
     best_reason, best_text, best_strength = "pairs_well", "", 0.0
     for p in candidates:
         margin_norm = (float(p.margin) - m_lo) / span
-        complement_rank = 1 - (complements.index(p.category) / max(len(complements), 1))
+        # Earlier in the lighter ladder = the more natural add-on (pre-roll first).
+        ladder_rank = 1 - (complements.index(p.category) / max(len(complements), 1)) if p.category in complements else 0.0
         # Prefer a DIFFERENT size/format than the anchor (variety, not a near-dupe).
         if p.subcategory and anchor.subcategory and p.subcategory == anchor.subcategory:
-            complement_rank *= 0.5
+            ladder_rank *= 0.5
+        # Impulse-price sweet spot: peaks at ~25% of the anchor, 0 by 50%.
+        price_fit = max(0.0, 1 - abs(float(p.price) / anchor_price - IDEAL_PAIR_PRICE_RATIO) / IDEAL_PAIR_PRICE_RATIO)
         # basket = strongest "bought together" signal: the customer's own repeat,
         # the exact-SKU co-purchase, or the durable attribute-bucket co-purchase.
         co_score, co_reason = _copurchase_signal(p.sku, hist)
@@ -162,9 +175,8 @@ def pair_for(location: str, anchor: Product | None, profile: CustomerProfile | N
         basket = max(co_score, sku_pop, attr_pop)
         # customer fit = does it feel like THEIRS (brand/size/tier/strain/terpene)?
         cust = (0.6 * _affinity_score(p, profile) + 0.4 * _quality_fit(p, profile)) if profile else 0.0
-        price_fit = 1 - min(abs(float(p.price) - anchor_price) / anchor_price, 1.0)
-        score = (W_BASKET * basket + W_CUSTOMER * cust + W_COMPLEMENT * complement_rank
-                 + W_MARGIN * margin_norm + W_PRICE * price_fit)
+        score = (W_BASKET * basket + W_CUSTOMER * cust + W_LADDER * ladder_rank
+                 + W_MARGIN * margin_norm + W_PRICEFIT * price_fit)
         # Reason priority: personal history > broad co-purchase > brand > lane > generic.
         if co_reason:
             reason = co_reason
@@ -178,6 +190,9 @@ def pair_for(location: str, anchor: Product | None, profile: CustomerProfile | N
             reason = "pairs_well"
         if score > best_score:
             best, best_score, best_reason = p, score, reason
-            best_strength = round(min(1.0, 0.55 * basket + 0.45 * cust + (0.2 if co_reason else 0.0)), 3)
+            # Confidence for gating the upsell modal: real bought-together signal +
+            # customer fit dominate, with a nudge for a perfectly-priced impulse add-on.
+            best_strength = round(min(1.0, 0.45 * basket + 0.35 * cust + 0.20 * price_fit
+                                      + (0.15 if co_reason else 0.0)), 3)
     best_text = _reason_text(best_reason, anchor, best, profile) if best else ""
     return best, best_reason, best_text, best_strength

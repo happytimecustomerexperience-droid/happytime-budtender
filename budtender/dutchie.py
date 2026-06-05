@@ -12,7 +12,7 @@ falls back to its local catalog.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 from django.conf import settings
@@ -272,16 +272,48 @@ def get_register_transactions(location_slug: str, from_iso: str, to_iso: str) ->
     return (data or {}).get("data", []) if isinstance(data, dict) else []
 
 
+# Dutchie's /reporting/transactions 400s on a wide window (a full year in one call
+# is rejected). It's safe up to ~1 month, so we page the requested range in
+# <=31-day windows and concatenate. This is what makes the velocity + customer-
+# history sync work at all (a single 365-day call returns 400 → zero history).
+_TX_WINDOW_DAYS = 31
+
+
+def _parse_iso(s: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
 def get_transactions_detailed(location_slug: str, from_iso: str, to_iso: str) -> list[dict]:
     """Completed sales WITH line items. `/reporting/transactions?includeDetail=true`
     embeds an `items[]` array (productId, quantity, unitPrice, unitWeight, isReturned)
     and carries `customerId` + `transactionDate` on each header. This is the
-    purchase-history source for customer profiles."""
+    purchase-history + sales-velocity source.
+
+    The Dutchie endpoint caps the date range, so we PAGE the window in <=31-day
+    chunks and concatenate — a single wide call 400s and yields nothing."""
     key = _store(location_slug).get("pos_key")
     if not key:
         return []
-    data = _pos_get(key, "/reporting/transactions",
-                    {"fromDateUTC": from_iso, "toDateUTC": to_iso, "includeDetail": "true"})
-    if isinstance(data, list):
-        return data
-    return (data or {}).get("data", []) if isinstance(data, dict) else []
+
+    def _rows(payload):
+        if isinstance(payload, list):
+            return payload
+        return (payload or {}).get("data", []) if isinstance(payload, dict) else []
+
+    start, end = _parse_iso(from_iso), _parse_iso(to_iso)
+    if start is None or end is None:          # unparseable → single best-effort call
+        return _rows(_pos_get(key, "/reporting/transactions",
+                              {"fromDateUTC": from_iso, "toDateUTC": to_iso, "includeDetail": "true"}))
+    out: list[dict] = []
+    cur = start
+    while cur < end:
+        nxt = min(cur + timedelta(days=_TX_WINDOW_DAYS), end)
+        chunk = _pos_get(key, "/reporting/transactions",
+                         {"fromDateUTC": cur.isoformat(), "toDateUTC": nxt.isoformat(),
+                          "includeDetail": "true"})
+        out.extend(_rows(chunk))
+        cur = nxt
+    return out

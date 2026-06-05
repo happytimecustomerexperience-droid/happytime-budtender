@@ -595,8 +595,23 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
             ranked = sorted(scored, key=lambda t: (float(t[1].unit_weight or 1e9), -float(t[1].price)))
         else:
             ranked = sorted(scored, key=lambda t: (float(t[1].price), t[0]), reverse=True)
-        picks = list(ranked[:limit])
-        chosen = {p.sku for _, p, _ in picks}
+        # Price-ordered, but cap a single brand at 2 of the set for variety
+        # (only when other brands are available to take the slot instead).
+        picks = []
+        chosen: set[str] = set()
+        bc: dict[str, int] = {}
+        for t in ranked:
+            if len(picks) >= limit:
+                break
+            b = (t[1].brand or "").strip().lower()
+            if (b and bc.get(b, 0) >= 2
+                    and any((x[1].brand or "").strip().lower() != b and x[1].sku not in chosen
+                            for x in ranked)):
+                continue
+            picks.append(t)
+            chosen.add(t[1].sku)
+            if b:
+                bc[b] = bc.get(b, 0) + 1
         # Fill any shortfall with up to 2 NEAREST-weight options (closest first).
         if len(picks) < limit and nearby:
             for p in nearby[: min(2, limit - len(picks))]:
@@ -605,78 +620,56 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
                     chosen.add(p.sku)
         return [(p, why) for _, p, why in picks[:limit]]
 
-    scored.sort(key=lambda t: t[0], reverse=True)
+    scored.sort(key=lambda t: t[0], reverse=True)   # demand score, desc
 
+    # ---- Owner ordering: #1 margin · #2 velocity · rest = real demand ----
+    # Position 1 is the highest-MARGIN item, position 2 the highest-VELOCITY
+    # (units/day) item, and positions 3+ the products customers actually want
+    # (the affinity/effect/budget demand score). A SOFT brand-variety penalty
+    # keeps the set from being five of the same label. Margin + velocity are
+    # server-only — the serializer allowlist guarantees neither reaches the browser.
     picks: list[tuple] = []
     used_skus: set[str] = set()
+    brand_count: dict[str, int] = {}
 
-    # For a known customer, RESERVE up to 2 slots for brands they actually buy
-    # (when in stock) so the set visibly feels like theirs — the rest fills by
-    # price spread. This is the "familiar + adjacent-new + profit" educated mix.
-    if profile and profile.brand_affinity:
-        familiar = [(s, p, w) for s, p, w in scored
-                    if p.brand and float(profile.brand_affinity.get(p.brand, 0)) > 0]
-        seen_brands: set[str] = set()
-        for s, p, w in familiar:
-            if len(picks) >= 2:
-                break
-            if p.brand in seen_brands:   # one product per familiar brand, for variety
-                continue
-            seen_brands.add(p.brand)
-            picks.append((s, p, w))
-            used_skus.add(p.sku)
+    def _take(t: tuple) -> None:
+        picks.append(t)
+        used_skus.add(t[1].sku)
+        b = (t[1].brand or "").strip().lower()
+        if b:
+            brand_count[b] = brand_count.get(b, 0) + 1
 
-    # Spread the remaining slots across DISTINCT prices that exist in the range
-    # (incl. odd ones like $65/$75/$85), highest-score item at each price point.
-    remaining = [(s, p, w) for s, p, w in scored if p.sku not in used_skus]
-    best_at_price: dict[float, tuple] = {}
-    for s, p, w in remaining:  # scored desc → first seen at a price = best score
-        pr = round(float(p.price), 2)
-        if pr not in best_at_price:
-            best_at_price[pr] = (s, p, w)
-    prices_sorted = sorted(best_at_price)
-    need = max(limit - len(picks), 0)
-    if prices_sorted and need:
-        if len(prices_sorted) <= need:
-            spread = [best_at_price[pr] for pr in prices_sorted]
-        else:
-            n = len(prices_sorted)
-            idxs = sorted({int(i * (n - 1) / (need - 1)) for i in range(need)}) if need > 1 else [0]
-            j = 0
-            while len(idxs) < need and j < n:
-                if j not in idxs:
-                    idxs.append(j)
-                j += 1
-            idxs = sorted(set(idxs))[:need]
-            spread = [best_at_price[prices_sorted[i]] for i in idxs]
-        for s, p, w in spread:
-            if p.sku not in used_skus:
-                picks.append((s, p, w))
-                used_skus.add(p.sku)
+    def _variety(t: tuple) -> float:
+        # ×0.6 per prior use of this brand → a different brand wins ties, but a
+        # clearly stronger same-brand item can still earn its slot.
+        b = (t[1].brand or "").strip().lower()
+        return 0.6 ** brand_count.get(b, 0) if b else 1.0
 
-    # Backfill if still short (sparse catalog / few distinct prices).
-    for s, p, w in scored:
-        if len(picks) >= limit:
+    # #1 — highest gross-margin $ in the matching set.
+    _take(max(scored, key=lambda t: float(t[1].margin)))
+    # #2 — highest sales velocity among the rest. With no transactions yet all
+    # velocity is 0, so this tie-breaks to the top demand score (slot never wasted).
+    rest = [t for t in scored if t[1].sku not in used_skus]
+    if rest:
+        _take(max(rest, key=lambda t: (float(t[1].velocity), t[0])))
+    # #3..limit — real demand (the score), greedily, with soft brand variety.
+    while len(picks) < limit:
+        rest = [t for t in scored if t[1].sku not in used_skus]
+        if not rest:
             break
-        if p.sku not in used_skus:
-            picks.append((s, p, w))
-            used_skus.add(p.sku)
+        _take(max(rest, key=lambda t: t[0] * _variety(t)))
 
-    # Still short because the exact weight is sparse → fill UP TO 2 slots with the
-    # NEAREST OTHER weight (closest grams first, e.g. 4g → 3.5g, never the ounce).
+    # Sparse exact-weight catalog → fill any empty slots with the NEAREST other
+    # weight (closest grams first, e.g. 4g → 3.5g, never the ounce).
     if len(picks) < limit and nearby:
-        cap = min(2, limit - len(picks))
-        added = 0
-        for p in nearby:   # pre-sorted: closest weight, best margin within it
-            if added >= cap:
+        for p in nearby:
+            if len(picks) >= limit:
                 break
             if p.sku in used_skus:
                 continue
-            picks.append((0.0, p, _why(p, desired, profile)))
-            used_skus.add(p.sku)
-            added += 1
+            _take((0.0, p, _why(p, desired, profile)))
 
-    picks.sort(key=lambda t: t[0], reverse=True)
+    # Order is intentional (#1 margin, #2 velocity, …) — do NOT re-sort by score.
     return [(p, why) for _, p, why in picks[:limit]]
 
 
