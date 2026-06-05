@@ -1,7 +1,0 @@
-# Local-dev only (auto-merged by `docker compose`). Publishes the web port so
-# the website's dev server can reach it at http://localhost:8000. In production
-# the Cloudflare tunnel handles ingress and no port is published.
-services:
-  web:
-    ports:
-      - "8000:8000"

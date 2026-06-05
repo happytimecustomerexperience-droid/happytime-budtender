@@ -8,3 +8,7 @@ venv/
 .uv/
 staticfiles/
 .DS_Store
+# Local-dev ONLY — publishes :8000 to the host so the local website can reach it.
+# Must never reach the VPS (no inbound ports in prod; the Cloudflare tunnel is the
+# only ingress). Kept on each dev machine, never committed.
+docker-compose.override.yml
