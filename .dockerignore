@@ -1,4 +1,6 @@
 .env
+.env.dutchie
+.env.local
 .git
 __pycache__/
 *.pyc
