@@ -480,7 +480,10 @@ def _normalize_phone(raw: str) -> str:
         return f"+1{digits}"
     if len(digits) == 11 and digits.startswith("1"):
         return f"+{digits}"
-    return f"+{digits}" if digits else ""
+    # Not a usable US phone (empty, too short, or absurdly long — some Dutchie
+    # records carry junk). Drop it: a profile key must fit phone varchar(20), and
+    # a malformed number can't reliably identify a returning customer anyway.
+    return ""
 
 
 def _fold_history(phone: str, lines: list[dict]) -> None:
