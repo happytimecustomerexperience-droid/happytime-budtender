@@ -280,10 +280,14 @@ _TX_WINDOW_DAYS = 31
 
 
 def _parse_iso(s: str) -> datetime | None:
+    """Parse an ISO timestamp to a timezone-AWARE datetime. Dutchie's
+    transactionDate is sometimes offset-naive — assume UTC so it can be compared
+    against our aware cutoffs (else: 'can't compare naive and aware datetimes')."""
     try:
-        return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 def get_transactions_detailed(location_slug: str, from_iso: str, to_iso: str) -> list[dict]:
