@@ -196,6 +196,36 @@ def _off_menu_product_ids(api_key: str, location_slug: str) -> set[str]:
     return off
 
 
+def _is_purchasable(item: dict, off_menu: set[str], floor_qty: float) -> bool:
+    """THE single gate for "is this product actually on the live online menu and
+    purchasable." EVERY suggestion — questionnaire, free-text chat, pairing, and
+    the upsell popup — is drawn from the Product table this builds, and both
+    rank_products and pair_for read ONLY that table, so they all share this one
+    definition. Nothing bypasses it. Purchasable iff every condition holds:
+      • SALES FLOOR stock  — floor_qty > 0 (vault / Quarantine-Returns / back-stock
+        already excluded by the room filter)
+      • NOT medical-only   — rec customers can't buy it
+      • sellable CATEGORY  — not a trade sample / non-sellable
+      • has a retail PRICE — priceless rows are back-office / not-for-sale
+      • ON THE LIVE MENU   — per /products: isActive AND onlineAvailable AND
+        onlineProduct AND ecomCategory != 'N/A' (see _off_menu_product_ids)
+      • FRESH              — lastModifiedDateUtc within FRESH_DAYS (no zombie stock)
+    """
+    if floor_qty <= 0:
+        return False
+    if item.get("medicalOnly") is True:
+        return False
+    if not _norm_category(str(_first(item, "category", "masterCategory") or "")):
+        return False
+    if _to_float(_first(item, "unitPrice", "recUnitPrice", "price", default=0)) <= 0:
+        return False
+    if off_menu and str(_first(item, "productId", default="")) in off_menu:
+        return False
+    if _stale(_first(item, "lastModifiedDateUtc", default="")):
+        return False
+    return True
+
+
 def fetch_inventory(location_slug: str) -> list[dict]:
     """Normalized in-stock rows for one store (incl. cost for margin).
 
@@ -220,32 +250,16 @@ def fetch_inventory(location_slug: str) -> list[dict]:
     agg: dict[str, dict] = {}
     for item in _get_inventory(key):
         name = _first(item, "productName", "name") or ""
-        if item.get("medicalOnly") is True:
-            continue  # medical-only package — not sellable to rec customers
-        # Count ONLY the Sales Floor room (not the all-rooms aggregate), so stock
-        # sitting in Quarantine/Returns or the back room can never be suggested.
+        # Sales-floor stock only (room-exact); fall back to the all-rooms aggregate
+        # ONLY when a row carries no room breakdown.
         floor_qty = _sales_floor_qty(item)
         qty = floor_qty if floor_qty is not None else _to_float(
             _first(item, "quantityAvailable", "quantity", "availableQuantity", default=0))
-        if not name or qty <= 0:
+        # THE single purchasability gate — every suggestion path inherits this.
+        if not name or not _is_purchasable(item, off_menu, qty):
             continue
         category = _norm_category(str(_first(item, "category", "masterCategory") or ""))
-        if not category:
-            continue  # trade samples / non-sellable
         price = _to_float(_first(item, "unitPrice", "recUnitPrice", "price", default=0))
-        if price <= 0:
-            continue  # no retail price → not on the menu / not for sale
-        # NOT ON THE LIVE MENU (retired / not online-sale-configured / not e-comm
-        # categorized, per /products): the POS stock feed lists it but the consumer
-        # menu doesn't, so Shop Now 404s. Skip.
-        if off_menu and str(_first(item, "productId", default="")) in off_menu:
-            continue
-        # STALE: a package not modified in months is leftover zombie stock — the
-        # POS snapshot never reconciled it to 0, but it isn't on the live menu, so
-        # Shop Now 404s. Drop per-package BEFORE aggregation, so a product that
-        # ALSO has a fresh package keeps only that real, sellable stock.
-        if _stale(_first(item, "lastModifiedDateUtc", default="")):
-            continue
         pid = str(_first(item, "productId", "sku", "packageId", "inventoryId", default=name))
         if pid in agg:
             agg[pid]["quantity_on_hand"] += int(qty)
