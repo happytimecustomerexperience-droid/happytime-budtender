@@ -111,12 +111,35 @@ def _stale(last_modified, max_age_days: int = FRESH_DAYS) -> bool:
 def _get_inventory(api_key: str) -> list[dict]:
     """In-stock items. /reporting/inventory carries qty + price + unitCost +
     brand/category/strain/labResults in one call (the /inventory endpoint is
-    empty for these read-only keys, so we use the reporting snapshot)."""
-    data = _pos_get(api_key, "/inventory", {"includeLabResults": "true", "includeRoomQuantities": "false"})
+    empty for these read-only keys, so we use the reporting snapshot).
+
+    `includeRoomQuantities=true` makes each row carry `roomQuantities` (per-room
+    stock), so we can count ONLY the Sales Floor room — not back-stock or the
+    Quarantine/Returns room — when deciding what's buyable."""
+    data = _pos_get(api_key, "/inventory", {"includeLabResults": "true", "includeRoomQuantities": "true"})
     if isinstance(data, list) and data:
         return data
-    fallback = _pos_get(api_key, "/reporting/inventory")
+    fallback = _pos_get(api_key, "/reporting/inventory", {"includeRoomQuantities": "true"})
     return fallback if isinstance(fallback, list) else []
+
+
+# Stock in the SALES FLOOR room is the only stock a customer can actually buy.
+# `quantityAvailable` sums ALL rooms — including "Quarantine Room/Returns" and
+# back-stock — so we count the Sales Floor room only. Room-exact: nothing in
+# quarantine/returns/back can leak into suggestions. Matched by room NAME so it's
+# store-agnostic across differing roomIds.
+def _sales_floor_qty(item: dict) -> float | None:
+    """Quantity in the Sales Floor room. None when the row carries no room
+    breakdown (older/edge feed) → the caller falls back to the all-rooms
+    aggregate rather than hide the whole catalog."""
+    rq = item.get("roomQuantities")
+    if not isinstance(rq, list) or not rq:
+        return None
+    return sum(
+        _to_float(_first(e, "quantityAvailable", "quantity", default=0))
+        for e in rq
+        if isinstance(e, dict) and "sales floor" in str(_first(e, "room", "roomName", default="")).lower()
+    )
 
 
 def _extract_thc(item: dict) -> float | None:
@@ -177,10 +200,13 @@ def fetch_inventory(location_slug: str) -> list[dict]:
     """Normalized in-stock rows for one store (incl. cost for margin).
 
     Sourced entirely from /reporting/inventory (8k rows incl. unitCost), so a
-    sync is a single call per store. We drop rows that aren't really on the live
-    menu, so Shop Now never 404s: RETIRED products (POS isActive=False) AND STALE
-    zombie packages (lastModifiedDateUtc older than FRESH_DAYS — leftover stock
-    the POS snapshot never reconciled to 0).
+    sync is a single call per store. Stock counts the SALES FLOOR room ONLY
+    (`_sales_floor_qty`), never back-stock or Quarantine/Returns. We also drop:
+    medical-only packages (not sellable to rec customers), rows that aren't really
+    on the live menu (RETIRED — POS isActive=False), and STALE zombie packages
+    (lastModifiedDateUtc older than FRESH_DAYS — leftover stock the POS snapshot
+    never reconciled to 0). So Shop Now never 404s and we never suggest something
+    a customer can't grab off the floor.
     """
     key = _store(location_slug).get("pos_key")
     if not key:
@@ -194,7 +220,13 @@ def fetch_inventory(location_slug: str) -> list[dict]:
     agg: dict[str, dict] = {}
     for item in _get_inventory(key):
         name = _first(item, "productName", "name") or ""
-        qty = _to_float(_first(item, "quantityAvailable", "quantity", "availableQuantity", default=0))
+        if item.get("medicalOnly") is True:
+            continue  # medical-only package — not sellable to rec customers
+        # Count ONLY the Sales Floor room (not the all-rooms aggregate), so stock
+        # sitting in Quarantine/Returns or the back room can never be suggested.
+        floor_qty = _sales_floor_qty(item)
+        qty = floor_qty if floor_qty is not None else _to_float(
+            _first(item, "quantityAvailable", "quantity", "availableQuantity", default=0))
         if not name or qty <= 0:
             continue
         category = _norm_category(str(_first(item, "category", "masterCategory") or ""))
