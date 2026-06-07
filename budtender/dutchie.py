@@ -159,6 +159,13 @@ def _extract_thc(item: dict) -> float | None:
 _RETIRED_TTL = 3600  # refresh the retired-product list hourly
 
 
+def _ecom_blank(v) -> bool:
+    """An e-comm category that places a product on the consumer menu is MISSING:
+    null, empty, or the literal 'N/A'. A product with no e-comm category can't be
+    browsed/found on the menu."""
+    return str(v or "").strip().upper() in ("", "N/A")
+
+
 def _off_menu_product_ids(api_key: str, location_slug: str) -> set[str]:
     """Dutchie productIds that are NOT on the live consumer menu, per the /products
     catalog of record. /reporting/inventory (our stock feed) is a SUPERSET of the
@@ -166,10 +173,15 @@ def _off_menu_product_ids(api_key: str, location_slug: str) -> set[str]:
     subtract anything the catalog marks as:
       • RETIRED             — isActive is False (archived / off the sales floor)
       • not online-for-sale — onlineAvailable / onlineProduct is False
-      • not e-comm listed   — ecomCategory 'N/A' (never categorized for the menu, so
-                              it can't be browsed there). This was the "fresh +
+      • not e-comm listed   — NO e-comm category at all: BOTH ecomCategory and
+                              ecomSubcategory are blank (null / '' / 'N/A'). Without
+                              one it can't be placed on a menu category, so it can't
+                              be browsed or found there. This was the "fresh +
                               in-stock + every flag green but still not on the menu"
-                              leak (e.g. SnickleFritz LR Sugar White Runtz 1g).
+                              leak — e.g. "Khalifa Kush DOH … Baby Turtle 1pk"
+                              (ecomCategory None) and the SnickleFritz LR example.
+                              (Catches the ~633/store null-category items the old
+                              'N/A'-only check missed.)
 
     Cached hourly: /products is a large, slow-changing catalog, so we don't refetch
     it on every 10-min inventory sync. FAIL-OPEN — on a fetch error we return an
@@ -190,7 +202,7 @@ def _off_menu_product_ids(api_key: str, location_slug: str) -> set[str]:
         if (p.get("isActive") is False
                 or p.get("onlineAvailable") is False
                 or p.get("onlineProduct") is False
-                or str(p.get("ecomCategory") or "").strip().upper() == "N/A"):
+                or (_ecom_blank(p.get("ecomCategory")) and _ecom_blank(p.get("ecomSubcategory")))):
             off.add(str(pid))
     cache.set(ck, off, timeout=_RETIRED_TTL)
     return off
@@ -208,7 +220,7 @@ def _is_purchasable(item: dict, off_menu: set[str], floor_qty: float) -> bool:
       • sellable CATEGORY  — not a trade sample / non-sellable
       • has a retail PRICE — priceless rows are back-office / not-for-sale
       • ON THE LIVE MENU   — per /products: isActive AND onlineAvailable AND
-        onlineProduct AND ecomCategory != 'N/A' (see _off_menu_product_ids)
+        onlineProduct AND HAS an e-comm category (see _off_menu_product_ids)
       • FRESH              — lastModifiedDateUtc within FRESH_DAYS (no zombie stock)
     """
     if floor_qty <= 0:
