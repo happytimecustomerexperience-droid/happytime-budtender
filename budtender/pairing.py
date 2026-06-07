@@ -44,7 +44,7 @@ W_LADDER = 0.15      # earlier in the lighter ladder = more natural add-on
 W_MARGIN = 0.15      # business profit
 W_PRICEFIT = 0.25    # near the ~25% impulse-price sweet spot
 RECENT_DAYS = 30
-MIN_STOCK = 3        # owner policy: never pair anything with fewer than 3 on hand
+MIN_STOCK = 5        # owner policy: never pair anything with fewer than 5 on the sales floor
 
 
 def pair_attr_key(category: str | None, subcategory: str | None) -> str:

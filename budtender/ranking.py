@@ -19,9 +19,9 @@ BUCKET_NUDGE = {"profit": 1.0, "core": 0.4, "traffic": 0.0}
 _TIER_CENTER = {"value": -0.6, "mid": 0.0, "top": 0.6}
 
 # Minimum on-hand units to suggest. Owner policy: NEVER offer anything with fewer
-# than 3 units on hand — avoids near-sold-out picks (qoh 1-2). (The real OOS problem
-# was the stale-Supabase fallback + cross-category bleed, both fixed — not this floor.)
-MIN_STOCK = 3
+# than 5 units on the SALES FLOOR — avoids near-sold-out picks. (quantity_on_hand
+# here is the sales-floor quantity; back-stock / quarantine never count.)
+MIN_STOCK = 5
 
 EFFECT_HINTS = {
     "relaxed": {"indica", "myrcene", "linalool", "kush"},
