@@ -5,6 +5,7 @@ No response ever includes cost/margin (see serializers.public_product).
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from datetime import timedelta
 
@@ -12,8 +13,8 @@ from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import (AnalyticsEvent, ChatMessage, ChatSession, CustomerProfile,
-                     Feedback, Product, SuggestedProduct)
+from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
+                     CustomerProfile, Feedback, Product, SuggestedProduct)
 from .pairing import pair_for
 from . import facets
 from .ranking import (CATEGORY_BY_SLOTKEY, MIN_STOCK, available_sizes,
@@ -27,6 +28,56 @@ from .tasks import (_normalize_phone, ensure_inventory_fresh,
 def _hash_phone(raw: str) -> str:
     p = _normalize_phone(raw or "")
     return hashlib.sha256(p.encode()).hexdigest() if p else ""
+
+
+def _slug_from_name(name: str) -> str:
+    """Mirror the website catalog slug algorithm (scripts/process-catalog.js)
+    EXACTLY so these slugs join against the site's product slugs:
+    lower -> trim -> spaces to '-' -> strip non [a-z0-9-] -> collapse '-' -> trim.
+    NOTE: name-only (no SKU suffix), unlike the stored Product.slug."""
+    s = (name or "").lower().strip()
+    s = re.sub(r"\s+", "-", s)
+    s = re.sub(r"[^a-z0-9-]", "", s)
+    s = re.sub(r"-+", "-", s)
+    s = re.sub(r"^-|-$", "", s)
+    return s
+
+
+class InStockProductsView(APIView):
+    """GET /api/v1/products/in-stock/?store=<yakima|mount-vernon|pullman>
+
+    Returns the current SALES-FLOOR inventory for one store using the SAME gate
+    the recommender uses (availability=True AND quantity_on_hand >= MIN_STOCK),
+    as name-derived slugs that match the website catalog, plus per-slug on-hand
+    counts. Powers the website 'find similar' feature's in-stock guarantee.
+    Auth: global ServiceTokenPermission (Bearer HHT_BACKEND_TOKEN). No cost/margin.
+    """
+
+    def get(self, request):
+        location = (request.query_params.get("store") or "yakima").strip()
+        valid = {s[0] for s in STORES}
+        if location not in valid:
+            return Response({"error": f"unknown store: {location}"}, status=400)
+        rows = (
+            Product.objects
+            .filter(location_slug=location, availability=True,
+                    quantity_on_hand__gte=MIN_STOCK)
+            .values_list("name", "quantity_on_hand")
+        )
+        stock: dict[str, int] = {}
+        for name, qty in rows:
+            slug = _slug_from_name(name)
+            if not slug:
+                continue
+            stock[slug] = max(stock.get(slug, 0), int(qty or 0))
+        slugs = sorted(stock.keys())
+        return Response({
+            "store": location,
+            "count": len(slugs),
+            "slugs": slugs,
+            "stock": stock,
+            "generated_at": timezone.now().isoformat(),
+        })
 
 RESUME_WINDOW = timedelta(days=30)
 
