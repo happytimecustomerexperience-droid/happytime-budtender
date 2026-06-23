@@ -98,6 +98,51 @@ FAQ_ROWS = [
         "topic": "age",
         "paraphrases": ["do I need my ID", "what do I bring", "is ID required"],
     },
+    {
+        "key": "loyalty",
+        "question": "Do you have a rewards or loyalty program?",
+        "answer": "Yes — it's free to join; just sign up at any store with your phone number. You "
+        "earn 1 point for every dollar you spend, points never expire, and the more you earn the "
+        "better your tier. Ask a budtender to set you up.",
+        "topic": "loyalty",
+        "paraphrases": ["rewards program", "points", "loyalty card", "do you have rewards", "sign up"],
+    },
+    {
+        "key": "online-order",
+        "question": "How do I order online? / Can I order ahead?",
+        "answer": "Browse the menu for your store on our website, add what you want, and reserve it "
+        "for pickup — there's no payment online, you pay in store with cash or debit when you pick "
+        "up. Orders are usually ready in about 15 minutes, and we hold them to the end of the day.",
+        "topic": "pickup",
+        "paraphrases": ["order ahead", "reserve online", "online order", "order for pickup", "how do I order"],
+    },
+    {
+        "key": "in-store",
+        "question": "Can I just walk in and shop?",
+        "answer": "Absolutely — walk in any time during store hours and a budtender will help you "
+        "find what you're looking for. Just bring a valid government photo ID showing you're 21 or "
+        "older.",
+        "topic": "pickup",
+        "paraphrases": ["walk in", "shop in store", "come in", "do I need an appointment"],
+    },
+    {
+        "key": "id-types",
+        "question": "What kinds of ID do you accept?",
+        "answer": "A valid, unexpired government photo ID showing you're 21 or older — a driver's "
+        "license from any U.S. state, a state ID card, a U.S. passport, a military ID, or an "
+        "enhanced driver's license. Temporary paper IDs can't be accepted, and everyone in your "
+        "party needs ID.",
+        "topic": "age",
+        "paraphrases": ["what ID", "do you take a passport", "expired ID", "military ID", "accepted ID"],
+    },
+    {
+        "key": "stays-in-wa",
+        "question": "Can I take it out of Washington?",
+        "answer": "No — anything you buy has to stay in Washington state; under federal law cannabis "
+        "can't cross state lines.",
+        "topic": "limits",
+        "paraphrases": ["take it across state lines", "out of state", "bring it to another state"],
+    },
 ]
 
 
