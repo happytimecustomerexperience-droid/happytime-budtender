@@ -174,13 +174,11 @@ services:
       sh -c "python manage.py migrate --noinput &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers ${VOICE_GUNICORN_WORKERS:-2} --timeout 120"
 
-  # Optional voice post-call queue (Gemini summary + staff email off the webhook
-  # turn). OFF by default — voice runs fine without it (work degrades to inline).
-  # Enable: set HHT_USE_CELERY=1 in voice/.env, then
-  #     docker compose --profile voice-async up -d --build
+  # Voice post-call queue (Gemini summary + staff email OFF the webhook turn).
+  # ENABLED by default — always up with the stack (needs HHT_USE_CELERY=1 in
+  # voice/.env so voice-web actually enqueues instead of running inline).
   voice-redis:
     image: redis:7-alpine
-    profiles: ["voice-async"]
     expose:
       - "6379"
     healthcheck:
@@ -193,7 +191,6 @@ services:
   voice-worker:
     build:
       context: ./voice
-    profiles: ["voice-async"]
     env_file:
       - ./voice/.env
     environment:
