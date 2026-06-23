@@ -25,8 +25,8 @@ _AGENT_ROLES = {"entry_router", "budtender", "faq", "vendor", "escalation"}
 VOICE_AGENT_FLOW = {
     "entry_router": {
         "step": "1",
-        "blurb": "Greets as Koptza, confirms 21+, classifies intent in one turn → "
-        "budtender / faq / vendor / escalation.",
+        "blurb": "Greets as Happy Time, captures the store + confirms 21+, classifies intent in "
+        "one turn → budtender / faq / vendor / escalation.",
     },
     "budtender": {
         "step": "2",

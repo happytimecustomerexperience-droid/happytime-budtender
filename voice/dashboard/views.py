@@ -237,8 +237,8 @@ def agent_detail(request, role: str):
 # ── agent_prompt_assist (Gemini additive editor, ported verbatim in behavior) ──
 _ASSIST_SYSTEM = (
     "You are a careful prompt engineer editing the SYSTEM PROMPT of a production AI voice "
-    "budtender for Happy Time Weed (a family-owned Washington cannabis retailer; persona "
-    "'Koptza'). You receive the agent's CURRENT full system prompt and an ADMINISTRATOR "
+    "budtender for Happy Time Weed (a family-owned Washington cannabis retailer; the agent "
+    "identifies as Happy Time, with no persona name). You receive the agent's CURRENT full system prompt and an ADMINISTRATOR "
     "INSTRUCTION describing an ADDITION to make.\n"
     "Rules:\n"
     "- Return the COMPLETE updated system prompt, ready to use as-is.\n"
