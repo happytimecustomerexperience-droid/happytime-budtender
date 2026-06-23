@@ -157,7 +157,7 @@ services:
       - traefik.enable=true
       - traefik.docker.network=happytime-budtender_default
       - traefik.http.routers.voice.rule=Host(`voice.happytimeweed.com`)
-      - traefik.http.routers.voice.entrypoints=web
+      - traefik.http.routers.voice.entrypoints=web,websecure
       - traefik.http.routers.voice.tls=true
       - traefik.http.routers.voice.tls.certresolver=letsencrypt
       - traefik.http.services.voice.loadbalancer.server.port=8000
