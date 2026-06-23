@@ -75,6 +75,11 @@ ASSISTANT_MODEL = "gpt-4.1-mini"
 ASSISTANT_TEMPERATURE = 0.3  # export per-node value (L17)
 ASSISTANT_MAX_TOKENS = 250  # export per-node value (L18); router member can run 200
 
+# The fixed opener the entry member speaks first (firstMessageMode=assistant-speaks-first). Set as
+# `firstMessage` on the entry_router payload so every call opens with the Happy Time greeting
+# (deterministic — no model variance) and we DON'T ask the store until it matters.
+ENTRY_FIRST_MESSAGE = "Welcome to Happy Time! How can I help you today?"
+
 # ── serverMessages — webhook events voice/webhooks.py handles (§4.4) ──────────
 # NOTE: "assistant-request" is NOT a valid Vapi serverMessage (rejected with 400);
 # assistants here are pre-provisioned squad members, so it isn't needed.
@@ -88,7 +93,7 @@ MEMBER_TOOLS = {
     "budtender": ["suggest_products", "check_inventory", "pair_upsell"],
     "faq": ["faq_lookup"],  # + the KB Query Tool (attached by ensure_files)
     "vendor": ["notify_vendor_callback"],  # + transferCall (built from transfer_number_key)
-    "escalation": [],  # transferCall only (no custom tool)
+    "escalation": ["notify_staff_issue"],  # gather+email is the default; transferCall is last-resort
 }
 
 # P0 ships ONE merged member: entry_faq (entry + FAQ), AgentPrompt.role="faq" so the later
@@ -203,6 +208,44 @@ TOOL_SPECS = {
                 },
             },
             "required": ["store", "reason", "summary"],
+        },
+        "async": True,
+    },
+    "notify_staff_issue": {
+        "description": (
+            "After you have LISTENED and gathered the caller's full issue (a complaint, a defective "
+            "product, a billing/return dispute, or a repeated request for a person), log it and "
+            "EMAIL the store team right away so they can follow up. Call this ONCE you have the "
+            "details — it is the default path and replaces an immediate transfer. NEVER returns "
+            "cost or margin."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "store": {"type": "string", "enum": ["yakima", "mount-vernon", "pullman"]},
+                "issue_type": {
+                    "type": "string",
+                    "enum": [
+                        "defective_return",
+                        "dispute",
+                        "complaint",
+                        "repeated_request",
+                        "other",
+                    ],
+                },
+                "summary": {
+                    "type": "string",
+                    "description": (
+                        "The COMPLETE issue in the caller's words — what happened, which product or "
+                        "order, what's wrong, and what they'd like done."
+                    ),
+                },
+                "caller_name": {
+                    "type": "string",
+                    "description": "Name + best callback contact the caller gives. No raw phone number stored.",
+                },
+            },
+            "required": ["store", "summary"],
         },
         "async": True,
     },

@@ -240,6 +240,9 @@ def build_assistant_payload(role: str, *, name: str | None = None) -> tuple[dict
         "serverMessages": list(C.SERVER_MESSAGES),
         "firstMessageMode": "assistant-speaks-first",
     }
+    # The entry member opens the call with the fixed Happy Time greeting (speaks first, deterministic).
+    if role == "entry_router":
+        payload["firstMessage"] = C.ENTRY_FIRST_MESSAGE
     return payload, warnings
 
 

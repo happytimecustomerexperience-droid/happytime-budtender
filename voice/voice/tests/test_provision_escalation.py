@@ -94,10 +94,16 @@ def test_provision_p2_rerun_is_zero_drift(fake_vapi, all_prompts):
 
 
 @pytest.mark.django_db
-def test_escalation_payload_carries_transfer_no_dangling_tools(fake_vapi, all_prompts):
-    """The escalation assistant payload has the warm transferCall + no custom toolIds (none needed)."""
+def test_escalation_payload_carries_transfer_and_staff_issue_tool(fake_vapi, all_prompts):
+    """The escalation payload has the warm transferCall + its notify_staff_issue toolId (the
+    gather+email default), with no dangling tool warning."""
+    from voice.models import VapiObject
+
+    VapiObject.objects.update_or_create(
+        kind="tool", name="notify_staff_issue", defaults={"vapi_id": "id_notify_staff_issue"}
+    )
     payload, warnings = provision.build_assistant_payload("escalation", name="escalation")
     assert not [w for w in warnings if w.startswith("tool not provisioned")]
     dumped = json.dumps(payload)
     assert dumped.count('"type": "transferCall"') == 1
-    assert payload["model"]["toolIds"] == []  # escalation has no custom tool
+    assert payload["model"]["toolIds"] == ["id_notify_staff_issue"]  # gather+email tool

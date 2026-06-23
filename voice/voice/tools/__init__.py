@@ -60,3 +60,4 @@ def dispatch(name: str, args: dict, ctx: dict) -> dict:
 from voice.tools import faq  # noqa: E402,F401,I001  (registers faq_lookup)
 from voice.tools import suggest  # noqa: E402,F401,I001  (P1 — suggest_products/check_inventory/pair_upsell)
 from voice.tools import vendor  # noqa: E402,F401,I001  (P3 — notify_vendor_callback)
+from voice.tools import escalation  # noqa: E402,F401,I001  (Phase 1 — notify_staff_issue)

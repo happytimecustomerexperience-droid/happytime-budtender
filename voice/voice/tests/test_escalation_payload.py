@@ -16,7 +16,14 @@ from voice.provision import build_assistant_payload, build_squad_payload
 
 @pytest.fixture
 def _seeded(db):
+    from voice.models import VapiObject
+
     seed.seed_agent_prompts()
+    # escalation now carries the notify_staff_issue tool (gather+email is the default); provision it
+    # so the payload resolves its toolId with no "not provisioned" warning.
+    VapiObject.objects.update_or_create(
+        kind="tool", name="notify_staff_issue", defaults={"vapi_id": "id_notify_staff_issue"}
+    )
 
 
 # ── A2 + B1 + B2: the warm transferCall on the escalation assistant ────────────

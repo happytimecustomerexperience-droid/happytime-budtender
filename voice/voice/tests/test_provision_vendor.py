@@ -84,7 +84,7 @@ def test_provisioned_squad_has_vendor_edges(fake_vapi, all_prompts):
 def test_provision_vendor_rerun_is_zero_drift(fake_vapi, all_prompts):
     """G2: a re-run creates zero new Vapi objects + issues zero PATCHes."""
     r1 = provision.provision_all(dry_run=False)
-    assert r1.ok and r1.created >= 7  # 5 tools + 5 assistants + squad
+    assert r1.ok and r1.created >= 7  # 6 tools + 5 assistants + squad
 
     fake_vapi.creates = 0
     fake_vapi.patches = 0
