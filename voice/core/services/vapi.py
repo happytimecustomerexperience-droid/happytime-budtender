@@ -1,9 +1,12 @@
 """Vapi REST client — the ONLY code that talks to ``api.vapi.ai`` (20-SPEC-vapi-deploy.md §5;
 01-ARCHITECTURE.md §5).
 
-Base ``https://api.vapi.ai``; ``Authorization: Bearer <VAPI_PRIVATE_KEY>``. Documented CRUD
-only on ``/assistant``, ``/squad``, ``/tool``, ``/phone-number``, ``/file`` — NEVER ``/workflow``
-(undocumented/beta — ADR-002; a guard test asserts the string never appears here).
+Base ``https://api.vapi.ai``; ``Authorization: Bearer <VAPI_PRIVATE_KEY>``. CRUD on
+``/assistant``, ``/squad``, ``/tool``, ``/phone-number``, ``/file`` and ``/workflow``. The
+``/workflow`` endpoint is beta/undocumented but OWNER-AUTHORIZED for the reliable guided-
+questionnaire agent (ADR-023 supersedes ADR-002); its live shape was pinned by a smoke probe.
+The squad provisioner (``voice/provision.py``) still never touches ``/workflow`` — the workflow
+agent is built + provisioned from its own module (``voice/workflow.py``) and runs in parallel.
 
 Cross-cutting (§5.1):
   * Bearer auth header injected once; ``Content-Type``/``Accept``/``User-Agent`` set on the session.
@@ -40,9 +43,6 @@ _LIST_CAP = int(os.environ.get("VAPI_LIST_CAP", "2000"))
 _BACKOFF_BASE = 0.5
 _BACKOFF_CAP = 8.0
 _RETRY_STATUS = {429, 500, 502, 503, 504}
-
-# Defensive: a path that ever contains this is a bug — Vapi Workflows are off-limits (ADR-002).
-_FORBIDDEN_PATH = "/workflow"
 
 # ── dry-run recorder (§5.1.1) ─────────────────────────────────────────────────
 # When dry_run is on, non-GET writes are recorded here (redacted) instead of issued, and a
@@ -160,11 +160,6 @@ def _client() -> httpx.Client:
     )
 
 
-def _guard_path(path: str) -> None:
-    if _FORBIDDEN_PATH in path:
-        raise VapiError(f"refusing to call a Vapi Workflow path ({path}) — ADR-002")
-
-
 def _sleep_for(attempt: int, retry_after: str | None) -> float:
     if retry_after:
         try:
@@ -176,7 +171,6 @@ def _sleep_for(attempt: int, retry_after: str | None) -> float:
 
 def _request(method: str, path: str, *, params: dict | None = None, json: Any = None) -> Any:
     """The one funnel: dry-run recording + retry/backoff + redacted fail-loud (§5.1)."""
-    _guard_path(path)
     method = method.upper()
 
     if _dry_run:
@@ -330,6 +324,32 @@ def delete_squad(squad_id: str) -> None:
 
 def find_squad_by_name(name: str) -> dict | None:
     return _find_by_name(list_squads(), name)
+
+
+# ── Workflows (beta, OWNER-AUTHORIZED — ADR-023 supersedes ADR-002) ───────────
+# The reliable guided-questionnaire agent lives here; built/provisioned from voice/workflow.py.
+def list_workflows(**filters) -> list[dict]:
+    return _paginated("/workflow", filters)
+
+
+def get_workflow(workflow_id: str) -> dict:
+    return get(f"/workflow/{workflow_id}")
+
+
+def create_workflow(body: dict) -> dict:
+    return post("/workflow", body)
+
+
+def patch_workflow(workflow_id: str, body: dict) -> dict:
+    return patch(f"/workflow/{workflow_id}", body)
+
+
+def delete_workflow(workflow_id: str) -> None:
+    delete(f"/workflow/{workflow_id}")
+
+
+def find_workflow_by_name(name: str) -> dict | None:
+    return _find_by_name(list_workflows(), name)
 
 
 # ── Tools ─────────────────────────────────────────────────────────────────────

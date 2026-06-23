@@ -343,14 +343,15 @@ def _code_lines_without_strings_or_comments(module) -> str:
     return " ".join(out)
 
 
-def test_no_workflow_path_anywhere():
-    """ADR-002 guard (B4): no executable code in the client or provisioner constructs a /workflow
-    path. The only allowed mention is the defensive ``_FORBIDDEN_PATH = "/workflow"`` guard CONSTANT
-    + docstrings (both string literals, excluded here)."""
-    assert "/workflow" not in _code_lines_without_strings_or_comments(vapi)
+def test_squad_provisioner_never_touches_workflow():
+    """ADR-023 (supersedes ADR-002): /workflow is now an owner-authorized path in the client, but
+    the SQUAD provisioner stays isolated from it — the workflow agent is built + provisioned from its
+    own module (voice/workflow.py), never from provision.py. So provision.py constructs no /workflow
+    path, while vapi.py intentionally exposes the workflow CRUD verbs."""
     assert "/workflow" not in _code_lines_without_strings_or_comments(provision)
-    # And the defensive guard constant IS present (the client refuses such a path at runtime).
-    assert vapi._FORBIDDEN_PATH == "/workflow"
+    # The client now exposes workflow CRUD on purpose (no /workflow refusal guard remains).
+    assert hasattr(vapi, "create_workflow") and hasattr(vapi, "find_workflow_by_name")
+    assert not hasattr(vapi, "_FORBIDDEN_PATH")
 
 
 def test_secret_is_redacted_in_logs_and_errors(monkeypatch):

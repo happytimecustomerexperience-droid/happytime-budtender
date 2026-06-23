@@ -16,7 +16,7 @@ Forked from the `swedish-bot` chassis.
   `dashboard/` agents/flow-canvas/KB/monitor/queues/analytics/publish · `docs/plans/` the full spec suite.
 
 ## Non-negotiable invariants
-- **Vapi = Assistants + ONE Squad. NEVER the `/workflow` endpoint** (deprecated; a test guards this).
+- **Vapi = Assistants + ONE Squad** for the squad provisioner (`provision.py` never touches `/workflow` — a test guards this). **Exception (ADR-023):** the guided product questionnaire runs as an owner-authorized Vapi **Workflow**, built from its own module (`voice/workflow.py` + `provision_workflow`); the squad stays live as fallback until cutover.
 - **Provisioning is idempotent + zero-drift** (`provision_vapi`); re-runs issue 0 creates.
 - **Webhooks fail closed** — HMAC/secret verified first, constant-time; no handler runs on bad proof.
 - **Leak-guard is code-owned** — `faq_lookup`/suggestions can never emit `cost`/`margin` (central scrub +

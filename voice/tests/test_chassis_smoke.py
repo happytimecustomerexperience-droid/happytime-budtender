@@ -39,10 +39,14 @@ def test_healthz_green_when_all_ready(client, monkeypatch, mock_gemini):
     assert body["vapi"]["ok"] is True
 
 
-# ── vapi client: never touches /workflow, degrades cleanly ─────────────
-def test_vapi_refuses_workflow_path(monkeypatch):
-    monkeypatch.setenv("VAPI_PRIVATE_KEY", "test-key")
-    with pytest.raises(vapi.VapiError, match="Workflow"):
+# ── vapi client: /workflow is an owner-authorized path (ADR-024 supersedes ADR-002) ──
+def test_vapi_workflow_path_allowed(monkeypatch):
+    """The old ADR-002 guard is gone: /workflow no longer raises a refusal. The client exposes
+    workflow CRUD; here we just prove the path isn't blocked (a bad key fails on auth, not a guard)."""
+    monkeypatch.delenv("VAPI_PRIVATE_KEY", raising=False)
+    assert hasattr(vapi, "create_workflow") and hasattr(vapi, "find_workflow_by_name")
+    # Unconfigured client raises on the missing key — NOT a "refusing Workflow path" guard.
+    with pytest.raises(vapi.VapiError, match="not configured"):
         vapi.get("/workflow/123")
 
 
