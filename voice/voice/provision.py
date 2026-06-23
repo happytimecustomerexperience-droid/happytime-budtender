@@ -155,10 +155,12 @@ def _transfer_tool(role: str, warnings: list[str]) -> dict:
                 "number": number,
                 "message": "Connecting you to the team now — one moment.",
                 "transferPlan": {
-                    "mode": "warm-transfer-wait-for-operator",
-                    # vendor no-answer → return control to the AI member (ADR-015); the exact Vapi
-                    # field is pinned by a P3 contract test — this spec guarantees the path exists.
-                    "fallbackPlan": {"mode": "return-to-assistant"},
+                    # Warm transfer where the AI reads the operator a call summary, then connects
+                    # the caller. Verified valid against the LIVE Vapi schema (2026-06-23): the old
+                    # "warm-transfer-wait-for-operator" mode AND a fallbackPlan{mode:...} were both
+                    # rejected with 400. The vendor "no-answer → return control to the AI member"
+                    # leg (ADR-015) needs a different Vapi mechanism and is deferred to Phase 3.
+                    "mode": "warm-transfer-say-summary",
                     "summaryPlan": {
                         "enabled": True,
                         "messages": [

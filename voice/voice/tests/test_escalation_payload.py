@@ -35,7 +35,7 @@ def test_escalation_transfer_tool_warm_with_transcript(settings, _seeded):
     dest = dests[0]
     assert dest["number"] == "+15095711106"
     plan = dest["transferPlan"]
-    assert plan["mode"] == "warm-transfer-wait-for-operator"  # B1
+    assert plan["mode"] == "warm-transfer-say-summary"  # B1
     sp = plan["summaryPlan"]
     assert sp["enabled"] is True
     assert "{{transcript}}" in sp["messages"][0]["content"]  # operator hears context

@@ -27,14 +27,14 @@ def vendor_payload(db, settings):
 
 def test_vendor_transfer_destinations_non_empty(vendor_payload):
     """B1: the warm transferCall has a NON-EMPTY destinations array (placeholder when env unset) +
-    warm-transfer-wait-for-operator + a summaryPlan injecting {{transcript}}."""
+    warm-transfer-say-summary + a summaryPlan injecting {{transcript}}."""
     tools = vendor_payload["model"]["tools"]
     transfer = next(t for t in tools if t["type"] == "transferCall")
     dests = transfer["destinations"]
     assert len(dests) >= 1
     assert dests[0]["number"]  # non-empty (placeholder when HHT_TRANSFER_NUMBER_YAKIMA unset)
     plan = dests[0]["transferPlan"]
-    assert plan["mode"] == "warm-transfer-wait-for-operator"
+    assert plan["mode"] == "warm-transfer-say-summary"
     assert plan["summaryPlan"]["enabled"] is True
     blob = json.dumps(plan["summaryPlan"])
     assert "{{transcript}}" in blob
