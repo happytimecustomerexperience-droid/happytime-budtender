@@ -55,11 +55,14 @@ services:
 
   web:
     build: .
-    # Warm the questionnaire facet cache BEFORE serving, so the steps are instant
-    # on the very first request after a `docker compose up`/restart (Redis is
-    # flushed on restart; warming only-on-sync left a cold window). `|| true` keeps
-    # a warm hiccup from blocking startup; `exec` hands PID 1 to gunicorn.
-    command: sh -c "python manage.py warm_facets || true; exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-5} --worker-class gthread --threads ${GUNICORN_THREADS:-4} --timeout 60 --keep-alive 5 --max-requests 1000 --max-requests-jitter 100"
+    # On boot: kick a Dutchie inventory sync in the BACKGROUND (non-blocking, so gunicorn starts
+    # immediately) so a fresh deploy self-populates the Product table within ~1 min — no manual
+    # sync step, and the agent can suggest products right after `docker compose up`. This is one of
+    # three layers keeping inventory fresh (also: celery-beat every 10 min + a daily host cron).
+    # Then warm the questionnaire facet cache BEFORE serving so the steps are instant on the first
+    # request (Redis is flushed on restart). `|| true` keeps a hiccup from blocking startup;
+    # `exec` hands PID 1 to gunicorn.
+    command: sh -c "( python manage.py sync_inventory || true ) & python manage.py warm_facets || true; exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-5} --worker-class gthread --threads ${GUNICORN_THREADS:-4} --timeout 60 --keep-alive 5 --max-requests 1000 --max-requests-jitter 100"
     env_file:
       - .env
       - .env.dutchie
