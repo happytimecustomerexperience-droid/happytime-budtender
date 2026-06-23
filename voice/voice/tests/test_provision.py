@@ -188,7 +188,6 @@ def test_assistant_payload_shape(fake_vapi, faq_prompt):
     # server + serverMessages (the webhook contract the provisioner writes)
     assert payload["server"]["url"].endswith("/api/voice/vapi")
     assert payload["serverMessages"] == [
-        "assistant-request",
         "tool-calls",
         "status-update",
         "end-of-call-report",

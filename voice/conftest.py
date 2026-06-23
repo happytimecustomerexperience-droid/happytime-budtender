@@ -106,3 +106,12 @@ def _semantic_off(settings):
     # Embedding search is ON in production but OFF by default in tests so unit tests
     # stay offline + deterministic. Semantic tests opt in explicitly.
     settings.SEMANTIC_SEARCH_ENABLED = False
+
+
+@pytest.fixture(autouse=True)
+def _isolate_deploy_env(settings):
+    # Tests assume a clean (.env.example-style) env. A populated voice/.env leaks real deploy values
+    # via load_dotenv that break isolation — an owner-provisioned VAPI_PHONE_NUMBER_ID makes
+    # ensure_phone_number try to reconcile a number the mocked Vapi returns None for ("cannot
+    # create"). Clear it so the phone step skips by default; a phone-attach test would set it back.
+    settings.VAPI_PHONE_NUMBER_ID = ""

@@ -91,8 +91,11 @@ def test_prod_fail_closed_pepper_equals_secret(monkeypatch):
 def test_prod_fail_closed_missing_vapi_secrets(monkeypatch):
     from django.core.exceptions import ImproperlyConfigured
 
+    # Set empty (not delenv): settings reload calls load_dotenv(.env, override=False), which would
+    # re-inject a populated .env's real secrets after a delenv. A present-but-empty var is left
+    # empty by override=False, so the guard still sees the secret missing — robust to any .env.
     for k in ("VAPI_PRIVATE_KEY", "VAPI_WEBHOOK_SECRET", "HHT_BACKEND_TOKEN"):
-        monkeypatch.delenv(k, raising=False)
+        monkeypatch.setenv(k, "")
     with pytest.raises(ImproperlyConfigured, match="prod secrets"):
         _reload_settings(
             monkeypatch,

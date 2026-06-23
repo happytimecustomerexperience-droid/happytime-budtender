@@ -130,7 +130,7 @@ def test_rank_faq_returns_the_right_chunk(seeded_semantic):
     # Yakima hours → the Yakima-hours StoreFact (exact, store-scoped).
     top, _ = semantic.rank_faq("yakima store hours what time open", store="yakima")[0]
     assert isinstance(top, m.StoreFact) and top.store == "yakima" and top.kind == "hours"
-    assert "9 AM–11 PM" in top.value
+    assert "8 AM" in top.value and "11:30 PM" in top.value
 
     # Defective vape return → a WAC-314-55-079-cited row (return policy or the returns FAQ).
     top, _ = semantic.rank_faq("return a defective vape cartridge that won't fire")[0]
@@ -329,7 +329,7 @@ def test_every_mapped_row_exists():
     from kb import seed
 
     seed.seed_all()
-    assert m.FAQEntry.objects.count() == 8
+    assert m.FAQEntry.objects.count() == 13  # 8 core + 5 from the real site (loyalty/ordering/etc.)
     assert m.PolicyDocument.objects.filter(kind="return_policy").count() == 1
     assert m.StoreFact.objects.filter(kind="special").count() == 5
     assert m.StoreFact.objects.filter(kind="limit").count() == 5  # 4 limits + age/ID rule
@@ -358,18 +358,17 @@ def test_every_mapped_row_exists():
 
 @pytest.mark.django_db
 def test_o8_mount_vernon_hours_unconfirmed():
-    """D3: the Mt Vernon hours StoreFact is confirmed=False with value=='' and emits the
-    'call to confirm' chunk — never a guessed close time. Yakima hours seed real."""
+    """Store hours seed the real CONFIRMED values from happytimeweed.com — Mt Vernon hours are now
+    confirmed (the old O-8 'unconfirmed' guard no longer applies); Yakima opens late."""
     from kb import seed
 
     seed.seed_all()
     mv = m.StoreFact.objects.get(store="mount-vernon", kind="hours")
-    assert mv.confirmed is False
-    assert mv.value == ""
-    assert "call the store to confirm" in mv.chunk_text()
+    assert mv.confirmed is True
+    assert "Sunday" in mv.value and "Friday" in mv.value
 
     yak = m.StoreFact.objects.get(store="yakima", kind="hours")
-    assert yak.confirmed is True and yak.value == "9 AM–11 PM daily"
+    assert yak.confirmed is True and "8 AM" in yak.value and "11:30 PM" in yak.value
 
 
 @pytest.mark.django_db
