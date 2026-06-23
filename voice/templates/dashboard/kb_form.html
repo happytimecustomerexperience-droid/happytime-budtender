@@ -1,0 +1,19 @@
+{% extends "dashboard/base.html" %}
+{% block title %}{% if is_new %}New{% else %}Edit{% endif %} {{ label }} — Happy Time Voice{% endblock %}
+{% block content %}
+<p class="muted"><a href="{% url 'dash-kb-source' kind %}">← {{ label }}</a></p>
+<h1>{% if is_new %}New{% else %}Edit{% endif %} {{ label }} row</h1>
+
+<form method="post" class="card" {% if is_new %}action="{% url 'dash-kb-row-new' kind %}"{% else %}action="{% url 'dash-kb-row-edit' obj.pk %}?kind={{ kind }}"{% endif %}>
+  {% csrf_token %}
+  <input type="hidden" name="kind" value="{{ kind }}">
+  {% for field in form %}
+    <label>
+      <span class="lt">{{ field.label }}</span>
+      {{ field }}
+      {% if field.errors %}<span style="color:var(--action);font-size:12px">{{ field.errors|join:', ' }}</span>{% endif %}
+    </label>
+  {% endfor %}
+  <button class="btn btn-primary" type="submit">Save</button>
+</form>
+{% endblock %}

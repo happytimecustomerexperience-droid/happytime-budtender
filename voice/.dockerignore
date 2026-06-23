@@ -1,0 +1,14 @@
+.venv/
+.git/
+.env
+*.pyc
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+staticfiles/
+data/uploads/*
+!data/uploads/.gitkeep
+*-sa.json
+service-account*.json
+secrets/
+docs/

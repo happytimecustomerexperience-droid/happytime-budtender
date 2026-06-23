@@ -1,0 +1,30 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Overview — Happy Time Voice{% endblock %}
+{% block content %}
+<h1>Overview</h1>
+<p class="muted">The whole voice stack at a glance.</p>
+
+<div class="pills" style="margin:16px 0">
+  <div class="pill"><div class="n">{{ total }}</div><div class="l">Calls logged</div></div>
+  <div class="pill"><div class="n">{{ escalations }}</div><div class="l">Escalations</div></div>
+  <div class="pill"><div class="n">{{ vendor_callbacks }}</div><div class="l">Open vendor callbacks</div></div>
+  <div class="pill"><div class="n">{{ suggested }}</div><div class="l">Suggestion calls</div></div>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr">
+  <div class="card">
+    <h2>By outcome</h2>
+    <table>
+      <tr><th>Outcome</th><th>Count</th></tr>
+      {% for row in by_outcome %}<tr><td>{{ row.outcome }}</td><td>{{ row.n }}</td></tr>{% empty %}<tr><td colspan="2" class="muted">No calls yet.</td></tr>{% endfor %}
+    </table>
+  </div>
+  <div class="card">
+    <h2>By store</h2>
+    <table>
+      <tr><th>Store</th><th>Count</th></tr>
+      {% for row in by_store %}<tr><td>{{ row.store }}</td><td>{{ row.n }}</td></tr>{% empty %}<tr><td colspan="2" class="muted">No calls yet.</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+{% endblock %}

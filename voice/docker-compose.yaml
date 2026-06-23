@@ -1,0 +1,96 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-happytime_voice}
+      POSTGRES_USER: ${POSTGRES_USER:-happytime_voice}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-happytime_voice}
+    ports:
+      - "5432:5432"  # exposed for host-side manage.py during local dev
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-happytime_voice}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build: .
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,web"
+      # Non-default secret so the DEBUG=0 fail-closed check passes (set a real one in prod).
+      DJANGO_SECRET_KEY: "local-demo-secret-not-for-production-change-me-please"
+      PHONE_HASH_PEPPER: "local-demo-pepper-distinct-from-secret-change-me"
+      # Vapi/budtender secrets required by the prod-fail-closed guard (placeholders for local).
+      VAPI_PRIVATE_KEY: "${VAPI_PRIVATE_KEY:-local-placeholder-vapi-key}"
+      VAPI_WEBHOOK_SECRET: "${VAPI_WEBHOOK_SECRET:-local-placeholder-webhook-secret}"
+      HHT_BACKEND_TOKEN: "${HHT_BACKEND_TOKEN:-local-placeholder-backend-token}"
+      # US stores — non-EU residency is intended (the Vertex region is us-central1).
+      ALLOW_NON_EU_RESIDENCY: "1"
+      HTTPS_ENABLED: "0"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./data/uploads:/app/data/uploads
+    expose:
+      - "8000"
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
+
+  # Optional post-call queue (P5, gated HHT_USE_CELERY). The app runs fine WITHOUT these — post-call
+  # work degrades to inline (P2 behavior) when HHT_USE_CELERY=0 (the default). Bring them up only to
+  # move the Gemini summary + staff email off the webhook turn (set HHT_USE_CELERY=1 on web + worker).
+  redis:
+    image: redis:7-alpine
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    build: .
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      DJANGO_DEBUG: "0"
+      DJANGO_SECRET_KEY: "local-demo-secret-not-for-production-change-me-please"
+      PHONE_HASH_PEPPER: "local-demo-pepper-distinct-from-secret-change-me"
+      VAPI_PRIVATE_KEY: "${VAPI_PRIVATE_KEY:-local-placeholder-vapi-key}"
+      VAPI_WEBHOOK_SECRET: "${VAPI_WEBHOOK_SECRET:-local-placeholder-webhook-secret}"
+      HHT_BACKEND_TOKEN: "${HHT_BACKEND_TOKEN:-local-placeholder-backend-token}"
+      ALLOW_NON_EU_RESIDENCY: "1"
+      HHT_USE_CELERY: "${HHT_USE_CELERY:-0}"
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "celery -A core worker --loglevel=info --concurrency=${CELERY_WORKER_CONCURRENCY:-2}"
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - web
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

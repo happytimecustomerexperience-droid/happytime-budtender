@@ -1,0 +1,42 @@
+{% extends "dashboard/base.html" %}
+{% block title %}{{ label }} — KB — Happy Time Voice{% endblock %}
+{% block content %}
+<p class="muted"><a href="{% url 'dash-kb' %}">← Knowledge base</a></p>
+<div class="row between">
+  <h1>{{ label }}</h1>
+  <a class="btn btn-primary" href="{% url 'dash-kb-row-new' kind %}">+ New row</a>
+</div>
+
+<form method="get" class="row" style="margin:12px 0">
+  <input name="q" value="{{ q }}" placeholder="search…" style="max-width:280px">
+  <button class="btn" type="submit">Search</button>
+</form>
+
+<div class="card">
+  <table>
+    <tr><th>Row</th><th>Active</th><th></th></tr>
+    {% for r in rows %}
+      <tr>
+        <td>{{ r }}</td>
+        <td>{% if r.is_active %}<span class="badge green">yes</span>{% else %}<span class="badge slate">no</span>{% endif %}</td>
+        <td class="row" style="gap:8px">
+          <a href="{% url 'dash-kb-row-edit' r.pk %}?kind={{ kind }}">Edit</a>
+          <form method="post" action="{% url 'dash-kb-row-delete' r.pk %}?kind={{ kind }}" onsubmit="return confirm('Delete this row?')">
+            {% csrf_token %}<button class="btn" style="color:var(--action)">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="3" class="muted">No rows.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if page_obj.has_other_pages %}
+<div class="row">
+  {% if page_obj.has_previous %}<a class="btn" href="?page={{ page_obj.previous_page_number }}&{{ querystring }}">← Prev</a>{% endif %}
+  <span class="muted">Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}<a class="btn" href="?page={{ page_obj.next_page_number }}&{{ querystring }}">Next →</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

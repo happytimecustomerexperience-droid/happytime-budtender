@@ -1,7 +1,20 @@
-# Happy Time Budtender — self-contained stack for a VPS.
-# No inbound ports are published except via the Cloudflare tunnel, so the
-# website reaches this service over TLS without exposing the origin.
+# Happy Time — single-VPS stack for BOTH services in this repo:
+#   • budtender  (this repo root)  — suggestions/pairing API + admin/analytics
+#   • voice      (./voice)         — Vapi Squad control plane (calls budtender)
+#
+# They run as INDEPENDENT containers with their OWN databases, on one shared
+# docker network, behind ONE Cloudflare tunnel (no inbound ports published).
+# Bring everything up with a single command:
+#     docker compose up -d --build
+# Async voice post-call queue is opt-in:
+#     docker compose --profile voice-async up -d --build
+#
+# Ingress: the `cloudflared` service routes two public hostnames you define in
+# the Cloudflare Zero Trust dashboard:
+#     budtender-api.happytimeweed.com  ->  http://web:8000
+#     voice.happytimeweed.com          ->  http://voice-web:8000
 services:
+  # ─────────────────────────── BUDTENDER STACK ────────────────────────────
   db:
     image: postgres:16-alpine
     environment:
@@ -60,6 +73,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      default:
+        # In-cluster alias so voice reaches budtender at http://budtender.internal:8000.
+        # `budtender.internal` is already in budtender's ALLOWED_HOSTS (.env.example),
+        # so the Host header is accepted under DEBUG=0 — no 400. Still reachable as `web` too.
+        aliases:
+          - budtender.internal
 
   celery-worker:
     build: .
@@ -85,7 +105,103 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # Cloudflare tunnel — the ONLY way in. Routes your public hostname to `web`.
+  # ───────────────────────────── VOICE STACK ──────────────────────────────
+  # Independent Django control plane (build context ./voice). Owns its OWN
+  # Postgres (voice-db). Reaches budtender in-cluster at http://web:8000 using
+  # the shared HHT_BACKEND_TOKEN. Secrets/keys come from ./voice/.env.
+  voice-db:
+    image: postgres:16
+    # Pulls POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD from voice/.env so
+    # they ALWAYS match what voice-web connects with. Change them in voice/.env.
+    env_file:
+      - ./voice/.env
+    volumes:
+      - voice_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Uses the container's OWN POSTGRES_USER (loaded from voice/.env), so it
+      # stays correct even if you change the DB user. ($$ -> a literal $ so the
+      # in-container shell expands it, not docker-compose.)
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  voice-web:
+    build:
+      context: ./voice
+    env_file:
+      - ./voice/.env
+    environment:
+      # Structural/integration values FORCED for the merged stack, regardless of
+      # what voice/.env says (mirrors voice/docker-compose.prod.yaml intent):
+      POSTGRES_HOST: voice-db                  # talk to the voice DB container
+      DJANGO_DEBUG: "0"                        # prod hardening + fail-closed guard
+      HTTPS_ENABLED: "1"                       # HSTS + secure cookies (behind tunnel TLS)
+      HHT_BUDTENDER_BASE_URL: http://budtender.internal:8000  # budtender, in-cluster (no tunnel hop)
+    depends_on:
+      voice-db:
+        condition: service_healthy
+    volumes:
+      - ./voice/data/uploads:/app/data/uploads   # uploaded KB files (persist)
+      - ./voice/secrets:/app/secrets:ro          # Vertex service-account JSON (optional)
+    expose:
+      - "8000"
+    restart: unless-stopped
+    healthcheck:
+      # Pure liveness — is gunicorn accepting connections? Intentionally NOT
+      # /healthz, which returns 503 until the OPTIONAL Gemini/Vapi deps are
+      # configured (that would falsely flag a working FAQ/suggestions agent).
+      test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost',8000),3).close()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers ${VOICE_GUNICORN_WORKERS:-2} --timeout 120"
+
+  # Optional voice post-call queue (Gemini summary + staff email off the webhook
+  # turn). OFF by default — voice runs fine without it (work degrades to inline).
+  # Enable: set HHT_USE_CELERY=1 in voice/.env, then
+  #     docker compose --profile voice-async up -d --build
+  voice-redis:
+    image: redis:7-alpine
+    profiles: ["voice-async"]
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  voice-worker:
+    build:
+      context: ./voice
+    profiles: ["voice-async"]
+    env_file:
+      - ./voice/.env
+    environment:
+      POSTGRES_HOST: voice-db
+      DJANGO_DEBUG: "0"
+      HHT_USE_CELERY: "1"
+      CELERY_BROKER_URL: redis://voice-redis:6379/0
+    depends_on:
+      voice-db:
+        condition: service_healthy
+      voice-redis:
+        condition: service_healthy
+    restart: unless-stopped
+    command: >
+      sh -c "celery -A core worker --loglevel=info --concurrency=${VOICE_CELERY_CONCURRENCY:-2}"
+
+  # ──────────────────────────── SHARED INGRESS ────────────────────────────
+  # Cloudflare tunnel — the ONLY way in. One tunnel, two public hostnames
+  # (defined in the Cloudflare dashboard, see DEPLOY.md):
+  #   budtender-api.happytimeweed.com -> http://web:8000
+  #   voice.happytimeweed.com         -> http://voice-web:8000
   cloudflared:
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate run
@@ -93,7 +209,9 @@ services:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN}
     depends_on:
       - web
+      - voice-web
     restart: unless-stopped
 
 volumes:
   pgdata:
+  voice_pgdata:

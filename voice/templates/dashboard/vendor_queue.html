@@ -1,0 +1,43 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Vendor callbacks — Happy Time Voice{% endblock %}
+{% block content %}
+<h1>Vendor-callback queue</h1>
+<p class="muted">B2B no-answer callbacks captured by the vendor member. Mark contacted/closed or re-send the staff alert.</p>
+
+<form method="get" class="row" style="margin:12px 0">
+  <select name="status" onchange="this.form.submit()">
+    <option value="">all</option>
+    {% for s in statuses %}<option value="{{ s }}" {% if s == status %}selected{% endif %}>{{ s }}</option>{% endfor %}
+  </select>
+</form>
+
+<div class="card">
+  <table>
+    <tr><th>Store</th><th>Reason</th><th>Summary</th><th>Status</th><th>When</th><th></th></tr>
+    {% for cb in callbacks %}
+      <tr>
+        <td>{{ cb.store }}</td>
+        <td>{{ cb.reason|default:'—' }}</td>
+        <td>{{ cb.summary|truncatechars:60 }}</td>
+        <td><span class="badge {% if cb.status == 'open' %}amber{% elif cb.status == 'closed' %}slate{% else %}green{% endif %}">{{ cb.status }}</span></td>
+        <td>{{ cb.created_at }}</td>
+        <td class="row" style="gap:6px">
+          <form method="post" action="{% url 'dash-vendor-update' cb.pk %}"><input type="hidden" name="action" value="contacted">{% csrf_token %}<button class="btn">Contacted</button></form>
+          <form method="post" action="{% url 'dash-vendor-update' cb.pk %}"><input type="hidden" name="action" value="closed">{% csrf_token %}<button class="btn">Close</button></form>
+          <form method="post" action="{% url 'dash-vendor-update' cb.pk %}"><input type="hidden" name="action" value="realert">{% csrf_token %}<button class="btn">Re-alert</button></form>
+        </td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="6" class="muted">No vendor callbacks.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if page_obj.has_other_pages %}
+<div class="row">
+  {% if page_obj.has_previous %}<a class="btn" href="?page={{ page_obj.previous_page_number }}&{{ querystring }}">← Prev</a>{% endif %}
+  <span class="muted">Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}<a class="btn" href="?page={{ page_obj.next_page_number }}&{{ querystring }}">Next →</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

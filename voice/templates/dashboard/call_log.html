@@ -1,0 +1,48 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Call log — Happy Time Voice{% endblock %}
+{% block content %}
+<div class="row between">
+  <h1>Call log</h1>
+  <a class="btn" href="{% url 'dash-calls' %}">Live monitor</a>
+</div>
+
+<form method="get" class="row" style="margin:12px 0">
+  <input name="q" value="{{ q }}" placeholder="outcome / store / phone-hash prefix…" style="max-width:320px">
+  <input name="outcome" value="{{ outcome }}" placeholder="outcome" style="max-width:160px">
+  <input name="store" value="{{ store }}" placeholder="store" style="max-width:140px">
+  <button class="btn" type="submit">Filter</button>
+</form>
+
+<div class="card">
+  <table>
+    <tr>
+      <th><a href="?sort={% if sort_field == 'id' and sort_dir == 'asc' %}-{% endif %}id&{{ base_qs }}">Id</a></th>
+      <th><a href="?sort={% if sort_field == 'store' and sort_dir == 'asc' %}-{% endif %}store&{{ base_qs }}">Store</a></th>
+      <th><a href="?sort={% if sort_field == 'outcome' and sort_dir == 'asc' %}-{% endif %}outcome&{{ base_qs }}">Outcome</a></th>
+      <th><a href="?sort={% if sort_field == 'duration' and sort_dir == 'asc' %}-{% endif %}duration&{{ base_qs }}">Duration</a></th>
+      <th>Escalated</th>
+      <th><a href="?sort={% if sort_field == 'created_at' and sort_dir == 'asc' %}-{% endif %}created_at&{{ base_qs }}">When</a></th>
+    </tr>
+    {% for c in calls %}
+      <tr>
+        <td><a href="{% url 'dash-call-detail' c.pk %}">{{ c.pk }}</a></td>
+        <td>{{ c.store|default:'—' }}</td>
+        <td><span class="badge slate">{{ c.get_outcome_display|default:c.outcome|default:'—' }}</span>{% if c.reason %} <span class="muted">({{ c.reason }})</span>{% endif %}</td>
+        <td>{{ c.duration_s|default:'—' }}s</td>
+        <td>{% if c.escalated %}<span class="badge red">yes</span>{% else %}—{% endif %}</td>
+        <td>{{ c.created_at }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="6" class="muted">No calls.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if page_obj.has_other_pages %}
+<div class="row">
+  {% if page_obj.has_previous %}<a class="btn" href="?page={{ page_obj.previous_page_number }}&{{ querystring }}">← Prev</a>{% endif %}
+  <span class="muted">Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}<a class="btn" href="?page={{ page_obj.next_page_number }}&{{ querystring }}">Next →</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

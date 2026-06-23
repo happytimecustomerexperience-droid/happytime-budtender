@@ -1,0 +1,40 @@
+{% extends "dashboard/base.html" %}
+{% block title %}{{ p.get_role_display }} — Agent — Happy Time Voice{% endblock %}
+{% block content %}
+<p class="muted"><a href="{% url 'dash-agents' %}">← Agents</a> · <a href="{% url 'dash-flow' %}">Flow</a></p>
+<div class="row between">
+  <h1>{{ p.get_role_display }}</h1>
+  <form hx-post="{% url 'dash-agent-publish' p.pk %}" hx-target="#publish-result" hx-swap="innerHTML">
+    {% csrf_token %}
+    <button class="btn" type="submit">Publish this assistant</button>
+  </form>
+</div>
+{% if info.blurb %}<div class="note-green"><span>{{ info.step }}</span><p>{{ info.blurb }}</p></div>{% endif %}
+
+<div x-data="{ assistText:'', assistBusy:false, body:'' }" x-init="body = $refs.body.value">
+  <div class="card">
+    <h2>✨ AI: add to this prompt (never rewrites)</h2>
+    <div class="row">
+      <input x-model="assistText" placeholder="add guardrails about…" data-testid="assist-input">
+      <button class="btn" :disabled="assistBusy || !assistText.trim()" data-testid="assist-btn"
+        @click="assistBusy=true;
+          fetch('{% url 'dash-agent-assist' p.pk %}', {method:'POST', headers:{'X-CSRFToken':'{{ csrf_token }}'}, body:new URLSearchParams({instruction:assistText})})
+            .then(r=>r.json()).then(j=>{ if(j.ok){ $refs.body.value=j.body; body=j.body; assistText=''; } else { alert(j.error||'AI failed'); } }).finally(()=>assistBusy=false);"
+        x-text="assistBusy ? '…' : 'AI add'">AI add</button>
+    </div>
+    <p class="muted" style="font-size:12px">The proposal is shown in the editor below — review it, then Save. It is never auto-saved, and safety rules can only be strengthened.</p>
+  </div>
+</div>
+
+{% include "dashboard/_agent_card.html" with p=p transfer_keys=transfer_keys %}
+
+<div id="publish-result"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+  // Point the AI-assist editor at the card's <textarea name="body"> via x-ref.
+  document.addEventListener("alpine:init", () => {});
+  const ta = document.querySelector('#agent-card-{{ p.pk }} textarea[name="body"]');
+  if (ta) ta.setAttribute("x-ref", "body");
+</script>
+{% endblock %}

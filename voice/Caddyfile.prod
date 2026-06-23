@@ -1,0 +1,8 @@
+# Production reverse proxy with automatic HTTPS (Let's Encrypt).
+# Caddy provisions + renews the TLS cert for this domain automatically, as long as
+# the domain's DNS A record points at this VPS and ports 80 + 443 are open.
+# This is the PUBLIC_BASE_URL host Vapi tools call back to (server.url).
+voice.happytimeweed.com {
+	encode gzip
+	reverse_proxy web:8000
+}

@@ -1,0 +1,5 @@
+# Local/dev reverse proxy. Replace :80 with your domain for automatic HTTPS.
+:80 {
+	encode gzip
+	reverse_proxy web:8000
+}

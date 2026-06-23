@@ -1,0 +1,47 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Analytics — Happy Time Voice{% endblock %}
+{% block content %}
+<div class="row between">
+  <h1>Analytics</h1>
+  <div class="row">
+    <a class="btn {% if days == 7 %}btn-primary{% endif %}" href="?days=7">7d</a>
+    <a class="btn {% if days == 30 %}btn-primary{% endif %}" href="?days=30">30d</a>
+    <a class="btn {% if days == 90 %}btn-primary{% endif %}" href="?days=90">90d</a>
+  </div>
+</div>
+
+<div class="pills" style="margin:16px 0">
+  <div class="pill"><div class="n">{{ total }}</div><div class="l">Calls ({{ days }}d)</div></div>
+  <div class="pill"><div class="n">{{ suggested }}</div><div class="l">Suggestions</div></div>
+  <div class="pill"><div class="n">{{ escalations }}</div><div class="l">Escalations</div></div>
+  <div class="pill"><div class="n">{{ vendor_callbacks }}</div><div class="l">Vendor callbacks</div></div>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr">
+  <div class="card">
+    <h2>Outcome funnel</h2>
+    <table>
+      <tr><th>Outcome</th><th>Count</th></tr>
+      {% for row in funnel %}<tr><td>{{ row.outcome }}</td><td>{{ row.n }}</td></tr>{% empty %}<tr><td colspan="2" class="muted">No calls in window.</td></tr>{% endfor %}
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>By store</h2>
+    <table>
+      <tr><th>Store</th><th>Calls</th></tr>
+      {% for row in by_store %}<tr><td>{{ row.store }}</td><td>{{ row.n }}</td></tr>{% empty %}<tr><td colspan="2" class="muted">No store-tagged calls.</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Top product asks</h2>
+  <p class="muted">The most-suggested SKUs in the window — a real count over the durable call log
+    (no estimate). Leak-safe: a SKU is an id, never cost/margin.</p>
+  <table>
+    <tr><th>#</th><th>SKU</th><th>Times suggested</th></tr>
+    {% for row in top_asks %}<tr><td>{{ forloop.counter }}</td><td>{{ row.sku }}</td><td>{{ row.n }}</td></tr>{% empty %}<tr><td colspan="3" class="muted">No suggestions in window.</td></tr>{% endfor %}
+  </table>
+</div>
+{% endblock %}

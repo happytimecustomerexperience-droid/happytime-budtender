@@ -1,0 +1,317 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Flow canvas — Happy Time Voice{% endblock %}
+{% block content %}
+<div x-data="flowCanvas()" x-init="init()"
+     @pointermove.window="onMove($event)" @pointerup.window="endDrag()"
+     @keydown.escape.window="cancelConnect()" data-testid="flow-builder">
+
+  <div class="row between" style="margin-bottom:12px">
+    <div>
+      <h1>Flow canvas</h1>
+      <p class="muted" style="max-width:680px">Drag to arrange. Click a step to view/edit its agent settings. Click an arrow to see the transition trigger. This canvas <strong>documents</strong> the Squad — the routing topology is code-owned.</p>
+    </div>
+    <div class="row">
+      <span class="muted" style="font-size:12px" x-show="dirty" x-cloak>unsaved layout</span>
+      <button class="btn btn-primary" @click="save()" :disabled="saving" data-testid="flow-save">
+        <span x-text="saving ? 'Saving…' : 'Save layout'">Save layout</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="note-green">
+    <span>🟢</span>
+    <p>Agent steps edit the live <code>AgentPrompt</code> rows (live server-side; published to Vapi from the Publish page). The hard safety guardrails stay enforced in code and the required Squad transitions are re-asserted on Publish — they <strong>cannot be removed here</strong>.</p>
+  </div>
+
+  <!-- palette -->
+  <div class="row" style="margin-bottom:12px" data-testid="flow-palette">
+    <span class="muted" style="font-size:12px">Add step:</span>
+    <template x-for="k in kinds" :key="k">
+      <button class="btn" @click="addNode(k)" :data-testid="'add-'+k">
+        <span x-text="kindIcon(k)+' '+kindLabel(k)"></span>
+      </button>
+    </template>
+  </div>
+
+  <div class="grid" style="grid-template-columns:1fr 340px">
+    <!-- ───── CANVAS ───── -->
+    <div class="card" style="padding:0;overflow:auto;height:620px" data-testid="flow-canvas">
+      <div class="relative" x-ref="surface" :style="`position:relative;width:${canvasW}px;height:${canvasH}px`"
+           @click.self="clearSel()"
+           style="background-image:radial-gradient(#e2e8f0 1px,transparent 1px);background-size:22px 22px">
+        <div style="position:absolute;inset:0;pointer-events:none">
+          <template x-for="e in edges" :key="e.id">
+            <svg style="position:absolute;left:0;top:0;overflow:visible" :width="canvasW" :height="canvasH" :data-testid="'edge-'+e.id">
+              <defs>
+                <marker :id="'fa-'+e.id" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0 0 L10 5 L0 10 z" :fill="isSel('edge',e.id)?'#1a74bf':'#94a3b8'"/>
+                </marker>
+              </defs>
+              <g style="pointer-events:auto;cursor:pointer" @click="selectEdge(e.id)">
+                <path :d="edgePath(e)" fill="none" stroke="transparent" stroke-width="16"/>
+                <path :d="edgePath(e)" fill="none" :stroke="isSel('edge',e.id)?'#1a74bf':'#94a3b8'" :stroke-width="isSel('edge',e.id)?3:2" :marker-end="'url(#fa-'+e.id+')'"/>
+                <text :x="mid(e).x" :y="mid(e).y-6" text-anchor="middle" style="font-size:11px;font-weight:500"
+                      :fill="isSel('edge',e.id)?'#1a74bf':'#64748b'" x-text="edgeLabel(e)"></text>
+              </g>
+            </svg>
+          </template>
+        </div>
+        <template x-for="n in nodes" :key="n.id">
+          <div style="position:absolute;width:176px" :style="`left:${n.x}px;top:${n.y}px`" :data-testid="'node-'+n.id">
+            <div style="border-radius:8px;border:2px solid;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.06)"
+                 :style="isSel('node',n.id) ? 'border-color:#1a74bf' : (connectFrom===n.id ? 'border-color:#c0392b' : 'border-color:#e2e8f0')"
+                 @click.stop="nodeClick(n.id)">
+              <div style="padding:6px 10px;border-radius:6px 6px 0 0;display:flex;align-items:center;gap:6px;cursor:move" :class="kindHeader(n.kind)"
+                   @pointerdown="startDrag($event,n.id)">
+                <span x-text="kindIcon(n.kind)"></span>
+                <span style="font-size:12px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="n.title || kindLabel(n.kind)"></span>
+              </div>
+              <div style="padding:6px 10px;display:flex;align-items:center;justify-content:space-between;font-size:10px;color:#64748b">
+                <span x-text="n.kind==='agent' ? agentModel(n) : n.kind"></span>
+                <button style="color:#1a74bf;font-weight:700;padding:0 4px;border:none;background:none;cursor:pointer"
+                        @click.stop="startConnect(n.id)" title="Connect to another step" :data-testid="'connect-'+n.id">→</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- ───── SIDE PANEL ───── -->
+    <div class="card" style="align-self:start;position:sticky;top:64px;max-height:80vh;overflow-y:auto" data-testid="flow-panel">
+      <template x-if="!sel">
+        <div class="muted">
+          <p style="margin-bottom:8px">Nothing selected.</p>
+          <p>Click a step to view its agent settings, or an arrow to see the transition trigger.</p>
+        </div>
+      </template>
+
+      <!-- NODE editor -->
+      <template x-if="sel && sel.t==='node' && cur">
+        <div>
+          <div class="row between" style="margin-bottom:12px">
+            <h2 style="margin:0"><span x-text="kindIcon(cur.kind)"></span> <span x-text="kindLabel(cur.kind)+' step'"></span></h2>
+            <button style="color:#c0392b;font-size:12px;border:none;background:none;cursor:pointer" @click="deleteNode()" data-testid="node-delete">Delete</button>
+          </div>
+
+          <label><span class="lt">Title</span><input x-model="cur.title" data-testid="node-title"></label>
+
+          <!-- AGENT: views/edits the live AgentPrompt voice config -->
+          <template x-if="cur.kind==='agent'">
+            <div x-data="{ get a(){ return agents[cur.role] } }">
+              <label><span class="lt">Agent role</span>
+                <select x-model="cur.role" x-init="$nextTick(() => { $el.value = cur.role })">
+                  <template x-for="r in Object.keys(agents)" :key="r"><option :value="r" x-text="agents[r].display"></option></template>
+                </select>
+              </label>
+              <template x-if="a">
+                <div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;background:#f8fafc">
+                  <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Live agent settings · v<span x-text="a.prompt_version"></span></div>
+                  <label><span class="lt">Vapi model</span><input x-model="a.vapi_model"></label>
+                  <label><span class="lt">Voice id (Cartesia)</span><input x-model="a.voice_id"></label>
+                  <div class="grid" style="grid-template-columns:1fr 1fr">
+                    <label><span class="lt">Temperature</span><input type="number" step="any" min="0" max="2" x-model="a.temperature"></label>
+                    <label><span class="lt">Max tokens</span><input type="number" min="1" max="65536" x-model="a.max_output_tokens"></label>
+                  </div>
+                  <label><span class="lt">Tools</span><input x-model="a.tool_names" placeholder="comma-separated"></label>
+                  <label><span class="lt">Transfer number key</span><input x-model="a.transfer_number_key" placeholder="YAKIMA / MTVERNON / PULLMAN"></label>
+                  <div style="margin:8px 0">
+                    <div class="muted" style="font-size:11px;margin-bottom:4px">✨ AI: add to this prompt (never rewrites)</div>
+                    <div class="row">
+                      <input x-model="assistText" placeholder="add guardrails about…" data-testid="flow-assist-input">
+                      <button class="btn" @click="assist()" :disabled="assistBusy || !assistText.trim()" data-testid="flow-assist-btn" x-text="assistBusy ? '…' : 'AI add'">AI add</button>
+                    </div>
+                  </div>
+                  <label><span class="lt">Prompt body</span><textarea x-model="a.body" rows="5"></textarea></label>
+                  <div class="row between">
+                    <button class="btn btn-primary" @click="saveAgent()" data-testid="node-save-agent">Save agent (live)</button>
+                    <a style="font-size:12px" :href="'/dashboard/agents/'+cur.role+'/'">Full editor ↗</a>
+                  </div>
+                </div>
+              </template>
+              <template x-if="!a"><p class="muted" style="font-size:12px">No prompt row for this role yet.</p></template>
+            </div>
+          </template>
+
+          <!-- HANDOFF / TOOL / TRANSFER / END: documentation-only config -->
+          <template x-if="cur.kind!=='agent'">
+            <label><span class="lt">Note</span><input x-model="cur.config.note" placeholder="documentation only"></label>
+          </template>
+        </div>
+      </template>
+
+      <!-- EDGE editor -->
+      <template x-if="sel && sel.t==='edge' && cur">
+        <div>
+          <div class="row between" style="margin-bottom:8px">
+            <h2 style="margin:0">Transition</h2>
+            <button style="color:#c0392b;font-size:12px;border:none;background:none;cursor:pointer" @click="deleteEdge()" data-testid="edge-delete">Delete</button>
+          </div>
+          <p class="muted" style="font-size:12px"><span x-text="nodeTitle(cur.source)"></span> → <span x-text="nodeTitle(cur.target)"></span></p>
+          <label><span class="lt">Trigger label</span><input x-model="cur.label" data-testid="edge-label"></label>
+          <p class="muted" style="font-size:12px">The runtime trigger condition is code-owned (<code>voice/constants.SQUAD_SHAPE</code>). This label documents it; it is re-asserted on Publish.</p>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <div x-show="msg" x-transition x-cloak
+       style="position:fixed;bottom:16px;right:16px;z-index:60;padding:10px 16px;border-radius:8px;color:#fff;font-size:14px"
+       :style="msgType==='error' ? 'background:#dc2626' : 'background:#1a74bf'" x-text="msg" data-testid="flow-toast"></div>
+</div>
+
+{{ graph|json_script:"flow-graph" }}
+{{ agents|json_script:"flow-agents" }}
+<script>
+  window.flowCanvas = function () {
+    const GRAPH = JSON.parse(document.getElementById("flow-graph").textContent);
+    const AGENTS = JSON.parse(document.getElementById("flow-agents").textContent);
+    const CSRF = "{{ csrf_token }}";
+    const SAVE_URL = "{% url 'dash-flow-save' %}";
+    const NW = 176, NH = 60;
+    const LABELS = { agent: "Agent", handoff: "Handoff", tool: "Tool", transfer: "Transfer", end: "End" };
+    const ICONS = { agent: "🤖", handoff: "↪️", tool: "🔧", transfer: "📞", end: "🏁" };
+    const HEADERS = {
+      agent: "fc-agent", handoff: "fc-handoff", tool: "fc-tool", transfer: "fc-transfer", end: "fc-end",
+    };
+    return {
+      nodes: GRAPH.nodes || [], edges: GRAPH.edges || [], agents: AGENTS, kinds: Object.keys(LABELS),
+      sel: null, cur: null, connectFrom: null, dragId: null, dragDX: 0, dragDY: 0,
+      saving: false, dirty: false, msg: "", msgType: "", canvasW: 900, canvasH: 560, _tt: null,
+      assistText: "", assistBusy: false,
+
+      init() { this.edges.forEach(e => { if (!Array.isArray(e.collect)) e.collect = []; }); this.relayout(); },
+
+      kindLabel(k) { return LABELS[k] || k; },
+      kindIcon(k) { return ICONS[k] || "•"; },
+      kindHeader(k) { return HEADERS[k] || "fc-tool"; },
+      agentModel(n) { const a = this.agents[n.role]; return a ? (a.vapi_model || "(model)") : "(pick a role)"; },
+
+      isSel(t, id) { return this.sel && this.sel.t === t && this.sel.id === id; },
+      nodeById(id) { return this.nodes.find(n => n.id === id); },
+      edgeById(id) { return this.edges.find(e => e.id === id); },
+      nodeTitle(id) { const n = this.nodeById(id); return n ? (n.title || this.kindLabel(n.kind)) : id; },
+      selectNode(id) { this.connectFrom = null; this.sel = { t: "node", id }; this.cur = this.nodeById(id); },
+      selectEdge(id) { this.connectFrom = null; this.sel = { t: "edge", id }; this.cur = this.edgeById(id); },
+      clearSel() { this.sel = null; this.cur = null; this.connectFrom = null; },
+      nodeClick(id) {
+        if (this.connectFrom && this.connectFrom !== id) { this.addEdge(this.connectFrom, id); this.connectFrom = null; }
+        else { this.selectNode(id); }
+      },
+
+      uid(p) { let i = 1; while (this.nodes.some(n => n.id === p + i) || this.edges.some(e => e.id === p + i)) i++; return p + i; },
+      addNode(kind) {
+        const id = this.uid(kind + "_");
+        const node = { id, kind, title: this.kindLabel(kind), x: 60 + (this.nodes.length % 6) * 26, y: 60 + (this.nodes.length % 6) * 26, config: {} };
+        if (kind === "agent") {
+          const used = this.nodes.filter(n => n.kind === "agent").map(n => n.role);
+          node.role = Object.keys(this.agents).find(r => !used.includes(r)) || Object.keys(this.agents)[0] || "";
+        }
+        this.nodes.push(node); this.dirty = true; this.selectNode(id); this.relayout();
+      },
+      deleteNode() {
+        if (!this.cur) return;
+        const id = this.cur.id;
+        this.nodes = this.nodes.filter(n => n.id !== id);
+        this.edges = this.edges.filter(e => e.source !== id && e.target !== id);
+        this.dirty = true; this.clearSel();
+      },
+      addEdge(s, t) {
+        if (s === t || this.edges.some(e => e.source === s && e.target === t)) return;
+        const id = this.uid("e_");
+        this.edges.push({ id, source: s, target: t, label: "", collect: [] });
+        this.dirty = true; this.selectEdge(id);
+      },
+      deleteEdge() { if (!this.cur) return; const id = this.cur.id; this.edges = this.edges.filter(e => e.id !== id); this.dirty = true; this.clearSel(); },
+      startConnect(id) { this.connectFrom = id; this.sel = null; this.cur = null; },
+      cancelConnect() { this.connectFrom = null; },
+
+      startDrag(ev, id) {
+        if (ev.button !== undefined && ev.button !== 0) return;
+        this.dragId = id; const n = this.nodeById(id);
+        const r = this.$refs.surface.getBoundingClientRect();
+        this.dragDX = ev.clientX - r.left - n.x; this.dragDY = ev.clientY - r.top - n.y;
+      },
+      onMove(ev) {
+        if (!this.dragId) return;
+        const n = this.nodeById(this.dragId); if (!n) return;
+        const r = this.$refs.surface.getBoundingClientRect();
+        n.x = Math.max(0, Math.round(ev.clientX - r.left - this.dragDX));
+        n.y = Math.max(0, Math.round(ev.clientY - r.top - this.dragDY));
+        this.dirty = true;
+      },
+      endDrag() { if (this.dragId) { this.dragId = null; this.relayout(); } },
+      relayout() {
+        let mx = 900, my = 560;
+        this.nodes.forEach(n => { mx = Math.max(mx, n.x + NW + 80); my = Math.max(my, n.y + NH + 80); });
+        this.canvasW = mx; this.canvasH = my;
+      },
+
+      center(n) { return { x: n.x + NW / 2, y: n.y + NH / 2 }; },
+      border(n, tx, ty) {
+        const c = this.center(n); let dx = tx - c.x, dy = ty - c.y;
+        if (!dx && !dy) return c;
+        const hw = NW / 2, hh = NH / 2;
+        const s = Math.min(dx ? hw / Math.abs(dx) : 1e9, dy ? hh / Math.abs(dy) : 1e9);
+        return { x: c.x + dx * s, y: c.y + dy * s };
+      },
+      _ends(e) {
+        const s = this.nodeById(e.source), t = this.nodeById(e.target);
+        if (!s || !t) return null;
+        const cs = this.center(s), ct = this.center(t);
+        return { a: this.border(s, ct.x, ct.y), b: this.border(t, cs.x, cs.y) };
+      },
+      edgePath(e) { const p = this._ends(e); if (!p) return ""; const mx = (p.a.x + p.b.x) / 2; return `M${p.a.x},${p.a.y} C ${mx},${p.a.y} ${mx},${p.b.y} ${p.b.x},${p.b.y}`; },
+      mid(e) { const p = this._ends(e); return p ? { x: (p.a.x + p.b.x) / 2, y: (p.a.y + p.b.y) / 2 } : { x: 0, y: 0 }; },
+      edgeLabel(e) { return e.label || ""; },
+
+      toast(m, t) { this.msg = m; this.msgType = t || ""; clearTimeout(this._tt); this._tt = setTimeout(() => { this.msg = ""; }, 2800); },
+
+      async save() {
+        this.saving = true;
+        try {
+          const r = await fetch(SAVE_URL, { method: "POST", headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF }, body: JSON.stringify({ nodes: this.nodes, edges: this.edges }) });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok && j.ok) { this.dirty = false; this.toast(`Layout saved — ${j.nodes} steps, ${j.edges} arrows ✓`); }
+          else { this.toast(j.error || "Save failed", "error"); }
+        } catch (e) { this.toast("Save failed", "error"); }
+        this.saving = false;
+      },
+      async assist() {
+        const a = this.agents[this.cur.role]; if (!a || !this.assistText.trim()) return;
+        this.assistBusy = true;
+        try {
+          const fd = new URLSearchParams(); fd.set("instruction", this.assistText);
+          const r = await fetch(`/dashboard/agents/${a.pk}/assist`, { method: "POST", headers: { "X-CSRFToken": CSRF }, body: fd });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok && j.ok) { a.body = j.body; this.assistText = ""; this.toast("AI proposed an updated prompt — review it, then Save agent (live)"); }
+          else { this.toast(j.error || "AI failed", "error"); }
+        } catch (e) { this.toast("AI failed", "error"); }
+        this.assistBusy = false;
+      },
+      async saveAgent() {
+        const a = this.agents[this.cur.role]; if (!a) return;
+        const fd = new URLSearchParams();
+        fd.set("vapi_model", a.vapi_model || ""); fd.set("voice_id", a.voice_id || ""); fd.set("body", a.body || "");
+        fd.set("tool_names", Array.isArray(a.tool_names) ? a.tool_names.join(",") : (a.tool_names || ""));
+        fd.set("transfer_number_key", a.transfer_number_key || "");
+        fd.set("temperature", a.temperature == null ? "" : a.temperature);
+        fd.set("max_output_tokens", a.max_output_tokens == null ? "" : a.max_output_tokens);
+        if (a.is_active) fd.set("is_active", "on");
+        try {
+          const r = await fetch(`/dashboard/agents/${a.pk}/save`, { method: "POST", headers: { "X-CSRFToken": CSRF }, body: fd });
+          if (r.ok) { this.toast(`${a.display} updated — live server-side; Publish to push to Vapi ✓`); }
+          else { this.toast("Agent save failed", "error"); }
+        } catch (e) { this.toast("Agent save failed", "error"); }
+      },
+    };
+  };
+</script>
+<style>
+  .fc-agent { background: #e8f1fb; color: #155c9a; }
+  .fc-handoff { background: #fef3c7; color: #92400e; }
+  .fc-tool { background: #ede9fe; color: #5b21b6; }
+  .fc-transfer { background: #dcfce7; color: #166534; }
+  .fc-end { background: #f1f5f9; color: #475569; }
+</style>
+{% endblock %}

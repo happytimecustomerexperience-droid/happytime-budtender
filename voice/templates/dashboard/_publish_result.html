@@ -1,0 +1,21 @@
+<div class="card" data-testid="publish-result">
+  <h2>Publish result</h2>
+  <table>
+    <tr><th>Object</th><th>Role</th><th>Action</th><th>Changed</th><th>Warnings / error</th></tr>
+    {% for r in results %}
+      <tr>
+        <td>{{ r.object }}</td>
+        <td>{{ r.role }}</td>
+        <td>
+          <span class="badge {% if r.action == 'patched' or r.action == 'created' %}green{% elif r.action == 'error' %}red{% elif r.action == 'skipped' %}amber{% else %}slate{% endif %}">{{ r.action }}</span>
+        </td>
+        <td class="muted" style="font-size:12px">{{ r.changed_fields|join:', '|default:'—' }}</td>
+        <td style="font-size:12px">
+          {% if r.error %}<span style="color:var(--action)">{{ r.error }}</span>{% endif %}
+          {% for w in r.warnings %}<div class="muted">{{ w }}</div>{% endfor %}
+        </td>
+      </tr>
+    {% endfor %}
+  </table>
+  <p class="muted" style="font-size:12px;margin-top:8px">A re-publish with no edits returns all <code>nodrift</code> and issues zero PATCH calls.</p>
+</div>

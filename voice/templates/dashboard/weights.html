@@ -1,0 +1,34 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Ranking weights — Happy Time Voice{% endblock %}
+{% block content %}
+<h1>Ranking weights</h1>
+<p class="muted">The owner's "high margin first" lever. Anonymous callers rank margin-first (W_ANON); known callers rank taste-first (W_KNOWN). Budtender owns the ranking; these levers reach it two ways: (1) saved here, they ride along as a <code>ranking_weights</code> config on <strong>every suggestion call</strong> (live immediately); and (2) saving also pushes them to budtender's admin surface. Defaults match budtender exactly, so nothing changes until you tune a lever.</p>
+
+{% if sync %}
+  <div class="{% if sync.ok %}note-green{% else %}toast info{% endif %}" style="position:static">
+    {% if sync.ok %}Synced to budtender ✓{% else %}Saved locally; budtender sync pending — {{ sync.reason }}.{% endif %}
+  </div>
+{% endif %}
+{% for w in warnings %}<div class="toast info" style="position:static;margin-bottom:8px">{{ w }}</div>{% endfor %}
+
+<form method="post" class="card">
+  {% csrf_token %}
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <div>
+      <label><span class="lt">W_ANON (anonymous → margin-first)</span>{{ form.w_anon }}</label>
+      {% if form.w_anon.errors %}<span style="color:var(--action)">{{ form.w_anon.errors|join:', ' }}</span>{% endif %}
+      <p class="muted" style="font-size:12px">Normalized preview: {{ preview_anon }}</p>
+    </div>
+    <div>
+      <label><span class="lt">W_KNOWN (known → taste-first)</span>{{ form.w_known }}</label>
+      {% if form.w_known.errors %}<span style="color:var(--action)">{{ form.w_known.errors|join:', ' }}</span>{% endif %}
+      <p class="muted" style="font-size:12px">Normalized preview: {{ preview_known }}</p>
+    </div>
+  </div>
+  <label style="max-width:200px"><span class="lt">Margin emphasis (anon margin multiplier)</span>{{ form.margin_emphasis }}</label>
+  <div class="row between">
+    <button class="btn btn-primary" type="submit">Save + push to budtender</button>
+    <span class="muted" style="font-size:12px">{% if current.last_synced_at %}last synced {{ current.last_synced_at }}{% else %}never synced{% endif %}</span>
+  </div>
+</form>
+{% endblock %}

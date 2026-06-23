@@ -1,0 +1,26 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Publish to Vapi — Happy Time Voice{% endblock %}
+{% block content %}
+<h1>Publish to Vapi</h1>
+<p class="muted">Maps each assistant → <code>PATCH /assistant/{id}</code> and the Squad shape → <code>PATCH /squad/{id}</code>. GET-then-PATCH, idempotent — a re-publish with no edits is zero-drift. The Squad destinations come from code, so a canvas edit can never delete a required transition.</p>
+
+<div class="card">
+  <table>
+    <tr><th>Role</th><th>Vapi id</th><th>Last published</th></tr>
+    {% for p in prompts %}
+      <tr>
+        <td>{{ p.get_role_display }}</td>
+        <td>{{ p.vapi_assistant_id|default:'— not provisioned' }}</td>
+        <td>{{ p.last_published_at|default:'never' }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<form hx-post="{% url 'dash-publish-run' %}" hx-target="#publish-result" hx-swap="innerHTML">
+  {% csrf_token %}
+  <button class="btn btn-primary" type="submit" data-testid="publish-all">Publish all</button>
+</form>
+
+<div id="publish-result" style="margin-top:16px"></div>
+{% endblock %}

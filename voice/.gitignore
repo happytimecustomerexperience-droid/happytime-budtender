@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Django
+*.sqlite3
+/staticfiles/
+/data/uploads/*
+!/data/uploads/.gitkeep
+/media/
+
+# Secrets / local
+.env
+.env.local
+*.pem
+*.key
+*-sa.json
+service-account*.json
+secrets/
+gcp-*.json
+*.sql
+*.sql.gz
+
+# Session state, generated artifacts
+.claude/
+/tools/e2e_artifacts/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

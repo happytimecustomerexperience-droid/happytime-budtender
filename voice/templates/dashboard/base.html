@@ -1,0 +1,120 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Happy Time Voice — Dashboard{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js"></script>
+  {# P5: brand tokens → CSS custom properties (placeholder Happy Time palette until owner capture). #}
+  <style>{{ brand_css_vars|safe }}</style>
+  <style>
+    :root {
+      /* Map the dashboard's design tokens onto the brand vars (with neutral fallbacks). Swapping
+         brand/tokens.json re-themes the whole dashboard; nothing else changes. */
+      --bg: var(--brand-bg, #f6f7f9); --card: #ffffff; --border: var(--brand-border, #e2e8f0);
+      --text: var(--brand-fg, #1e293b); --muted: var(--brand-muted, #64748b);
+      --primary: var(--brand-primary, #1a74bf); --primary-l: #e8f1fb;
+      --action: var(--brand-accent, #c0392b);
+      --green: var(--brand-ok, #16a34a); --green-bg: #f0fdf4; --amber: #d97706; --amber-bg: #fffbeb;
+      --red: var(--brand-danger, #dc2626); --red-bg: #fef2f2; --blue: #2563eb; --slate: #475569;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: var(--brand-font-body, system-ui, -apple-system, Segoe UI, Roboto, sans-serif);
+           background: var(--bg); color: var(--text); font-size: 14px; }
+    h1, h2, .brand { font-family: var(--brand-font-heading, var(--brand-font-body, system-ui, sans-serif)); }
+    a { color: var(--primary); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header.topnav { background: var(--card); border-bottom: 1px solid var(--border);
+                    padding: 0 16px; position: sticky; top: 0; z-index: 40; }
+    .topnav-inner { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; max-width: 1200px; margin: 0 auto; }
+    .topnav .brand { font-weight: 700; margin-right: 12px; padding: 12px 0; }
+    .topnav a.nav { padding: 12px 10px; color: var(--muted); border-bottom: 2px solid transparent; }
+    .topnav a.nav:hover { color: var(--text); text-decoration: none; }
+    .topnav a.nav.publish { color: var(--primary); font-weight: 600; }
+    main { max-width: 1200px; margin: 0 auto; padding: 20px 16px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    h2 { font-size: 16px; margin: 0 0 8px; }
+    .muted { color: var(--muted); }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .grid { display: grid; gap: 16px; }
+    .pills { display: flex; gap: 12px; flex-wrap: wrap; }
+    .pill { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; min-width: 120px; }
+    .pill .n { font-size: 26px; font-weight: 700; }
+    .pill .l { color: var(--muted); font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-size: 12px; font-weight: 600; }
+    input, textarea, select { font: inherit; padding: 6px 8px; border: 1px solid var(--border);
+                              border-radius: 6px; width: 100%; background: #fff; }
+    textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    label { display: block; margin-bottom: 10px; }
+    label .lt { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+    .btn { display: inline-block; padding: 7px 14px; border-radius: 7px; border: 1px solid var(--border);
+           background: #fff; cursor: pointer; font: inherit; }
+    .btn:hover { background: var(--bg); text-decoration: none; }
+    .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .btn-primary:hover { background: #155c9a; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .badge.green { background: var(--green-bg); color: var(--green); }
+    .badge.amber { background: var(--amber-bg); color: var(--amber); }
+    .badge.red { background: var(--red-bg); color: var(--red); }
+    .badge.blue { background: var(--primary-l); color: var(--blue); }
+    .badge.slate { background: #f1f5f9; color: var(--slate); }
+    .note-green { background: var(--green-bg); border: 1px solid #bbf7d0; color: #166534;
+                  padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; display: flex; gap: 8px; }
+    .toast-stack { position: fixed; bottom: 16px; right: 16px; z-index: 60; display: flex; flex-direction: column; gap: 8px; }
+    .toast { padding: 10px 16px; border-radius: 8px; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); }
+    .toast.success { background: var(--green); } .toast.error { background: var(--red); }
+    .toast.info { background: var(--slate); }
+    [x-cloak] { display: none !important; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .between { justify-content: space-between; }
+    .bubbles { display: flex; flex-direction: column; gap: 8px; }
+    .bubble { max-width: 75%; padding: 8px 12px; border-radius: 12px; }
+    .bubble.user { align-self: flex-end; background: var(--primary-l); }
+    .bubble.assistant { align-self: flex-start; background: #f1f5f9; }
+    .bubble.tool { align-self: center; background: var(--amber-bg); font-size: 12px; color: var(--amber); }
+  </style>
+</head>
+<body>
+  <header class="topnav">
+    <div class="topnav-inner">
+      <span class="brand">
+        {% if brand.logo.svg_path %}<img src="{% static brand.logo.svg_path %}" alt="{{ brand.logo.alt }}" style="height:22px;vertical-align:middle;margin-right:8px;">{% endif %}
+        {{ brand.logo.alt|default:"Happy Time Voice" }}
+        {% if brand.provisional %}<span class="badge slate" title="Brand not yet captured — neutral placeholder palette (owner-gated). See brand/CAPTURE.md." style="margin-left:8px;font-weight:500;">brand provisional</span>{% endif %}
+      </span>
+      <a class="nav" href="{% url 'dash-overview' %}">Overview</a>
+      <a class="nav" href="{% url 'dash-agents' %}">Agents</a>
+      <a class="nav" href="{% url 'dash-flow' %}">Flow</a>
+      <a class="nav" href="{% url 'dash-kb' %}">KB</a>
+      <a class="nav" href="{% url 'dash-specials-hours' %}">Specials</a>
+      <a class="nav" href="{% url 'dash-weights' %}">Weights</a>
+      <a class="nav" href="{% url 'dash-calls' %}">Calls</a>
+      <a class="nav" href="{% url 'dash-escalations' %}">Escalations</a>
+      <a class="nav" href="{% url 'dash-vendor-queue' %}">Vendor</a>
+      <a class="nav" href="{% url 'dash-analytics' %}">Analytics</a>
+      <a class="nav publish" href="{% url 'dash-publish' %}">Publish</a>
+    </div>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- toast stack: any HX-Trigger {"toast": {...}} surfaces here -->
+  <div class="toast-stack" id="toasts"></div>
+  <script>
+    document.body.addEventListener("toast", function (e) {
+      const d = e.detail || {};
+      const el = document.createElement("div");
+      el.className = "toast " + (d.type || "info");
+      el.textContent = d.message || "";
+      document.getElementById("toasts").appendChild(el);
+      setTimeout(function () { el.remove(); }, 3500);
+    });
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

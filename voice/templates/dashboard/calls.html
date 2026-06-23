@@ -1,0 +1,35 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Calls — Happy Time Voice{% endblock %}
+{% block content %}
+<div class="row between">
+  <h1>Live call monitor</h1>
+  <a class="btn" href="{% url 'dash-call-log' %}">Full call log →</a>
+</div>
+
+<div class="card">
+  <div class="row between"><h2>In flight</h2><span class="muted" style="font-size:12px">refreshes every 5s</span></div>
+  <div hx-get="{% url 'dash-calls' %}?strip=live" hx-trigger="every 5s" hx-swap="innerHTML">
+    {% include "dashboard/_calls_live.html" with live=live %}
+  </div>
+</div>
+
+<div class="card">
+  <h2>Recent</h2>
+  <table>
+    <tr><th>Call id</th><th>Store</th><th>Outcome</th><th>Duration</th><th>When</th></tr>
+    {% for c in recent %}
+      {% with b=badge|default:None %}
+      <tr>
+        <td><a href="{% url 'dash-call-detail' c.pk %}">{{ c.call_id }}</a></td>
+        <td>{{ c.store|default:'—' }}</td>
+        <td>{% with bb=c.outcome %}<span class="badge slate">{{ c.get_outcome_display|default:c.outcome }}</span>{% endwith %}</td>
+        <td>{{ c.duration_s|default:'—' }}s</td>
+        <td>{{ c.created_at }}</td>
+      </tr>
+      {% endwith %}
+    {% empty %}
+      <tr><td colspan="5" class="muted">No completed calls yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

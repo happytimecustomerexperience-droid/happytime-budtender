@@ -1,0 +1,19 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Agents — Happy Time Voice{% endblock %}
+{% block content %}
+<div class="row between">
+  <div><h1>Agents</h1><p class="muted">One card per Squad member. Edits are live server-side immediately; Vapi reflects them after Publish.</p></div>
+  <a class="btn btn-primary" href="{% url 'dash-publish' %}">Publish to Vapi</a>
+</div>
+
+<div class="note-green">
+  <span>🟢</span>
+  <p>Editing here tunes the prompt + model + voice + tools. The hard safety guardrails stay enforced in code (<code>voice/guardrails.py</code>) and can't be removed from the UI.</p>
+</div>
+
+{% for p in prompts %}
+  {% include "dashboard/_agent_card.html" with p=p transfer_keys=transfer_keys %}
+{% empty %}
+  <div class="card muted">No AgentPrompt rows yet — run <code>seed_kb</code>.</div>
+{% endfor %}
+{% endblock %}

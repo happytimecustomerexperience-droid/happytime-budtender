@@ -1,0 +1,20 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Knowledge base — Happy Time Voice{% endblock %}
+{% block content %}
+<div class="row between">
+  <div><h1>Knowledge base</h1><p class="muted">The grounded facts the FAQ agent speaks. Edits are live on the next call (no redeploy).</p></div>
+  <form method="post" action="{% url 'dash-kb-reindex' %}">
+    {% csrf_token %}
+    <button class="btn btn-primary" type="submit" data-testid="kb-reindex">Reindex embeddings + Vapi Files</button>
+  </form>
+</div>
+
+<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));margin-top:16px">
+  {% for g in groups %}
+    <a class="card" href="{% url 'dash-kb-source' g.kind %}" style="display:block">
+      <h2>{{ g.label }}</h2>
+      <div class="pill" style="border:none;padding:0"><div class="n">{{ g.count }}</div><div class="l">rows</div></div>
+    </a>
+  {% endfor %}
+</div>
+{% endblock %}

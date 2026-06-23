@@ -1,0 +1,28 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Call {{ call.call_id }} — Happy Time Voice{% endblock %}
+{% block content %}
+<p class="muted"><a href="{% url 'dash-call-log' %}">← Call log</a></p>
+<h1>Call {{ call.call_id }}</h1>
+
+<div class="card">
+  <table>
+    <tr><th>Store</th><td>{{ call.store|default:'—' }}</td><th>Outcome</th><td><span class="badge slate">{{ call.get_outcome_display|default:call.outcome|default:'—' }}</span></td></tr>
+    <tr><th>Reason</th><td>{{ call.reason|default:'—' }}</td><th>Duration</th><td>{{ call.duration_s|default:'—' }}s</td></tr>
+    <tr><th>Caller (hashed)</th><td>{{ call.caller_phone_hash|slice:':12'|default:'—' }}…</td><th>Human requested</th><td>{{ call.human_requested_count }}×</td></tr>
+    {% if call.outcome == 'escalation' or call.escalated %}
+    <tr><th>Transfer</th><td>{{ call.transfer_disposition|default:'—' }}</td><th>Transfer to</th><td>{{ call.transfer_number_key|default:'—' }}</td></tr>
+    {% endif %}
+    <tr><th>Logged</th><td colspan="3">{{ call.created_at }}</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>AI summary</h2>
+  <p>{{ call.ai_summary|default:'(none)' }}</p>
+</div>
+
+<div class="card">
+  <h2>Transcript</h2>
+  {% include "dashboard/_call_transcript.html" with call=call turns=turns %}
+</div>
+{% endblock %}

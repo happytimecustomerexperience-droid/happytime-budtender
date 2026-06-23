@@ -4,6 +4,12 @@ Self-contained Django + Postgres + Redis + Celery + Cloudflare Tunnel stack that
 powers the website's AI budtender (suggestions, profiles, analytics, admin).
 No inbound ports are opened — the only way in is the Cloudflare Tunnel.
 
+> **This repo now hosts TWO services.** Sections 0–7 below cover the **budtender**
+> backend. The **voice agent** (Vapi Squad) lives in [`voice/`](voice/) and runs
+> as independent containers from this same repo + tunnel — see
+> [**Voice agent**](#voice-agent-second-service--voice) at the bottom. To bring
+> up **both** in one shot: `docker compose up -d --build`.
+
 > Sized for a **2 vCPU / 4 GB VPS** (~5 gunicorn workers). Bump `GUNICORN_WORKERS`
 > = `2 × vCPU + 1` for bigger boxes.
 
@@ -119,3 +125,129 @@ docker compose exec db pg_dump -U budtender budtender > backup-$(date +%F).sql  
 - `/admin` only reachable behind Cloudflare Access; `/api/v1/*` only with the Bearer token.
 - No `margin`/`cost`/`bucket` in any public API response (allowlist serializer + the menu/chat never receive them).
 - Phone numbers are hashed in analytics; raw phone is never logged.
+
+---
+
+# Voice agent (second service — `./voice`)
+
+`happytime-voice` now lives in this repo at [`voice/`](voice/) and runs as an
+**independent** set of containers (its own Postgres) from the **same** repo,
+behind the **same** Cloudflare tunnel. The two services talk in-cluster:
+voice → budtender at `http://budtender.internal:8000` (a docker network alias of
+budtender's `web` container) with the shared `HHT_BACKEND_TOKEN`. That alias is
+already in budtender's `ALLOWED_HOSTS`, so calls aren't rejected under `DEBUG=0`.
+(Voice's flow — suggestions / inventory / pairing / returning-caller / facets —
+maps to budtender's existing `/api/v1/*` endpoints; no budtender code change is
+needed to run them together. One non-blocking gap: the P4 dashboard
+"ranking-weights" admin endpoint isn't in budtender yet — voice degrades
+gracefully to budtender's default ranking until it's added.)
+
+## Activate EVERYTHING — one command
+After `git pull` on the VPS:
+```bash
+docker compose up -d --build
+```
+That builds + starts budtender (db, redis, migrate, web, celery-worker,
+celery-beat) **and** voice (voice-db, voice-web) plus the shared `cloudflared`.
+Optional voice post-call queue (Gemini summary + staff email off the webhook turn):
+```bash
+docker compose --profile voice-async up -d --build   # adds voice-redis + voice-worker
+```
+Check: `docker compose ps` — everything `running` / `healthy`.
+
+> **voice-web is fail-closed.** With `DJANGO_DEBUG=0` (forced by compose) it
+> refuses to boot until the required secrets in `voice/.env` are real. Until you
+> fill them it will crash-loop — that's intentional, not a bug.
+
+## What voice needs — fill `voice/.env`
+```bash
+cp voice/.env.example voice/.env
+nano voice/.env
+```
+**Required** before it will start (the DEBUG=0 fail-closed guard):
+
+| Var | What | Where to get it |
+|---|---|---|
+| `DJANGO_SECRET_KEY` | 50+ random chars, **≠** pepper | `python -c "import secrets;print(secrets.token_urlsafe(50))"` |
+| `PHONE_HASH_PEPPER` | PII salt; **MUST differ** from secret | another random string |
+| `POSTGRES_PASSWORD` | voice DB password (voice-db is created with it) | choose a strong one |
+| `HHT_BACKEND_TOKEN` | **must equal budtender's** root `.env` token | copy it from the root `.env` |
+| `VAPI_PRIVATE_KEY` | Vapi server key | Vapi dashboard → API Keys (below) |
+| `VAPI_WEBHOOK_SECRET` | HMAC secret you choose (also written onto Vapi tools) | any long random string |
+
+**Recommended** for a genuinely useful agent (not required to boot):
+- **LLM for post-call summaries** — either Vertex (`GOOGLE_CLOUD_PROJECT` + a
+  service-account JSON dropped in `voice/secrets/` and
+  `GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/<file>.json`, mounted read-only),
+  **or** the cheaper key path `GEMINI_API_KEY` (AI Studio).
+- **Staff alert emails** — `EMAIL_HOST_USER` / `EMAIL_HOST_PASSWORD` (e.g. a Gmail
+  app password) + `STAFF_ALERT_EMAIL`.
+- **Inbound number + transfers** — `VAPI_PHONE_NUMBER_ID` and the
+  `HHT_TRANSFER_NUMBER_*` store lines (pre-filled — confirm them).
+- `PUBLIC_BASE_URL` / `DJANGO_ALLOWED_HOSTS` / `CSRF_TRUSTED_ORIGINS` — already
+  defaulted to `voice.happytimeweed.com`.
+
+> **Dutchie keys do NOT go in `voice/.env`.** They live only in the budtender
+> root `.env.dutchie`. Voice gets all product/stock data by calling budtender.
+
+## Cloudflare — add the 2nd public hostname (same tunnel)
+In Cloudflare Zero Trust → Networks → Tunnels → *your existing tunnel* →
+Public Hostname → **Add**:
+- Host: `voice.happytimeweed.com`
+- Service: `http://voice-web:8000`
+
+budtender's `budtender-api.happytimeweed.com → http://web:8000` stays as-is.
+No new tunnel, no token change, **no open ports**. Verify once up:
+```bash
+curl https://voice.happytimeweed.com/healthz      # -> ok
+```
+
+## One-time voice setup (after the stack is up)
+```bash
+docker compose exec voice-web python manage.py seed_kb                  # FAQ/returns/store-facts/WA limits
+docker compose exec voice-web python manage.py provision_vapi --dry-run # preview payloads (auto when no key)
+docker compose exec voice-web python manage.py provision_vapi           # create/PATCH Squad+assistants+tools (idempotent)
+docker compose exec voice-web python manage.py createsuperuser          # dashboard login at /dashboard/
+```
+Lock `/dashboard*` behind Cloudflare Access (self-hosted app for
+`voice.happytimeweed.com/dashboard*`), same as budtender's `/admin`.
+
+## Connect Vapi — the free path
+1. Sign up at **dashboard.vapi.ai** — new accounts get **$10 free credit**.
+2. **API key:** dashboard → **API Keys** → copy the **Private** key → `VAPI_PRIVATE_KEY`.
+3. **Free phone number:** Phone Numbers → **Free Vapi Number** tab → pick a **US**
+   area code (free; up to 10 per account). Copy its id → `VAPI_PHONE_NUMBER_ID`.
+4. **Webhook secret:** put any long random string in `VAPI_WEBHOOK_SECRET`;
+   `provision_vapi` writes it onto each tool's `server.secret` and the Django
+   webhook verifies it (constant-time, fail-closed).
+5. `provision_vapi` points every tool's `server.url` at `PUBLIC_BASE_URL`
+   (`https://voice.happytimeweed.com/api/voice/...`) and attaches the Squad to
+   your number. Call the number → it reaches voice-web through the tunnel.
+
+**What "free" really means:** the **number is free**, but minutes burn the $10 —
+Vapi's platform fee (~$0.05/min) plus the bundled STT+LLM+TTS+telephony nets
+~$0.15–0.40/min all-in. There is no perpetual free plan; add a card before the
+credit runs out. (Vertex/Gemini and SMTP are billed separately by Google / your
+mail provider — independent of Vapi.)
+
+## Do you need n8n (or the n8n MCP)? No.
+Vapi calls this Django backend's HTTPS webhooks/tools **directly**, and the repo
+provisions Vapi itself via the Vapi REST API (`provision_vapi`). Nothing in the
+Vapi ↔ voice ↔ budtender path needs n8n, and there is no official Vapi n8n node.
+Keep n8n only as **optional** no-code glue if you later want a non-developer to
+wire post-call automations (transcript → Sheets/CRM, scheduled outbound) without
+touching code — and the repo already does staff email + Slack natively. So: don't
+use the n8n MCP to set this up.
+
+## Resource sizing (both stacks on one box)
+Two web apps + 2 Postgres + Redis + Celery is heavier than budtender alone.
+- **8 GB VPS recommended.** On a 4 GB box, keep it lean: set `GUNICORN_WORKERS=3`
+  (budtender, root `.env`) and `VOICE_GUNICORN_WORKERS=2`, and leave the
+  `voice-async` profile **off** (post-call work then runs inline — fine).
+- Tunable knobs (root `.env` or shell env): `GUNICORN_WORKERS`,
+  `GUNICORN_THREADS`, `VOICE_GUNICORN_WORKERS`, `VOICE_CELERY_CONCURRENCY`.
+
+## Local dev note
+The merged root `docker-compose.yml` is the **VPS / prod** topology (tunnel
+ingress, DEBUG=0). For local hacking on voice alone, use its standalone compose:
+`cd voice && docker compose up` (that one publishes a port + uses dev secrets).

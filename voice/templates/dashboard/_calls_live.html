@@ -1,0 +1,8 @@
+<table data-testid="calls-live">
+  <tr><th>Call id</th><th>Store</th><th>Started</th></tr>
+  {% for c in live %}
+    <tr><td><a href="{% url 'dash-call-detail' c.pk %}">{{ c.call_id }}</a></td><td>{{ c.store|default:'—' }}</td><td>{{ c.created_at }}</td></tr>
+  {% empty %}
+    <tr><td colspan="3" class="muted">No calls in flight.</td></tr>
+  {% endfor %}
+</table>

@@ -1,0 +1,10 @@
+<div class="bubbles" data-testid="call-transcript">
+  {% for t in turns %}
+    <div class="bubble {{ t.role }}">
+      <div class="muted" style="font-size:11px">{{ t.role }}{% if t.tool_name %} · {{ t.tool_name }}{% endif %}</div>
+      {{ t.text|default:'(no text)' }}
+    </div>
+  {% empty %}
+    <p class="muted">No transcript turns recorded.</p>
+  {% endfor %}
+</div>

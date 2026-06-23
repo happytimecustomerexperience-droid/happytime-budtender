@@ -1,0 +1,56 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Specials &amp; hours — Happy Time Voice{% endblock %}
+{% block content %}
+<div class="row between">
+  <div>
+    <h1>Specials &amp; hours</h1>
+    <p class="muted">The weekly specials + per-store hours the <strong>faq</strong> assistant
+      speaks. Edits go live on the next call (no redeploy). The % / times come from these KB rows
+      only — the agent never invents a number (Numbers-Guard).</p>
+  </div>
+  <a class="btn btn-primary" href="{% url 'dash-kb-row-new' 'store-fact' %}">+ New row</a>
+</div>
+
+{% if unconfirmed %}
+<div class="note-green" style="background:var(--amber-bg); border-color:#fde68a; color:var(--amber)">
+  ⚠ {{ unconfirmed }} row(s) are <strong>unconfirmed</strong> (O-8) — the agent will say
+  "call to confirm" instead of speaking them as a fact. Confirm a row to make it spoken.
+</div>
+{% endif %}
+
+<form method="get" class="row" style="margin:12px 0; gap:8px">
+  <a class="btn {% if not kind %}btn-primary{% endif %}" href="{% url 'dash-specials-hours' %}">All</a>
+  {% for k in kinds %}
+    <a class="btn {% if kind == k %}btn-primary{% endif %}"
+       href="?kind={{ k }}">{{ k|capfirst }}</a>
+  {% endfor %}
+</form>
+
+<div class="card">
+  <table>
+    <tr><th>Kind</th><th>Store</th><th>Label</th><th>Value</th><th>Status</th><th></th></tr>
+    {% for r in rows %}
+      <tr>
+        <td><span class="badge blue">{{ r.get_kind_display }}</span></td>
+        <td>{{ r.store|default:"all" }}</td>
+        <td>{{ r.label }}</td>
+        <td class="muted">{{ r.value|truncatechars:60 }}</td>
+        <td>
+          {% if not r.is_active %}<span class="badge slate">inactive</span>
+          {% elif r.confirmed %}<span class="badge green">confirmed</span>
+          {% else %}<span class="badge amber">call to confirm</span>{% endif %}
+        </td>
+        <td class="row" style="gap:8px">
+          <a href="{% url 'dash-kb-row-edit' r.pk %}?kind=store-fact">Edit</a>
+          <form method="post" action="{% url 'dash-kb-row-delete' r.pk %}?kind=store-fact"
+                onsubmit="return confirm('Delete this row?')">
+            {% csrf_token %}<button class="btn" style="color:var(--action)">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="6" class="muted">No specials or hours rows yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

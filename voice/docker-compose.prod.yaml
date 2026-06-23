@@ -1,0 +1,58 @@
+# Production stack for a VPS: Caddy (auto-HTTPS) -> gunicorn -> Postgres.
+# Secrets + domain come from .env; the `environment:` block FORCES the prod-critical
+# flags so the dev settings can never leak into production.
+#   docker compose -f docker-compose.prod.yaml up -d --build
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-happytime_voice}
+      POSTGRES_USER: ${POSTGRES_USER:-happytime_voice}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-happytime_voice}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    # NOTE: no published port — Postgres is reachable only inside the compose network.
+
+  web:
+    build: .
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      DJANGO_DEBUG: "0"            # prod
+      HTTPS_ENABLED: "1"          # HSTS + secure cookies (behind Caddy TLS)
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./data/uploads:/app/data/uploads      # uploaded KB files (persist)
+      - ./secrets:/app/secrets:ro             # put the Vertex service-account JSON here
+    expose:
+      - "8000"
+    restart: unless-stopped
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
