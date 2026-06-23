@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+from core.services import vapi
 from voice import constants as C
 from voice import workflow
 
@@ -79,6 +80,21 @@ def test_category_fans_to_all_five_with_cartridge_through_concentrate(payload):
     # cartridge: check_conc -> cart_battery -> upsell_conc (rejoin)
     assert ("check_conc", "cart_battery") in froms
     assert ("cart_battery", "upsell_conc") in froms
+
+
+@pytest.mark.django_db
+def test_provision_workflow_dry_run_runs_offline(db, settings, monkeypatch, capsys):
+    """`provision_workflow --dry-run` builds + prints without any Vapi write (auto dry-run when the
+    key is unset). Proves the command wires the builder correctly."""
+    from django.core.management import call_command
+
+    monkeypatch.setattr(vapi, "configured", lambda: False)  # force the offline dry-run path
+    settings.PUBLIC_BASE_URL = "https://voice.happytimeweed.com"
+    settings.VAPI_WEBHOOK_SECRET = "test-secret"
+    call_command("provision_workflow", "--dry-run")
+    out = capsys.readouterr().out
+    assert "53 nodes" in out and "dry-run" in out
+    assert "test-secret" not in out  # the secret is redacted in the dump
 
 
 @pytest.mark.django_db
