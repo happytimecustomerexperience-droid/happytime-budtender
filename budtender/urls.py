@@ -7,6 +7,7 @@ urlpatterns = [
     path("chat/session/start", views.SessionStartView.as_view()),
     path("products/search/", views.ProductSearchView.as_view()),
     path("products/in-stock/", views.InStockProductsView.as_view()),
+    path("products/by-sku/", views.ProductBySkuView.as_view()),
     path("products/price-bands", views.PriceBandsView.as_view()),
     path("products/subtypes", views.SubtypesView.as_view()),
     path("products/sizes", views.SizesView.as_view()),

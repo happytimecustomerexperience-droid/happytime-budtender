@@ -169,22 +169,26 @@ def test_search_forwards_exclude_skus():
     assert fs.calls[0]["body"]["exclude_skus"] == ["A", "B"]
 
 
-# ── check_sku: search-and-filter, OTD price, never the raw pre-tax price ────────
-def test_check_sku_filters_by_sku_and_computes_otd():
+# ── check_sku: exact single-SKU lookup (/products/by-sku/), OTD price, never raw price ──
+def test_check_sku_uses_by_sku_endpoint_and_computes_otd():
     fs = FakeSession()
     fs.queue(
-        "/products/search/",
-        {"results": [{"sku": "SKU1", "name": "X", "price": 38.0, "stock_on_hand": 14}]},
+        "/products/by-sku/",
+        {"product": {"sku": "SKU1", "name": "X", "price": 38.0, "stock_on_hand": 14}},
     )
     out = _client(fs).check_sku("yakima", "SKU1")
     assert out["in_stock"] is True
     assert out["sku"] == "SKU1"
     assert out["price_otd"] == 56.43  # 38 * 1.48508 (Yakima OTD)
     assert "price" not in out  # the raw pre-tax price never surfaces
+    # the exact single-SKU endpoint is hit with store+sku (not the ranked search that missed SKUs)
+    call = fs.calls[0]
+    assert call["url"].endswith("/products/by-sku/")
+    assert call["params"] == {"store": "yakima", "sku": "SKU1"}
 
 
 def test_check_sku_absent_is_not_in_stock():
-    fs = FakeSession(default={"results": []})
+    fs = FakeSession(default={})  # by-sku returns {} when the SKU isn't in stock
     out = _client(fs).check_sku("yakima", "NOPE")
     assert out == {"in_stock": False}
 

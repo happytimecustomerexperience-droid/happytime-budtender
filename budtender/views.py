@@ -79,6 +79,30 @@ class InStockProductsView(APIView):
             "generated_at": timezone.now().isoformat(),
         })
 
+
+class ProductBySkuView(APIView):
+    """GET /api/v1/products/by-sku/?store=<yakima|mount-vernon|pullman>&sku=<sku>
+
+    One purchasable product by SKU, leak-safe (no cost/margin) — the reliable single-SKU lookup
+    the voice agent's check_inventory needs (was TODO-B3; previously approximated by a capped ranked
+    search that missed specific SKUs). Uses the SAME in-stock gate the recommender does
+    (availability=True AND quantity_on_hand >= MIN_STOCK), so a returned row IS buyable. Returns
+    {"product": {...}} or {} when not found / not in stock. Auth: global ServiceTokenPermission."""
+
+    def get(self, request):
+        location = (request.query_params.get("store") or "yakima").strip()
+        sku = (request.query_params.get("sku") or "").strip()
+        if not sku:
+            return Response({"error": "sku required"}, status=400)
+        p = (
+            Product.objects
+            .filter(location_slug=location, sku=sku, availability=True,
+                    quantity_on_hand__gte=MIN_STOCK)
+            .first()
+        )
+        return Response({"product": public_product(p)} if p else {})
+
+
 RESUME_WINDOW = timedelta(days=30)
 
 

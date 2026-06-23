@@ -34,7 +34,13 @@ def _call(url: str, secret: str, tool: str, args: dict) -> dict:
     }
     r = httpx.post(
         url,
-        headers={"X-Vapi-Secret": secret, "Content-Type": "application/json"},
+        # X-Forwarded-Proto mirrors the reverse proxy (Traefik) so SECURE_SSL_REDIRECT doesn't
+        # 301 an http:// call to https when testing the container directly; harmless over real TLS.
+        headers={
+            "X-Vapi-Secret": secret,
+            "Content-Type": "application/json",
+            "X-Forwarded-Proto": "https",
+        },
         json=body,
         timeout=30,
     )
@@ -67,8 +73,8 @@ def main() -> int:
     # 1) FAQ — grounded KB answer (proves webhook + auth + KB).
     for q in ("what are your hours", "what is your return policy", "what payment do you take"):
         res = _call(a.url, a.secret, "faq_lookup", {"query": q, "store": a.store})
-        ans = (res or {}).get("answer", "")
-        ok = bool(res.get("grounded")) and bool(ans)
+        ans = (res or {}).get("answer") or ""
+        ok = bool((res or {}).get("grounded")) and bool(ans)
         check(PASS if ok else FAIL, f"faq_lookup: {q!r}", (ans[:80] or "no answer"))
 
     # 2) suggest_products across every category (the product brain).

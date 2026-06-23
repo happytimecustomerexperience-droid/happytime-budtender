@@ -65,3 +65,24 @@ class SearchEndpointTests(TestCase):
     def test_health_is_public(self):
         r = self.client.get("/api/v1/health/")
         self.assertEqual(r.status_code, 200)
+
+    def test_by_sku_returns_one_in_stock_product_no_leak(self):
+        r = self.client.get(
+            "/api/v1/products/by-sku/", {"store": "yakima", "sku": "A"}, **self._auth()
+        )
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["product"]["sku"], "A")
+        for word in FORBIDDEN:
+            self.assertNotIn(word, json.dumps(body).lower())
+
+    def test_by_sku_missing_returns_empty(self):
+        r = self.client.get(
+            "/api/v1/products/by-sku/", {"store": "yakima", "sku": "NOPE"}, **self._auth()
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {})
+
+    def test_by_sku_requires_token(self):
+        r = self.client.get("/api/v1/products/by-sku/", {"store": "yakima", "sku": "A"})
+        self.assertEqual(r.status_code, 403)

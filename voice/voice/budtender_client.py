@@ -167,28 +167,27 @@ class BudtenderClient:
         return out
 
     def check_sku(self, store: str, sku: str, *, category: str | None = None) -> dict:
-        """SKU-scoped purchasability + OTD price (21-SPEC §5.3). There is no single-SKU budtender
-        endpoint today (TODO-B3), so this runs a small in-stock ``search`` and filters by sku
-        client-side. Budtender's ranking already filters to ``MIN_STOCK=5`` + ``_is_purchasable``,
-        so a returned row IS buyable. Returns ``{in_stock, sku, price_otd, stock_on_hand, name}``;
-        graceful-empty = ``{"in_stock": False}``. ``price_otd`` is computed via ``pricing.otd`` —
-        the raw pre-tax ``price`` is NEVER surfaced for speaking (ADR-009)."""
+        """SKU-scoped purchasability + OTD price (21-SPEC §5.3) via the single-SKU budtender
+        endpoint ``GET /products/by-sku/`` (resolved TODO-B3). The old capped-ranked-search
+        workaround missed specific SKUs (a SKU ranked below the limit looked out-of-stock); this is
+        an exact, reliable lookup. Budtender returns a row ONLY when in stock (MIN_STOCK + the
+        purchasable gate), so a returned product IS buyable. Returns
+        ``{in_stock, sku, price_otd, stock_on_hand, name}``; graceful-empty = ``{"in_stock": False}``.
+        ``price_otd`` is computed via ``pricing.otd`` — the raw pre-tax ``price`` is NEVER surfaced
+        for speaking (ADR-009). ``category`` is accepted for back-compat but no longer needed."""
         from voice import pricing
 
         target = str(sku)
-        slots: dict = {"store": store}
-        if category:
-            slots["category"] = category
-        out = self.search(slots, limit=20, location=store)
-        for row in out.get("results") or []:
-            if str(row.get("sku")) == target:
-                return {
-                    "in_stock": True,
-                    "sku": target,
-                    "price_otd": pricing.otd(row.get("price"), store),
-                    "stock_on_hand": row.get("stock_on_hand"),
-                    "name": row.get("name"),
-                }
+        out = self._get("/products/by-sku/", {"store": store, "sku": target}, empty={})
+        prod = out.get("product") if isinstance(out, dict) else None
+        if isinstance(prod, dict) and str(prod.get("sku")) == target:
+            return {
+                "in_stock": True,
+                "sku": target,
+                "price_otd": pricing.otd(prod.get("price"), store),
+                "stock_on_hand": prod.get("stock_on_hand"),
+                "name": prod.get("name"),
+            }
         return {"in_stock": False}
 
     def pair_for_sku(
