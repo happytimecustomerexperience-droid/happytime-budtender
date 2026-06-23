@@ -2,17 +2,19 @@
 #   • budtender  (this repo root)  — suggestions/pairing API + admin/analytics
 #   • voice      (./voice)         — Vapi Squad control plane (calls budtender)
 #
-# They run as INDEPENDENT containers with their OWN databases, on one shared
-# docker network, behind ONE Cloudflare tunnel (no inbound ports published).
-# Bring everything up with a single command:
-#     docker compose up -d --build
+# They run as INDEPENDENT containers with their OWN databases. Bring everything
+# up with a single command:
+#     docker compose up -d --build --remove-orphans
 # Async voice post-call queue is opt-in:
 #     docker compose --profile voice-async up -d --build
 #
-# Ingress: the `cloudflared` service routes two public hostnames you define in
-# the Cloudflare Zero Trust dashboard:
-#     budtender-api.happytimeweed.com  ->  http://web:8000
-#     voice.happytimeweed.com          ->  http://voice-web:8000
+# INGRESS = the existing host-mode Traefik (`traefik-a0hc`) already on this VPS.
+# It reads Docker labels over the socket and reaches containers by bridge IP, so
+# NO ports are published here. Only `voice-web` is exposed publicly (Traefik
+# labels below) at voice.happytimeweed.com via Let's Encrypt — mirrors how
+# nordland/n8n are served. budtender stays INTERNAL: voice calls it in-cluster at
+# http://budtender.internal:8000. To expose the budtender API publicly later (for
+# the website), add the same label block to `web` with its own host + A-record.
 services:
   # ─────────────────────────── BUDTENDER STACK ────────────────────────────
   db:
@@ -148,6 +150,17 @@ services:
     expose:
       - "8000"
     restart: unless-stopped
+    # Served publicly by the host-mode traefik-a0hc (Let's Encrypt). Mirrors the
+    # working nordland labels. Traefik reaches this container by its IP on
+    # happytime-budtender_default, so no published ports are needed.
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=happytime-budtender_default
+      - traefik.http.routers.voice.rule=Host(`voice.happytimeweed.com`)
+      - traefik.http.routers.voice.entrypoints=web
+      - traefik.http.routers.voice.tls=true
+      - traefik.http.routers.voice.tls.certresolver=letsencrypt
+      - traefik.http.services.voice.loadbalancer.server.port=8000
     healthcheck:
       # Pure liveness — is gunicorn accepting connections? Intentionally NOT
       # /healthz, which returns 503 until the OPTIONAL Gemini/Vapi deps are
@@ -197,20 +210,8 @@ services:
     command: >
       sh -c "celery -A core worker --loglevel=info --concurrency=${VOICE_CELERY_CONCURRENCY:-2}"
 
-  # ──────────────────────────── SHARED INGRESS ────────────────────────────
-  # Cloudflare tunnel — the ONLY way in. One tunnel, two public hostnames
-  # (defined in the Cloudflare dashboard, see DEPLOY.md):
-  #   budtender-api.happytimeweed.com -> http://web:8000
-  #   voice.happytimeweed.com         -> http://voice-web:8000
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
-    depends_on:
-      - web
-      - voice-web
-    restart: unless-stopped
+  # NOTE: no `cloudflared` service — ingress is the host-mode traefik-a0hc that
+  # already runs on this VPS (see voice-web labels). Cloudflare is not used.
 
 volumes:
   pgdata:
