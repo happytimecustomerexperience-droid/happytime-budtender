@@ -84,11 +84,25 @@ FAQ_ROWS = [
     },
     {
         "key": "specials",
-        "question": "What are this week's specials? / Any deals?",
-        "answer": "We run a daily deal: Flower Monday 30% off, Cyber Tuesday 30% off online, "
-        "Wax Wednesday 25% off, Self-Care Thursday 25% off, and Happy Friday 30% off online.",
+        "question": "What are the current deals? / Any specials? / What's on sale?",
+        "answer": "We have big June deals running all month at every Happy Time location. "
+        "Flower is 40% off select ounces and 30% off everything else. "
+        "Concentrates are 30% off, vape carts and disposables are 25% off, "
+        "and pre-rolls including infused are 20% off. "
+        "Edibles, drinks, and tinctures are 20% off at Yakima and Mount Vernon, "
+        "and 30% off at Pullman. All deals run June 1 through June 30. "
+        "Tell me which store you're shopping at and I can give you the exact list.",
         "topic": "specials",
-        "paraphrases": ["any deals", "what's on sale", "today's special", "discounts"],
+        "paraphrases": [
+            "any deals",
+            "what's on sale",
+            "today's special",
+            "discounts",
+            "what are the deals",
+            "June deals",
+            "promotions",
+            "current specials",
+        ],
     },
     {
         "key": "id-required",
@@ -228,15 +242,33 @@ STORE_FACT_ROWS = [
     ("", "age", "Age requirement", "21+ with a valid government-issued photo ID.", True),
 ]
 
-# Weekly specials (store="", kind="special", one row each so "what's the Wednesday deal"
-# retrieves just that row).
-SPECIAL_ROWS = [
-    ("Flower Monday", "Flower Monday — 30% off flower."),
-    ("Cyber Tuesday", "Cyber Tuesday — 30% off online orders."),
-    ("Wax Wednesday", "Wax Wednesday — 25% off concentrates/wax."),
-    ("Self-Care Thursday", "Self-Care Thursday — 25% off (self-care / wellness)."),
-    ("Happy Friday", "Happy Friday — 30% off online orders."),
+# June 2026 monthly deals — per-store (store, label, value).
+# Yakima and Mount Vernon share the same percentages; Pullman has 30% on edibles/drinks/tinctures.
+# Natural key for update_or_create is (store, kind, label) — see seed_store_facts().
+_JUNE_BASE = [
+    ("June: 40% off select flower ounces", "40% off select ounces of flower — June 1–30. While supplies last."),
+    ("June: 30% off all flower", "30% off all flower — eighths, quarters, halves — June 1–30."),
+    ("June: 30% off concentrates", "30% off all concentrates — rosin, live resin, dabs, sauce — June 1–30."),
+    ("June: 25% off vape carts", "25% off vape cartridges — June 1–30."),
+    ("June: 25% off disposables", "25% off all-in-one disposable vapes — June 1–30."),
+    ("June: 20% off pre-rolls", "20% off flower pre-rolls — June 1–30."),
+    ("June: 20% off infused pre-rolls", "20% off infused pre-rolls — June 1–30."),
 ]
+_JUNE_EDIBLES_20 = [
+    ("June: 20% off edibles", "20% off edibles — gummies, chocolates, and more — June 1–30."),
+    ("June: 20% off drinks", "20% off cannabis-infused drinks — June 1–30."),
+    ("June: 20% off tinctures topicals CBD", "20% off tinctures, topicals, and CBD products — June 1–30."),
+]
+_JUNE_EDIBLES_30 = [
+    ("June: 30% off edibles", "30% off edibles — gummies, chocolates, and more — June 1–30."),
+    ("June: 30% off drinks", "30% off cannabis-infused drinks — June 1–30."),
+    ("June: 30% off tinctures topicals CBD", "30% off tinctures, topicals, and CBD products — June 1–30."),
+]
+SPECIAL_ROWS: list[tuple[str, str, str]] = (
+    [("yakima", label, value) for label, value in _JUNE_BASE + _JUNE_EDIBLES_20]
+    + [("mount-vernon", label, value) for label, value in _JUNE_BASE + _JUNE_EDIBLES_20]
+    + [("pullman", label, value) for label, value in _JUNE_BASE + _JUNE_EDIBLES_30]
+)
 
 
 # Vendor-facing facts the AI states on the no-answer leg (P3, ADR-015). KB-grounded so the spoken
@@ -290,12 +322,18 @@ def seed_store_facts() -> int:
             defaults={"value": value, "confirmed": confirmed, "is_active": True},
         )
         n += 1
-    for label, value in SPECIAL_ROWS:
-        m.StoreFact.objects.update_or_create(
-            store="",
+    # Wipe all existing special rows so stale weekly deals (Flower Monday, etc.) don't
+    # survive alongside the current monthly deals — then recreate from SPECIAL_ROWS.
+    m.StoreFact.objects.filter(kind="special").delete()
+    for store, label, value in SPECIAL_ROWS:
+        m.StoreFact.objects.create(
+            store=store,
             kind="special",
             label=label,
-            defaults={"value": value, "confirmed": True, "weight": 105, "is_active": True},
+            value=value,
+            confirmed=True,
+            weight=105,
+            is_active=True,
         )
         n += 1
     return n
