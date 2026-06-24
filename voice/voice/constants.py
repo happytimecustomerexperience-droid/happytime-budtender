@@ -94,7 +94,9 @@ SERVER_MESSAGES = ["tool-calls", "status-update", "end-of-call-report"]
 # A name without a provisioned id → that assistant is reported skipped (no dangling toolId).
 MEMBER_TOOLS = {
     "entry_router": ["faq_lookup"],
-    "budtender": ["suggest_products", "check_inventory", "pair_upsell"],
+    # faq_lookup too: callers ask about deals/hours/returns MID-pick — the budtender must be able to
+    # answer from the KB without a handoff (else it says "I don't have access to the deals").
+    "budtender": ["suggest_products", "check_inventory", "pair_upsell", "faq_lookup"],
     "faq": ["faq_lookup"],  # + the KB Query Tool (attached by ensure_files)
     "vendor": ["notify_vendor_callback"],  # + transferCall (built from transfer_number_key)
     "escalation": ["notify_staff_issue"],  # gather+email is the default; transferCall is last-resort

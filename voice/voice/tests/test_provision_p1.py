@@ -75,13 +75,13 @@ def test_provision_creates_budtender_member_and_tools(fake_vapi, p1_prompts):
 
 
 @pytest.mark.django_db
-def test_budtender_assistant_attaches_three_tool_ids(fake_vapi, p1_prompts):
-    # tools first so the assistant resolves their ids.
-    for t in ("suggest_products", "check_inventory", "pair_upsell"):
+def test_budtender_assistant_attaches_four_tool_ids(fake_vapi, p1_prompts):
+    # tools first so the assistant resolves their ids (faq_lookup too — deals/hours mid-pick).
+    for t in ("suggest_products", "check_inventory", "pair_upsell", "faq_lookup"):
         provision.ensure_tool(t)
     payload, warnings = provision.build_assistant_payload("budtender", name="budtender")
     assert not [w for w in warnings if w.startswith("tool not provisioned")]
-    assert len(payload["model"]["toolIds"]) == 3  # all three resolved, none dangling
+    assert len(payload["model"]["toolIds"]) == 4  # suggest/check/pair + faq_lookup, none dangling
 
 
 # ── G3. voice/model/keyterms ONCE on the budtender assistant payload (ADR-011) ──
