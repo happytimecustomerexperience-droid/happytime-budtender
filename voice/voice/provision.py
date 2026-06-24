@@ -404,7 +404,16 @@ def ensure_files() -> ReconcileResult:
     try:
         out = vapi_files.mirror_all()
     except vapi.VapiError as exc:
-        return ReconcileResult("file", "kb-mirror", action="error", error=str(exc))
+        # The Vapi Files mirror is a REDUNDANT fallback (kb/vapi_files docstring): faq_lookup answers
+        # FAQ live from kb/ regardless. A /file API hiccup (e.g. the multipart-vs-JSON upload shape)
+        # must NOT fail the whole provision — degrade to a warning skip so the assistants + squad
+        # still deploy clean and the call line keeps working.
+        return ReconcileResult(
+            "file",
+            "kb-mirror",
+            action="skipped",
+            warnings=[f"Vapi file mirror skipped (redundant — faq_lookup covers FAQ): {exc}"],
+        )
     if out.get("skipped"):
         return ReconcileResult(
             "file",
