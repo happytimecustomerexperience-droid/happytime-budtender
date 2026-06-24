@@ -137,7 +137,10 @@ def _alert_staff(voice_call) -> bool:
 
 def _envelope(callback, store: str, reason: str, window: str, *, alerted: bool) -> dict:
     """The frozen §4.2 tool-result body. The window is the ONLY number and it is config-sourced
-    (Numbers-Guard). No cost/margin field exists (Leak-Guard holds uniformly)."""
+    (Numbers-Guard). No cost/margin field exists (Leak-Guard holds uniformly). The spoken line uses
+    the readable store name (never the raw slug); the ``store`` field keeps the slug for logging."""
+    from voice import constants as C
+
     return {
         "logged": True,
         "callback_id": callback.pk if callback else None,
@@ -146,7 +149,7 @@ def _envelope(callback, store: str, reason: str, window: str, *, alerted: bool) 
         "reason": reason,
         "alerted": alerted,
         "spoken": (
-            f"Got it — I've let the {store} team know and someone will call you back "
+            f"Got it — I've let the {C.spoken_store(store)} team know and someone will call you back "
             f"within {window}."
         ),
     }

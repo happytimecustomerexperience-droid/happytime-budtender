@@ -85,13 +85,17 @@ def notify_staff_issue(args: dict, ctx: dict) -> dict:
 
 
 def _envelope(store: str, *, alerted: bool) -> dict:
-    """The spoken confirmation. No number is composed; no cost/margin field exists (Leak-Guard)."""
+    """The spoken confirmation. No number is composed; no cost/margin field exists (Leak-Guard).
+    The ``store`` field keeps the raw slug (logging/routing); the SPOKEN line uses the readable name."""
+    from voice import constants as C
+
+    name = C.spoken_store(store)
     return {
         "logged": True,
         "alerted": alerted,
         "store": store,
         "spoken": (
-            f"Thanks for walking me through that — I've sent all of it straight to our {store} "
+            f"Thanks for walking me through that — I've sent all of it straight to our {name} "
             "team right now, and they'll follow up with you to make it right. Is there anything "
             "else I can help you with?"
         ),

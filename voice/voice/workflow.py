@@ -44,7 +44,13 @@ GLOBAL_PROMPT = (
     "the caller's preferences) — that's how you fetch real, in-stock picks. Always call check_inventory "
     "before you promise a specific product is available. "
     "If the caller asks for a human twice, or reports a defective product or a return/billing dispute, "
-    "move to the escalation step: listen, gather the details, and send them to the team."
+    "move to the escalation step: listen, gather the details, and send them to the team. "
+    "AGE GATE (Washington law): before recommending or steering any purchase, confirm out loud that "
+    "the caller is twenty-one or older — this is a phone call, so never say you can check or see an ID. "
+    "If they're under twenty-one or won't confirm, do NOT recommend products — politely wrap up or hand "
+    "to the team; you can still answer general questions. "
+    "NO MEDICAL ADVICE OR HEALTH CLAIMS: never give medical or drug-interaction advice or say a product "
+    "treats, cures, or relieves any condition; for a medical question, suggest their doctor or pharmacist."
 )
 
 
@@ -63,9 +69,12 @@ def _conv(name, say, props=None, *, is_start=False, glob=None, present=False):
     an instruction to read the tool's picks. ``props`` -> variableExtractionPlan (one or more vars)."""
     if present:
         prompt = (
-            "The previous tool returned up to 3 in-stock picks, each with an out-the-door price. "
-            f"Present them warmly, using ONLY the tool's product names and prices, like this: {say} "
-            "Help the caller choose and capture their pick."
+            "The previous tool returned up to 3 in-stock picks, each with a product name, an "
+            "out-the-door price, and a SKU. Present them warmly using ONLY the tool's product names, "
+            "and read each price using the tool's price_spoken wording exactly (never the price_otd "
+            f"digits, and never read a SKU aloud), like this: {say} When the caller chooses one, "
+            "capture that pick's exact SKU string from the tool result into chosen_sku — never the "
+            "spoken product name."
         )
     else:
         prompt = (
@@ -213,17 +222,18 @@ def build_workflow_payload() -> dict:
             ("solvents", "Do you mind butane-processed products, or are you looking for something "
                          "solventless? Everything's passed state testing either way.",
                          {"solvent": ["solventless", "butane", "either"]}),
-            ("pesticide", "Does it matter to you if it's pesticide-free? Everything passes pesticide "
-                          "testing, but our DOH products are pesticide and heavy-metal free.",
+            ("pesticide", "Does it matter to you if it's pesticide-free? Everything passes state "
+                          "pesticide testing, and our DOH-Compliant products are tested to a stricter "
+                          "pesticide and heavy-metal standard.",
                           {"pesticide_free": "boolean"}),
             ("past_wins", "What products really hit the spot for you recently, and what did you like "
                           "about them?", {"past_wins": "string"}),
             ("budget", "And what price range feels comfortable for you?", {"budget": "number"}),
         ],
-        present_say="I'll show you up to three — one right at your price, one about five more, and one "
-                    "about ten more in case it's worth trying next time.",
-        wrap_say="Would you like to throw in something sweet for three dollars, or maybe a quick joint? "
-                 "Anything else while you're here?",
+        present_say="I've found a few that fit — I'll go through each one with its name and "
+                    "out-the-door price so you can pick what feels right.",
+        wrap_say="Would you like to add something sweet, or maybe a quick joint? Anything else while "
+                 "you're here?",
     )
     nodes += c_nodes
     edges += c_edges
@@ -237,10 +247,14 @@ def build_workflow_payload() -> dict:
         {"battery": ["has_510", "needs_510", "temp_control", "aio_disposable"]},
     )
     nodes.append(cart_battery)
-    # check_conc -> cart_battery when the caller wanted a cartridge; otherwise the normal conc tail
-    # already runs (check_conc -> upsell_conc). The cartridge path rejoins at upsell_conc.
-    edges.append(_edge("check_conc", "cart_battery", "the caller wanted a cartridge or vape pen"))
+    # check_conc -> cart_battery when the category is cartridge; otherwise the concentrate tail
+    # (check_conc -> upsell_conc, built in _branch) runs. Both edges are made deterministic on the
+    # captured `category` slot so Vapi never has to guess between them (P2-6).
+    edges.append(_edge("check_conc", "cart_battery", "the caller's category is cartridge"))
     edges.append(_edge("cart_battery", "upsell_conc", "battery sorted"))
+    for _e in edges:  # tighten the generic concentrate-tail edge to exclude the cartridge case
+        if _e["from"] == "check_conc" and _e["to"] == "upsell_conc":
+            _e["condition"]["prompt"] = "the caller's category is concentrate (not a cartridge)"
 
     # ── EDIBLE ──
     e_nodes, e_edges, e_entry, e_done = _branch(
@@ -252,20 +266,21 @@ def build_workflow_payload() -> dict:
                          "creative?", {"activity": ACTIVITY}),
             ("flavor", "Do you like chocolate, or do you prefer gummies?",
                        {"flavor": ["chocolate", "gummies", "either"]}),
-            ("ratios", "Are you looking for THC only, or some body effects too? THC-only is very "
-                       "psychoactive; one-to-one is balanced; one-to-fifty is more body relaxation; and "
-                       "THC-CBD-CBN is heavy relaxation and sleep.",
+            ("ratios", "Are you looking for THC only, or some body effects too? THC-only tends to feel "
+                       "more intoxicating for most people; one-to-one is often more balanced as the CBD "
+                       "softens the THC; one-to-fifty leans toward body effects; and THC-CBD-CBN is what "
+                       "folks usually reach for to wind down. Effects vary person to person.",
                        {"ratio": ["thc_only", "1:1", "1:50", "thc_cbd_cbn"]}),
             ("past_wins", "What products really hit the spot for you recently?", {"past_wins": "string"}),
             ("budget", "And what price range feels comfortable?", {"budget": "number"}),
         ],
-        present_say="I'll show you up to three — one at your price, one about five more, one about ten "
-                    "more.",
+        present_say="I've found a few that fit — I'll go through each one with its name and "
+                    "out-the-door price so you can pick what feels right.",
         dosing="Has anyone walked you through how to take edibles? Start slow — five milligrams, wait "
                "thirty minutes; gummies kick in around thirty to sixty minutes, chocolate one to two "
                "hours, and it peaks around one to two hours and lasts two to three.",
-        wrap_say="Would you like to throw in something sweet for three dollars, or a quick joint? "
-                 "Anything else while you're here?",
+        wrap_say="Would you like to add something sweet, or a quick joint? Anything else while you're "
+                 "here?",
     )
     nodes += e_nodes
     edges += e_edges
@@ -280,13 +295,14 @@ def build_workflow_payload() -> dict:
             ("activity", "What are you planning to do afterward — chill at home, socialize, or get "
                          "creative?", {"activity": ACTIVITY}),
             ("ratios", "Are you looking for THC only, or some body effects too? Same options as "
-                       "edibles — THC only, one-to-one, one-to-fifty, or THC-CBD-CBN for heavy "
-                       "relaxation and sleep.", {"ratio": ["thc_only", "1:1", "1:50", "thc_cbd_cbn"]}),
+                       "edibles — THC only, one-to-one, one-to-fifty, or THC-CBD-CBN, which folks "
+                       "usually reach for to wind down. Effects vary person to person.",
+                       {"ratio": ["thc_only", "1:1", "1:50", "thc_cbd_cbn"]}),
             ("past_wins", "What products really hit the spot for you recently?", {"past_wins": "string"}),
             ("budget", "And what price range feels comfortable?", {"budget": "number"}),
         ],
-        present_say="I'll show you up to three — one at your price, one about five more, one about ten "
-                    "more.",
+        present_say="I've found a few that fit — I'll go through each one with its name and "
+                    "out-the-door price so you can pick what feels right.",
         dosing="Has anyone walked you through tinctures? Mild is a quarter milliliter, standard a half, "
                "strong a full milliliter — start mild and increase gradually. Great for microdosing.",
         wrap_say="Anything else you'd like to add while you're here?",

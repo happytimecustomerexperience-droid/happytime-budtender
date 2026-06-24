@@ -274,6 +274,21 @@ SQUAD_SHAPE = {
     "escalation": [],  # terminal; warm transferCall out
 }
 
+# Spoken store names — tools voice "Mount Vernon", never the raw slug ("mount-vernon"/"mt_vernon").
+STORE_SPOKEN = {
+    "yakima": "Yakima",
+    "mount-vernon": "Mount Vernon",
+    "mt_vernon": "Mount Vernon",
+    "pullman": "Pullman",
+}
+
+
+def spoken_store(store: str) -> str:
+    """The readable store name for a slug, so a tool's spoken envelope never voices a code."""
+    key = (store or "").strip().lower()
+    return STORE_SPOKEN.get(key, key.replace("_", " ").replace("-", " ").title()) or "your"
+
+
 # Per-member transfer destination key → settings.HHT_TRANSFER_NUMBER_<KEY> (env, O-4).
 MEMBER_TRANSFER_KEY = {
     "vendor": "YAKIMA",
