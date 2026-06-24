@@ -238,11 +238,16 @@ def build_assistant_payload(role: str, *, name: str | None = None) -> tuple[dict
         "transcriber": dict(C.DEEPGRAM_TRANSCRIBER),
         "server": _server_block(),
         "serverMessages": list(C.SERVER_MESSAGES),
-        "firstMessageMode": "assistant-speaks-first",
     }
-    # The entry member opens the call with the fixed Happy Time greeting (speaks first, deterministic).
+    # The entry member OPENS the call with the fixed Happy Time greeting (speaks first, deterministic).
+    # Every OTHER member RECEIVES a mid-call handoff, so it must CONTINUE the conversation with a
+    # model-generated line off the shared transcript — NOT "assistant-speaks-first" with no
+    # firstMessage, which Vapi renders as dead SILENCE on transfer (the bug the owner heard).
     if role == "entry_router":
+        payload["firstMessageMode"] = "assistant-speaks-first"
         payload["firstMessage"] = C.ENTRY_FIRST_MESSAGE
+    else:
+        payload["firstMessageMode"] = "assistant-speaks-first-with-model-generated-message"
     return payload, warnings
 
 
