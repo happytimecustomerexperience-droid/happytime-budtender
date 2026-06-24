@@ -29,6 +29,12 @@ def env_bool(key: str, default: bool = False) -> bool:
 SECRET_KEY = env("SECRET_KEY", "insecure-dev-key-change-me")
 DEBUG = env_bool("DEBUG", False)
 ALLOWED_HOSTS = [h.strip() for h in env("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h.strip()]
+# Always allow the in-cluster service aliases (internal-only): the voice service reaches budtender at
+# http://budtender.internal:8000 and http://web:8000, so a stale/short ALLOWED_HOSTS in a deploy's .env
+# must never DisallowedHost-400 those calls. These are docker-network names, not public hostnames.
+for _alias in ("localhost", "127.0.0.1", "budtender.internal", "web"):
+    if _alias not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_alias)
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in env("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
 
 # Service token the website presents. Required in production.
