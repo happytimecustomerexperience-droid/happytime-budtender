@@ -112,6 +112,7 @@ def _speakable_pick(result: dict, store: str) -> dict:
     budtender already serialized leak-safe. The raw pre-tax ``price`` is NEVER copied through."""
     pick = {k: result.get(k) for k in _SPEAKABLE_FIELDS}
     pick["price_otd"] = pricing.otd(result.get("price"), store)
+    pick["price_spoken"] = pricing.spoken(pick["price_otd"])  # voice reads THIS, never the digits
     return pick
 
 
@@ -128,8 +129,9 @@ def _spoken_summary(picks: list[dict]) -> str:
     why = (top.get("why_this") or "").strip()
     if why:
         lead += f" — {why}"
-    if price:
-        lead += f", and it's {price:.0f} out the door."
+    spoken_price = pricing.spoken(price)
+    if spoken_price:
+        lead += f", and it's {spoken_price} out the door."
     else:
         lead += "."
     return lead
@@ -226,6 +228,7 @@ def handle_check_inventory(args: dict, ctx: dict) -> dict:
         "in_stock": True,
         "qty_band": _qty_band(out.get("stock_on_hand")),
         "price_otd": out.get("price_otd"),
+        "price_spoken": pricing.spoken(out.get("price_otd")),  # voice reads THIS, never the digits
         "name": out.get("name"),
     }
 

@@ -869,6 +869,27 @@ VENDOR_BODY = (
 )
 
 
+# Shared spoken-output rules appended to EVERY persona so numbers/terms are voiced naturally on the
+# phone (the agent was reading "$16.34" as "dollar 16.34", etc.). One source, all members.
+SPEAKING_RULES = (
+    "\n\nSPEAKING NUMBERS & TERMS — read everything as natural spoken words; this is a phone call:\n"
+    "  - PRICES: voice a tool's price_spoken wording exactly — 'sixteen dollars and thirty-four "
+    "cents'. NEVER read the raw number or a dollar sign (not '$16.34', not 'sixteen point three "
+    "four', not 'dollar sixteen').\n"
+    "  - PERCENTAGES: say 'thirty percent', never 'thirty %'. Potency like 24% THC is 'twenty-four "
+    "percent T-H-C'.\n"
+    "  - WEIGHTS & DOSES: say 'three and a half grams' or 'an eighth', 'five milligrams', 'one "
+    "ounce' — never the letters 'g', 'mg', or 'oz'.\n"
+    "  - RATIOS: read THC-to-CBD ratios as words — '1:1' is 'one to one', '1:50' is 'one to fifty', "
+    "'2:1:1' is 'two to one to one'.\n"
+    "  - 'DOH' on a DOH-Approved product is said as the letters 'D-O-H', never 'doh'. THC, CBD, "
+    "CBN, CBG are read as their letters.\n"
+    "  - A slash is read as 'or'. Never read SKU numbers, internal codes, or web links aloud.\n"
+    "  - Product names: read them naturally ('Northern Lights 28g' → 'Northern Lights twenty-eight "
+    "grams', 'GG#4' → 'G G number four'); don't announce punctuation.\n"
+)
+
+
 def seed_agent_prompts() -> int:
     rows = {
         "faq": {
@@ -881,7 +902,7 @@ def seed_agent_prompts() -> int:
         },
         "budtender": {
             "body": BUDTENDER_BODY,
-            "tool_names": ["suggest_products", "check_inventory", "pair_upsell"],
+            "tool_names": ["suggest_products", "check_inventory", "pair_upsell", "faq_lookup"],
         },
         "vendor": {
             "body": VENDOR_BODY,
@@ -896,7 +917,7 @@ def seed_agent_prompts() -> int:
         m.AgentPrompt.objects.update_or_create(
             role=role,
             defaults={
-                "body": data["body"],
+                "body": data["body"] + SPEAKING_RULES,
                 "vapi_model": VAPI_MODEL,
                 "voice_id": VOICE_ID,
                 "tool_names": data["tool_names"],

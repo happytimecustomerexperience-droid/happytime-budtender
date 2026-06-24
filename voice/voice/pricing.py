@@ -49,3 +49,29 @@ def otd(price: float | int | None, store: str | None) -> float:
     if p <= 0:
         return 0.0
     return round(p * otd_multiplier(store), 2)
+
+
+def spoken(amount: float | int | None) -> str:
+    """A TTS-safe spoken form of a dollar amount so the voice reads it as words, never the mangled
+    "$16.34". ``16.34 -> "16 dollars and 34 cents"``, ``30 -> "30 dollars"``, ``1.05 -> "1 dollar
+    and 5 cents"``. A None/non-positive amount → ``""`` (the agent then says nothing — Numbers-Guard).
+
+    The agent is told to voice THIS string verbatim; it never speaks the bare ``price_otd`` number."""
+    try:
+        a = float(amount)
+    except (TypeError, ValueError):
+        return ""
+    if a <= 0:
+        return ""
+    dollars = int(a)
+    cents = int(round((a - dollars) * 100))
+    if cents >= 100:  # rounding edge (e.g. 16.999): carry into dollars
+        dollars += 1
+        cents -= 100
+    d_word = "dollar" if dollars == 1 else "dollars"
+    if cents == 0:
+        return f"{dollars} {d_word}"
+    c_word = "cent" if cents == 1 else "cents"
+    if dollars == 0:
+        return f"{cents} {c_word}"
+    return f"{dollars} {d_word} and {cents} {c_word}"
