@@ -170,9 +170,22 @@ def publish_squad() -> PublishResult:
             result.warnings = ["VAPI_SQUAD_ID not configured / squad not provisioned"]
             return result
         result.id = squad_id
+        rec, _ = VapiObject.objects.get_or_create(
+            kind="squad", name=C.SQUAD_NAME, defaults={"vapi_id": squad_id}
+        )
+        if not rec.vapi_id:
+            rec.vapi_id = squad_id
+        h = _payload_hash(payload)
+        if h == rec.last_provision_hash:
+            if rec.vapi_id != squad_id:
+                rec.save(update_fields=["vapi_id", "updated_at"])
+            result.action = "nodrift"
+            return result
         current = vapi.get_squad(squad_id)  # GET-then-PATCH
         result.changed_fields = _diff_fields(current, payload)
         vapi.patch_squad(squad_id, payload)
+        rec.last_provision_hash = h
+        rec.save(update_fields=["vapi_id", "last_provision_hash", "updated_at"])
         result.action = "patched"
         result.drift = bool(result.changed_fields)
         return result
@@ -196,3 +209,30 @@ def publish_all() -> list[PublishResult]:
         results.append(publish_assistant(prompt))
     results.append(publish_squad())
     return results
+
+
+def auto_publish_on_save(prompt) -> str:
+    """Push one assistant + the squad to Vapi right after a dashboard save (P6 "instant sync"), so
+    an edit reflects in the live agent immediately. Returns a short status string for the save toast.
+
+    No-ops (returns "") when ``HHT_AUTO_PUBLISH`` is off or Vapi isn't configured — the DB row is
+    already live for any server-side logic; the Vapi push is just deferred to the manual Publish
+    button. Never raises (``publish_*`` already capture ``VapiError`` per object); the zero-drift
+    hash makes a no-edit re-save a cheap no-op (zero PATCH)."""
+    if not getattr(settings, "HHT_AUTO_PUBLISH", False) or not vapi.configured():
+        return ""
+    try:
+        r = publish_assistant(prompt)
+        squad = publish_squad()
+    except Exception as exc:  # noqa: BLE001 — a publish hiccup must never break the save response
+        return f"auto-publish error: {exc}"
+    if r.action == "error":
+        return f"saved — Vapi publish error: {r.error}"
+    if r.action == "skipped":
+        return f"saved — Vapi publish skipped ({'; '.join(r.warnings) or 'unprovisioned'})"
+    if r.action == "nodrift" and squad.action in ("nodrift", "skipped"):
+        return "saved — already live in Vapi (no change)"
+    bits = [f"assistant {r.action}"]
+    if squad.action not in ("nodrift", "skipped"):
+        bits.append(f"squad {squad.action}")
+    return "pushed to Vapi: " + ", ".join(bits)

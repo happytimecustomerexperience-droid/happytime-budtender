@@ -5,13 +5,27 @@
     <span class="badge {% if p.is_active %}green{% else %}slate{% endif %}">{% if p.is_active %}active{% else %}inactive{% endif %}</span>
   </div>
   {% if error %}<div class="toast error" style="position:static;margin-bottom:8px">{{ error }}</div>{% endif %}
-  {% if saved %}<div class="note-green">Saved — live server-side. Click Publish to push to Vapi.</div>{% endif %}
+  {% if saved %}<div class="note-green">Saved — auto-published to Vapi (instant). Manual Publish still available.</div>{% endif %}
 
   <form hx-post="{% url 'dash-agent-save' p.pk %}" hx-target="#agent-card-{{ p.pk }}" hx-swap="outerHTML">
     {% csrf_token %}
     <div class="grid" style="grid-template-columns:1fr 1fr">
-      <label><span class="lt">Vapi model</span><input name="vapi_model" value="{{ p.vapi_model }}"></label>
-      <label><span class="lt">Voice id (Cartesia)</span><input name="voice_id" value="{{ p.voice_id }}"></label>
+      <label><span class="lt">Model provider</span>
+        <select name="model_provider">
+          <option value="google" {% if p.model_provider == 'google' %}selected{% endif %}>google (Gemini)</option>
+          <option value="openai" {% if p.model_provider == 'openai' %}selected{% endif %}>openai</option>
+          <option value="anthropic" {% if p.model_provider == 'anthropic' %}selected{% endif %}>anthropic</option>
+          <option value="groq" {% if p.model_provider == 'groq' %}selected{% endif %}>groq</option>
+        </select>
+      </label>
+      <label><span class="lt">Model id</span><input name="vapi_model" value="{{ p.vapi_model }}" placeholder="gemini-2.5-flash"></label>
+      <label><span class="lt">Voice provider</span>
+        <select name="voice_provider">
+          <option value="cartesia" {% if p.voice_provider == 'cartesia' %}selected{% endif %}>cartesia</option>
+          <option value="11labs" {% if p.voice_provider == '11labs' %}selected{% endif %}>11labs (ElevenLabs)</option>
+        </select>
+      </label>
+      <label><span class="lt">Voice id</span><input name="voice_id" value="{{ p.voice_id }}" placeholder="provider voice id"></label>
       <label><span class="lt">Temperature</span><input type="number" step="any" min="0" max="2" name="temperature" value="{{ p.temperature|default_if_none:'' }}"></label>
       <label><span class="lt">Max tokens</span><input type="number" min="1" max="65536" name="max_output_tokens" value="{{ p.max_output_tokens|default_if_none:'' }}"></label>
       <label><span class="lt">Tool names (comma-separated)</span><input name="tool_names" value="{{ p.tool_names|join:', ' }}"></label>
@@ -21,10 +35,12 @@
         </select>
       </label>
     </div>
+    <label><span class="lt">Voice settings (JSON — ElevenLabs: stability, similarityBoost, style, useSpeakerBoost, model)</span>
+      <textarea name="voice_settings" rows="3" placeholder='{"model":"eleven_flash_v2_5","stability":0.5,"similarityBoost":0.75}'>{{ p.voice_settings_json }}</textarea></label>
     <label><span class="lt">System prompt</span><textarea name="body" rows="6">{{ p.body }}</textarea></label>
     <label class="row" style="gap:6px"><input type="checkbox" name="is_active" style="width:auto" {% if p.is_active %}checked{% endif %}> Active</label>
     <div class="row between">
-      <button class="btn btn-primary" type="submit" data-testid="agent-save-{{ p.role }}">Save (live server-side)</button>
+      <button class="btn btn-primary" type="submit" data-testid="agent-save-{{ p.role }}">Save &amp; publish to Vapi</button>
       <a class="btn" href="{% url 'dash-agent-detail' p.role %}">Full editor ↗</a>
     </div>
   </form>

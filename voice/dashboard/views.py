@@ -22,11 +22,13 @@ Boundaries (binding, §1.3):
 from __future__ import annotations
 
 import json
+from urllib.parse import urlencode
 
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.paginator import Paginator
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_POST
 
@@ -37,6 +39,14 @@ PER_PAGE = 25
 def _toast(type_: str, message: str) -> str:
     """Serialize an HX-Trigger 'toast' payload for the base.html toast stack."""
     return json.dumps({"toast": {"type": type_, "message": message}})
+
+
+def _bounded_int(value, *, default: int, lo: int, hi: int) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        n = default
+    return min(max(n, lo), hi)
 
 
 def _resolve_sort(request, allowed: dict[str, str], default: str) -> tuple[str, str, str]:
@@ -97,10 +107,7 @@ def analytics_dashboard(request):
 
     from voice.models import VoiceCall
 
-    try:
-        days = int(request.GET.get("days") or 30)
-    except ValueError:
-        days = 30
+    days = _bounded_int(request.GET.get("days"), default=30, lo=1, hi=365)
     days = days if days in (7, 30, 90) else 30
     since = timezone.now() - timedelta(days=days)
     qs = VoiceCall.objects.filter(created_at__gte=since)
@@ -117,8 +124,90 @@ def analytics_dashboard(request):
         "escalations": qs.filter(outcome="escalation").count(),
         "vendor_callbacks": qs.filter(outcome="vendor_callback").count(),
         "suggested": qs.filter(outcome="suggested").count(),
+        "chatbot": _chatbot_analytics(days),
     }
     return render(request, "dashboard/analytics.html", ctx)
+
+
+def _chatbot_analytics(days: int) -> dict:
+    """Fetch budtender's chatbot/menu analytics summary for this dashboard.
+
+    The service token stays server-side. Missing config or transport failures degrade
+    to a small status object instead of breaking the voice dashboard.
+    """
+    import logging
+
+    import requests
+    from django.conf import settings
+
+    logger = logging.getLogger(__name__)
+    base = (getattr(settings, "HHT_BUDTENDER_BASE_URL", "") or "").rstrip("/")
+    token = getattr(settings, "HHT_BACKEND_TOKEN", "") or ""
+    if not base or not token:
+        return {"ok": False, "reason": "budtender analytics not configured"}
+    try:
+        resp = requests.post(
+            f"{base}/api/v1/analytics/summary",
+            json={"days": days},
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=(2.0, int(getattr(settings, "HHT_BUDTENDER_TIMEOUT", 8) or 8)),
+        )
+        if resp.status_code >= 300:
+            return {"ok": False, "reason": f"budtender HTTP {resp.status_code}"}
+        data = resp.json() if resp.content else {}
+        return {"ok": True, "summary": data if isinstance(data, dict) else {}}
+    except (requests.Timeout, requests.ConnectionError) as exc:
+        return {"ok": False, "reason": f"budtender unreachable ({type(exc).__name__})"}
+    except Exception:
+        logger.warning("budtender analytics fetch failed", exc_info=True)
+        return {"ok": False, "reason": "budtender analytics fetch failed"}
+
+
+def _chatbot_history(limit: int = 25) -> dict:
+    return _chatbot_history_for_payload({"limit": limit, "message_limit": 200})
+
+
+def _chatbot_session(session_token: str) -> dict:
+    token = str(session_token or "").strip()[:128]
+    if not token:
+        return {"ok": False, "reason": "missing chatbot session token", "session": None}
+    data = _chatbot_history_for_payload({"session_token": token, "limit": 1, "message_limit": 500})
+    sessions = data.get("sessions", [])
+    return {
+        "ok": bool(data.get("ok") and sessions),
+        "reason": "" if data.get("ok") and sessions else data.get("reason", "chatbot session not found"),
+        "session": sessions[0] if sessions else None,
+    }
+
+
+def _chatbot_history_for_payload(payload: dict) -> dict:
+    import logging
+
+    import requests
+    from django.conf import settings
+
+    logger = logging.getLogger(__name__)
+    base = (getattr(settings, "HHT_BUDTENDER_BASE_URL", "") or "").rstrip("/")
+    token = getattr(settings, "HHT_BACKEND_TOKEN", "") or ""
+    if not base or not token:
+        return {"ok": False, "reason": "budtender history not configured", "sessions": []}
+    try:
+        resp = requests.post(
+            f"{base}/api/v1/chat/history",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=(2.0, int(getattr(settings, "HHT_BUDTENDER_TIMEOUT", 8) or 8)),
+        )
+        if resp.status_code >= 300:
+            return {"ok": False, "reason": f"budtender HTTP {resp.status_code}", "sessions": []}
+        data = resp.json() if resp.content else {}
+        sessions = data.get("sessions") if isinstance(data, dict) else []
+        return {"ok": True, "sessions": sessions if isinstance(sessions, list) else []}
+    except (requests.Timeout, requests.ConnectionError) as exc:
+        return {"ok": False, "reason": f"budtender unreachable ({type(exc).__name__})", "sessions": []}
+    except Exception:
+        logger.warning("budtender chat history fetch failed", exc_info=True)
+        return {"ok": False, "reason": "budtender history fetch failed", "sessions": []}
 
 
 def _top_product_asks(qs, limit: int = 10) -> list[dict]:
@@ -170,16 +259,41 @@ def agent_save(request, pk: int):
     p = get_object_or_404(AgentPrompt, pk=pk)
     errors: list[str] = []
 
-    for f in ("body", "vapi_model", "voice_id"):
+    for f in ("body", "model_provider", "vapi_model", "voice_provider", "voice_id"):
         if f in request.POST:
-            setattr(p, f, request.POST[f])
+            setattr(p, f, request.POST[f].strip())
+
+    # voice_settings: optional JSON object of provider knobs (ElevenLabs stability/similarityBoost/…).
+    if "voice_settings" in request.POST:
+        import json as _json
+
+        raw = (request.POST.get("voice_settings") or "").strip()
+        if not raw:
+            p.voice_settings = {}
+        else:
+            try:
+                parsed = _json.loads(raw)
+            except (ValueError, TypeError):
+                errors.append("voice_settings: invalid JSON")
+            else:
+                if not isinstance(parsed, dict):
+                    errors.append("voice_settings: must be a JSON object")
+                else:
+                    p.voice_settings = parsed
 
     # tool_names: comma- or whitespace-separated → list (the multiselect posts repeated values).
     if "tool_names" in request.POST:
+        from voice.constants import TOOL_SPECS
+
         names = request.POST.getlist("tool_names")
         if len(names) == 1 and ("," in names[0] or " " in names[0]):
             names = [t.strip() for t in names[0].replace(",", " ").split() if t.strip()]
-        p.tool_names = [n for n in names if n]
+        clean_tools = [n for n in names if n]
+        unknown = sorted({n for n in clean_tools if n not in TOOL_SPECS})
+        if unknown:
+            errors.append(f"tool_names: unknown {', '.join(unknown)}")
+        else:
+            p.tool_names = clean_tools
 
     key = (request.POST.get("transfer_number_key") or "").strip().upper()
     if key and key not in ("YAKIMA", "MTVERNON", "PULLMAN"):
@@ -205,8 +319,12 @@ def agent_save(request, pk: int):
     p.max_output_tokens = _num("max_output_tokens", int, lo=1, hi=65536, default=None)
     p.is_active = request.POST.get("is_active") == "on"
 
+    publish_note = ""
     if not errors:
         p.save()
+        from . import publish as _publish
+
+        publish_note = _publish.auto_publish_on_save(p)
     resp = render(
         request,
         "dashboard/_agent_card.html",
@@ -215,9 +333,10 @@ def agent_save(request, pk: int):
     if errors:
         resp["HX-Trigger"] = _toast("error", "; ".join(errors))
     else:
-        resp["HX-Trigger"] = _toast(
-            "success", f"{p.role} updated — live server-side; click Publish to push to Vapi ✓"
-        )
+        # Auto-publish on by default (HHT_AUTO_PUBLISH) → the edit reaches Vapi instantly; the note
+        # reports the push. When off/unconfigured the row is still live server-side.
+        tail = publish_note or "live server-side; Publish to push to Vapi"
+        resp["HX-Trigger"] = _toast("success", f"{p.role} updated — {tail} ✓")
     return resp
 
 
@@ -290,6 +409,10 @@ def agent_prompt_assist(request, pk: int):
         body = body.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
     if not body:
         return JsonResponse({"ok": False, "error": "No proposal returned."}, status=502)
+    if p.body and p.body not in body:
+        return JsonResponse(
+            {"ok": False, "error": "AI proposal dropped existing prompt text."}, status=502
+        )
     return JsonResponse({"ok": True, "body": body, "chars": len(body)})
 
 
@@ -600,6 +723,83 @@ def call_log(request, _outcomes: list[str] | None = None):
             "sort_field": sort_field,
             "sort_dir": sort_dir,
             "badge": monitor.call_outcome_badge,
+        },
+    )
+
+
+@staff_member_required
+def chat_history(request):
+    limit = _bounded_int(request.GET.get("limit"), default=25, lo=1, hi=100)
+    history = _chatbot_history(limit)
+    return render(
+        request,
+        "dashboard/chat_history.html",
+        {"history": history, "limit": limit},
+    )
+
+
+@staff_member_required
+def chat_detail(request):
+    session_token = str(request.GET.get("session_token") or "").strip()[:128]
+    result = _chatbot_session(session_token)
+    return render(
+        request,
+        "dashboard/chat_detail.html",
+        {"result": result, "session_token": session_token},
+    )
+
+
+@staff_member_required
+def conversation_history(request):
+    """Unified recent conversation list across voice calls and website chatbot sessions."""
+    from voice.models import VoiceCall
+
+    limit = _bounded_int(request.GET.get("limit"), default=25, lo=1, hi=100)
+    rows = []
+    for call in VoiceCall.objects.order_by("-created_at")[:limit]:
+        snippet = call.ai_summary or call.transcript
+        rows.append(
+            {
+                "channel": "voice",
+                "store": call.store,
+                "when": call.created_at.isoformat(),
+                "conversation_id": call.call_id,
+                "summary": " ".join(str(snippet or "").split())[:220],
+                "status": call.get_outcome_display() if call.outcome else "in flight",
+                "href": reverse("dash-call-detail", kwargs={"pk": call.pk}),
+            }
+        )
+
+    chat_history_data = _chatbot_history(limit)
+    for session in chat_history_data.get("sessions", []):
+        messages = session.get("messages") if isinstance(session.get("messages"), list) else []
+        latest = messages[-1].get("content", "") if messages and isinstance(messages[-1], dict) else ""
+        session_token = session.get("session_token") or ""
+        rows.append(
+            {
+                "channel": session.get("channel") or "chat",
+                "store": session.get("location_slug") or "",
+                "when": session.get("last_active_at") or "",
+                "conversation_id": session_token,
+                "summary": " ".join(str(latest or "").split())[:220],
+                "status": f"{session.get('message_count', 0)} messages",
+                "href": (
+                    reverse("dash-chat-detail") + "?" + urlencode({"session_token": session_token})
+                    if session_token
+                    else ""
+                ),
+            }
+        )
+
+    rows.sort(key=lambda r: r["when"], reverse=True)
+    return render(
+        request,
+        "dashboard/conversation_history.html",
+        {
+            "rows": rows[:limit],
+            "limit": limit,
+            "chatbot_ok": chat_history_data.get("ok", False),
+            "chatbot_reason": chat_history_data.get("reason", ""),
         },
     )
 

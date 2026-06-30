@@ -70,6 +70,7 @@ def full_squad(db):
 def test_publish_all_patches_each_assistant_and_squad(fake_vapi, full_squad):
     from dashboard import publish
 
+    publish.publish_all()
     # An edit makes the payload differ from the last_publish_hash → a real PATCH.
     p = full_squad.objects.get(role="budtender")
     p.body = p.body + " (edited sentence)"
@@ -79,9 +80,8 @@ def test_publish_all_patches_each_assistant_and_squad(fake_vapi, full_squad):
     results = publish.publish_all()
     by = {(r.object, r.role): r for r in results}
     assert by[("assistant", "budtender")].action == "patched"
-    assert by[("squad", "squad")].action == "patched"
-    # the squad PATCH happened + the budtender assistant PATCH happened
-    assert fake_vapi.patches >= 2
+    assert by[("squad", "squad")].action == "nodrift"
+    assert fake_vapi.patches == 1
 
 
 @pytest.mark.django_db
@@ -110,12 +110,8 @@ def test_republish_no_edits_is_zero_drift(fake_vapi, full_squad):
     publish.publish_all()  # first publish stamps last_publish_hash on every row
     fake_vapi.patches = 0
     results = publish.publish_all()  # immediate re-run, no edits
-    asst_results = [r for r in results if r.object == "assistant"]
-    assert all(r.action == "nodrift" for r in asst_results)
-    # zero assistant PATCH calls on the no-edit re-run (the squad reconcile is GET-then-PATCH but
-    # the assistants — the headline criterion — issue zero).
-    # Count assistant patches specifically:
-    assert all(r.action == "nodrift" for r in asst_results)
+    assert all(r.action == "nodrift" for r in results)
+    assert fake_vapi.patches == 0
 
 
 # ── G3: a Vapi 4xx on one assistant is isolated; others still publish; no raise ─
@@ -182,3 +178,32 @@ def test_squad_reasserts_required_transition_from_code(fake_vapi, full_squad):
     bt_id = full_squad.objects.get(role="budtender").vapi_assistant_id
     dests = {d["assistantName"] for d in members[bt_id]["assistantDestinations"]}
     assert "escalation" in dests  # re-asserted from code despite the canvas deletion
+
+
+# ── P6: instant sync — a save auto-publishes to Vapi when HHT_AUTO_PUBLISH is on ─
+@pytest.mark.django_db
+def test_auto_publish_on_save_pushes_edit_to_vapi(fake_vapi, full_squad, settings):
+    from dashboard import publish
+
+    settings.HHT_AUTO_PUBLISH = True  # opt in (off by default under pytest)
+    publish.publish_all()  # first publish stamps last_publish_hash on every row
+
+    p = full_squad.objects.get(role="budtender")
+    p.body = p.body + " (edited mid-session)"
+    p.save()
+
+    fake_vapi.patches = 0
+    note = publish.auto_publish_on_save(p)
+    assert fake_vapi.patches == 1  # the edit reached Vapi instantly
+    assert "Vapi" in note
+
+
+@pytest.mark.django_db
+def test_auto_publish_is_noop_when_disabled(db):
+    """Default under pytest: HHT_AUTO_PUBLISH off → returns "" and makes NO Vapi call (no fake_vapi
+    here, so a stray real call would blow up — the gate must short-circuit first)."""
+    from dashboard import publish
+    from kb.models import AgentPrompt
+
+    p = AgentPrompt.objects.create(role="faq", body="x", is_active=True)
+    assert publish.auto_publish_on_save(p) == ""

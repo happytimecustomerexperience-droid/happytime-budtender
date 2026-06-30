@@ -28,7 +28,7 @@ def _env_list(name: str, default: str = "") -> list[str]:
 # ── Core ──────────────────────────────────────────────────────────────
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-insecure-change-me")
 DEBUG = _env_bool("DJANGO_DEBUG", "0")  # fail-safe: production unless explicitly on
-ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
+ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,voice.internal,voice")
 
 # Public HTTPS base Vapi tools call back to (server.url builder).
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000")
@@ -137,6 +137,7 @@ VAPI_PRIVATE_KEY = os.environ.get("VAPI_PRIVATE_KEY", "")
 VAPI_WEBHOOK_SECRET = os.environ.get("VAPI_WEBHOOK_SECRET", "")
 VAPI_SQUAD_ID = os.environ.get("VAPI_SQUAD_ID", "")
 VAPI_PHONE_NUMBER_ID = os.environ.get("VAPI_PHONE_NUMBER_ID", "")
+VAPI_PHONE_NUMBER_STORE_MAP = os.environ.get("VAPI_PHONE_NUMBER_STORE_MAP", "")
 VAPI_VOICE_ID = os.environ.get("VAPI_VOICE_ID", "a3520a8f-226a-428d-9fcd-b0a4711a6829")
 VAPI_ASSISTANT_MODEL = os.environ.get("VAPI_ASSISTANT_MODEL", "gpt-4.1-mini")
 # Webhook auth header names (env-driven; the exact Vapi header is config, not code — 23-SPEC §4.1).
@@ -167,6 +168,13 @@ CELERY_RESULT_BACKEND = os.environ.get(
 CELERY_TASK_ALWAYS_EAGER = _env_bool("CELERY_TASK_ALWAYS_EAGER", "0") or ("pytest" in _sys.modules)
 CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_WORKER_CONCURRENCY = int(os.environ.get("CELERY_WORKER_CONCURRENCY", "2"))
+
+# ── Instant Vapi sync (P6) ────────────────────────────────────────────
+# ON by default → a dashboard save of an assistant auto-publishes to Vapi (PATCH /assistant +
+# /squad) right away, so an edit reflects in the live agent instantly (zero-drift hash keeps a
+# no-edit re-save cheap). OFF under pytest so the suite never makes a network call — a publish test
+# opts in by setting settings.HHT_AUTO_PUBLISH=True with the Vapi HTTP layer mocked.
+HHT_AUTO_PUBLISH = _env_bool("HHT_AUTO_PUBLISH", "1") and ("pytest" not in _sys.modules)
 
 # ── Vendor routing (P3 / 13-P3 §10) ───────────────────────────────────
 # The spoken callback window the vendor member states on a no-answer leg (Numbers-Guard source).

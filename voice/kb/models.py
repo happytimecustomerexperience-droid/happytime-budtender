@@ -281,6 +281,13 @@ class AgentPrompt(models.Model):
     def __str__(self):
         return f"{self.role} (v{self.prompt_version}, {self.vapi_model})"
 
+    def voice_settings_json(self) -> str:
+        """Pretty JSON of the voice knobs for the dashboard textarea (empty when unset). A method so
+        every card render path (list / inline-save / full editor) shows it without threading ctx."""
+        import json
+
+        return json.dumps(self.voice_settings, indent=2) if self.voice_settings else ""
+
 
 class FlowConfig(models.Model):
     """The editable Squad flow (the canvas), stored as one JSON graph (singleton). One row,
