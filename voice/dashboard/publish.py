@@ -89,6 +89,19 @@ def build_squad_payload() -> dict:
     return provision.build_squad_payload(members)
 
 
+def _ensure_bound_tools(prompt) -> None:
+    """Provision (zero-drift) any custom tool the prompt binds in ``tool_names`` that isn't in Vapi
+    yet — so binding a new tool from the dashboard (e.g. notify_n8n) is live on the next publish
+    without a separate provision run. Skips unknown names (build_assistant_payload warns on those)."""
+    from voice.models import VapiObject
+
+    for name in prompt.tool_names or []:
+        if name in C.TOOL_SPECS:
+            rec = VapiObject.objects.filter(kind="tool", name=name).first()
+            if not (rec and rec.vapi_id):
+                provision.ensure_tool(name)
+
+
 def publish_assistant(prompt) -> PublishResult:
     """Publish one member: ensure the id (provisioner upsert), zero-drift short-circuit, then
     GET-then-PATCH. Fail-loud per object; never raises into the view."""
@@ -96,6 +109,7 @@ def publish_assistant(prompt) -> PublishResult:
 
     result = PublishResult(object="assistant", role=prompt.role)
     try:
+        _ensure_bound_tools(prompt)  # provision any tool newly bound from the dashboard (P6)
         payload, warnings = build_assistant_payload(prompt)
         result.warnings = list(warnings)
 

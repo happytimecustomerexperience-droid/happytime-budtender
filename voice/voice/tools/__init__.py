@@ -15,6 +15,7 @@ only — they never compose a figure (Numbers-Guard, ADR-012).
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable
 
 from voice import guardrails
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 # name -> handler. Populated by ``@register`` at import time.
 TOOL_REGISTRY: dict[str, Callable[[dict, dict], dict]] = {}
+_MAX_ARG_STRING = 500
 
 
 def register(name: str):
@@ -47,12 +49,40 @@ def dispatch(name: str, args: dict, ctx: dict) -> dict:
         logger.warning("unknown tool requested: %s", name)
         return {"error": "unknown_tool", "tool": name}
     try:
-        result = handler(args or {}, ctx or {})
+        result = handler(_sanitize_args(name, args or {}), ctx or {})
     except Exception:  # noqa: BLE001 — a handler error must not crash the webhook
         logger.exception("tool %s raised", name)
         return {"error": "tool_failed", "tool": name}
     # Layer-2 leak wall, applied centrally to every tool result (23-SPEC §3.6).
     return guardrails.scrub_leak(result)
+
+
+def _sanitize_args(name: str, args: dict) -> dict:
+    """Minimal server-side schema wall for Vapi tool args."""
+    from voice.constants import TOOL_SPECS
+
+    spec = ((TOOL_SPECS.get(name) or {}).get("parameters") or {}).get("properties") or {}
+    if not spec:
+        return args if isinstance(args, dict) else {}
+    clean = {}
+    for key, rule in spec.items():
+        if key not in args:
+            continue
+        value = args[key]
+        typ = rule.get("type")
+        enum = set(rule.get("enum") or [])
+        if typ == "string":
+            value = " ".join(str(value or "").split())[:_MAX_ARG_STRING]
+            if enum and value not in enum:
+                continue
+        elif typ == "number":
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+                continue
+        elif typ == "boolean":
+            if not isinstance(value, bool):
+                continue
+        clean[key] = value
+    return clean
 
 
 # Self-register P0's handlers. Each later phase appends ONE import line below (kept as separate
@@ -61,3 +91,4 @@ from voice.tools import faq  # noqa: E402,F401,I001  (registers faq_lookup)
 from voice.tools import suggest  # noqa: E402,F401,I001  (P1 — suggest_products/check_inventory/pair_upsell)
 from voice.tools import vendor  # noqa: E402,F401,I001  (P3 — notify_vendor_callback)
 from voice.tools import escalation  # noqa: E402,F401,I001  (Phase 1 — notify_staff_issue)
+from voice.tools import n8n  # noqa: E402,F401,I001  (P6 — notify_n8n, bot-callable n8n trigger)

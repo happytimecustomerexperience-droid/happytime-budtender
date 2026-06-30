@@ -217,6 +217,33 @@ TOOL_SPECS = {
         },
         "async": True,
     },
+    "notify_n8n": {
+        "description": (
+            "Trigger an n8n automation workflow for a follow-up the caller agreed to — e.g. text "
+            "me the online-menu link, add me to the deals list, or log a callback request. "
+            "Fire-and-forget: it queues the action and returns an acknowledgement. Use ONLY for an "
+            "action the caller asked for. NEVER returns cost or margin."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "event_type": {
+                    "type": "string",
+                    "description": (
+                        "A short action key for the n8n workflow to switch on, e.g. "
+                        "'send_menu_link', 'deals_signup', 'callback_request'."
+                    ),
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "One sentence on what the caller wants. No phone number.",
+                },
+                "store": {"type": "string", "enum": ["yakima", "mount-vernon", "pullman"]},
+            },
+            "required": ["event_type"],
+        },
+        "async": True,
+    },
     "notify_staff_issue": {
         "description": (
             "After you have LISTENED and gathered the caller's full issue (a complaint, a defective "
