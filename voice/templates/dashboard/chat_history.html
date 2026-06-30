@@ -1,0 +1,43 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Chatbot history - Happy Time Voice{% endblock %}
+{% block content %}
+<div class="row between">
+  <h1>Chatbot history</h1>
+  <a class="btn" href="{% url 'dash-call-log' %}">Voice call log</a>
+</div>
+
+<form method="get" class="row" style="margin:12px 0">
+  <input name="limit" value="{{ limit }}" type="number" min="1" max="100" style="max-width:120px">
+  <button class="btn" type="submit">Load</button>
+</form>
+
+{% if not history.ok %}
+  <div class="card"><p class="muted">{{ history.reason }}</p></div>
+{% endif %}
+
+{% for session in history.sessions %}
+  <div class="card">
+    <div class="row between">
+      <h2>{{ session.location_slug|default:"store" }} / {{ session.channel|default:"chat" }}</h2>
+      <span class="muted">{{ session.last_active_at }}</span>
+    </div>
+    <p class="muted">
+      Session {{ session.session_token }} · {{ session.message_count }} messages · {{ session.stage|default:"-" }}
+    </p>
+    <table>
+      <tr><th>Role</th><th>Message</th><th>When</th></tr>
+      {% for msg in session.messages %}
+        <tr>
+          <td>{{ msg.role }}</td>
+          <td>{{ msg.content }}</td>
+          <td>{{ msg.ts }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="3" class="muted">No messages recorded.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+{% empty %}
+  {% if history.ok %}<div class="card"><p class="muted">No chatbot sessions.</p></div>{% endif %}
+{% endfor %}
+{% endblock %}

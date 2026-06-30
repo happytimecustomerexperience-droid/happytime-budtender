@@ -1,0 +1,40 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Conversation history - Happy Time Voice{% endblock %}
+{% block content %}
+<div class="row between">
+  <h1>Conversation history</h1>
+  <div class="row">
+    <a class="btn" href="{% url 'dash-call-log' %}">Voice calls</a>
+    <a class="btn" href="{% url 'dash-chat-history' %}">Chatbot sessions</a>
+  </div>
+</div>
+
+<form method="get" class="row" style="margin:12px 0">
+  <input name="limit" value="{{ limit }}" type="number" min="1" max="100" style="max-width:120px">
+  <button class="btn" type="submit">Load</button>
+</form>
+
+{% if not chatbot_ok and chatbot_reason %}
+  <div class="card"><p class="muted">{{ chatbot_reason }}</p></div>
+{% endif %}
+
+<div class="card">
+  <table>
+    <tr><th>Channel</th><th>Store</th><th>When</th><th>Conversation</th><th>Status</th><th>Latest</th></tr>
+    {% for row in rows %}
+      <tr>
+        <td><span class="badge {% if row.channel == 'voice' %}blue{% else %}green{% endif %}">{{ row.channel }}</span></td>
+        <td>{{ row.store|default:"-" }}</td>
+        <td>{{ row.when|default:"-" }}</td>
+        <td>
+          {% if row.href %}<a href="{{ row.href }}">{{ row.conversation_id }}</a>{% else %}{{ row.conversation_id }}{% endif %}
+        </td>
+        <td>{{ row.status }}</td>
+        <td>{{ row.summary|default:"-" }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="6" class="muted">No conversations recorded.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}
