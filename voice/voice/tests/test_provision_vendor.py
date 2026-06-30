@@ -101,7 +101,7 @@ def test_vendor_payload_sets_voice_model_once(fake_vapi, all_prompts):
     dumped = json.dumps(payload)
     # voiceId appears exactly once; the model id once; the keyterm list once.
     assert dumped.count("a3520a8f-226a-428d-9fcd-b0a4711a6829") == 1
-    assert dumped.count('"model": "gpt-4.1-mini"') == 1
+    assert dumped.count('"model": "gemini-2.5-flash"') == 1  # ADR-024 (seeded default)
     assert dumped.count('"nova-3"') == 1
     # the model + voice + transcriber blocks each appear once at the top level.
     assert list(payload.keys()).count("voice") == 1

@@ -256,8 +256,16 @@ class AgentPrompt(models.Model):
     role = models.CharField(max_length=32, choices=AGENT_ROLE_CHOICES, unique=True)
     body = models.TextField()
     # Vapi surface (the P4 voice fields, added up front).
-    vapi_model = models.CharField(max_length=64, blank=True)  # "gpt-4.1-mini" (ADR-010)
-    voice_id = models.CharField(max_length=64, blank=True)  # Cartesia sonic-3 voice id
+    # P6: model + voice are now per-row + provider-aware (the dashboard edit reaches Vapi). The
+    # provider strings are Vapi's: model_provider ∈ {google, openai, anthropic, …}; voice_provider
+    # ∈ {cartesia, 11labs, …}. provision.build_assistant_payload reads these (constant fallback).
+    model_provider = models.CharField(max_length=32, blank=True)  # "google" → Gemini (ADR-024)
+    vapi_model = models.CharField(max_length=64, blank=True)  # "gemini-2.5-flash" (ADR-024)
+    voice_provider = models.CharField(max_length=32, blank=True)  # "cartesia" | "11labs"
+    voice_id = models.CharField(max_length=64, blank=True)  # provider voice id
+    # ElevenLabs (and any future provider) per-voice knobs: model, stability, similarityBoost,
+    # style, useSpeakerBoost, optimizeStreamingLatency. One JSON field over N columns (ponytail).
+    voice_settings = models.JSONField(default=dict, blank=True)
     tool_names = models.JSONField(default=list, blank=True)  # ["faq_lookup"] — bound custom tools
     vapi_assistant_id = models.CharField(max_length=64, blank=True)  # written back by provisioner
     transfer_number_key = models.CharField(max_length=32, blank=True)  # YAKIMA|MTVERNON|PULLMAN

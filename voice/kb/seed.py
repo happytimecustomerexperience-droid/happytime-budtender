@@ -16,8 +16,10 @@ from __future__ import annotations
 from kb import models as m
 from kb.taxonomy_source import CONCENTRATE_SUBTYPE_VALUES  # parity-anchored to budtender
 
-VOICE_ID = "a3520a8f-226a-428d-9fcd-b0a4711a6829"  # Cartesia sonic-3 voice
-VAPI_MODEL = "gpt-4.1-mini"  # ADR-010
+VOICE_ID = "a3520a8f-226a-428d-9fcd-b0a4711a6829"  # Cartesia sonic-3 voice (default; switchable to 11labs in dashboard)
+VOICE_PROVIDER = "cartesia"  # default voice provider; dashboard can switch a role to "11labs"
+VAPI_MODEL = "gemini-2.5-flash"  # ADR-024 (owner override of ADR-010 gpt-4.1-mini → Gemini 2.5 Flash)
+MODEL_PROVIDER = "google"  # Vapi provider string for Gemini
 
 
 # ── 1. FAQ Q&As (§8.1) ────────────────────────────────────────────────────────
@@ -1004,11 +1006,16 @@ def seed_agent_prompts() -> int:
         body = data["body"] + SPEAKING_RULES + NO_MEDICAL_CLAIMS
         if role != "vendor":  # vendor is B2B — deliberately no 21+ gate
             body += UNDER_21_DECLINE
+        # ponytail: seed sets the provider DEFAULTS; a dashboard edit overrides per-row and is the
+        # live source of truth. Re-running seed_kb resets these to defaults (same as body) — that's
+        # the intended "reset" behavior, not a bug. Add seed-vs-edit reconciliation only if asked.
         m.AgentPrompt.objects.update_or_create(
             role=role,
             defaults={
                 "body": body,
+                "model_provider": MODEL_PROVIDER,
                 "vapi_model": VAPI_MODEL,
+                "voice_provider": VOICE_PROVIDER,
                 "voice_id": VOICE_ID,
                 "tool_names": data["tool_names"],
                 "is_active": True,
