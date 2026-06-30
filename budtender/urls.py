@@ -5,6 +5,8 @@ from . import views
 urlpatterns = [
     path("health/", views.HealthView.as_view()),
     path("chat/session/start", views.SessionStartView.as_view()),
+    path("chat/message", views.ChatReplyView.as_view()),
+    path("chat/history", views.ChatHistoryView.as_view()),
     path("products/search/", views.ProductSearchView.as_view()),
     path("products/in-stock/", views.InStockProductsView.as_view()),
     path("products/by-sku/", views.ProductBySkuView.as_view()),
@@ -16,7 +18,10 @@ urlpatterns = [
     path("chat/resume-by-phone", views.ResumeByPhoneView.as_view()),
     path("chat/persist/", views.PersistView.as_view()),
     path("customer/profile-upsert", views.ProfileUpsertView.as_view()),
+    path("customer/list", views.CustomerListView.as_view()),       # P7 staff roster (dashboard)
+    path("customer/detail", views.CustomerDetailView.as_view()),   # P7 full profile (dashboard)
     path("track/", views.TrackView.as_view()),
     path("analytics/summary", views.AnalyticsSummaryView.as_view()),
+    path("admin/ranking-weights", views.AdminRankingWeightsView.as_view()),
     path("feedback/", views.FeedbackView.as_view()),
 ]

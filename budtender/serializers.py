@@ -54,3 +54,64 @@ def profile_summary(profile) -> dict:
         "top_categories": [c for c, _ in cats[:3]],
         "price_tier": profile.price_tier or "",
     }
+
+
+# ── Staff-facing customer profile (P7) — for the voice dashboard's Customers browse ──
+# Built from an explicit allowlist of customer-facing aggregates. CustomerProfile has NO
+# cost/margin field; purchase_history carries retail last_price/price_z (customer-facing), never
+# cost. A regression test (tests/test_no_leak.py) asserts customer_detail emits no cost/margin.
+
+def _top_categories(profile, n=4) -> list[dict]:
+    cats = sorted((profile.category_affinity or {}).items(), key=lambda kv: kv[1], reverse=True)
+    return [{"category": c, "share": round(float(w), 3)} for c, w in cats[:n]]
+
+
+def customer_row(profile) -> dict:
+    """One row for the customer list (no raw purchase history — kept light for the roster)."""
+    return {
+        "id": profile.id,  # opaque key for the detail link (so a phone never lands in a URL)
+        "phone": profile.phone,
+        "name": profile.name or "",
+        "total_orders": profile.total_orders,
+        "last_purchase_at": profile.last_purchase_at.isoformat() if profile.last_purchase_at else "",
+        "price_tier": profile.price_tier or "",
+        "novelty_score": round(float(profile.novelty_score or 0), 3),
+        "top_categories": _top_categories(profile, 3),
+        "computed_at": profile.computed_at.isoformat() if profile.computed_at else "",
+    }
+
+
+def customer_detail(profile) -> dict:
+    """Full staff profile: the row + affinity maps + bucket mix + favorite products (top items by
+    purchase count, name-joined) + thc band. Leak-safe (no cost/margin)."""
+    hist = profile.purchase_history or []
+    favs = sorted(hist, key=lambda h: int(h.get("times_bought", 0) or 0), reverse=True)[:10]
+    # Join sku → product name for friendly favorites (purchase_history stores sku/ids, not names).
+    skus = [h.get("sku") for h in favs if h.get("sku")]
+    name_by_sku = dict(
+        Product.objects.filter(sku__in=skus).exclude(name="").values_list("sku", "name")
+    ) if skus else {}
+    favorites = [
+        {
+            "product": name_by_sku.get(h.get("sku")) or h.get("sku") or h.get("product_id") or "",
+            "brand": h.get("brand", ""),
+            "category": h.get("category", ""),
+            "units": int(h.get("times_bought", 0) or 0),
+            "last_bought_at": h.get("last_bought_at") or "",
+        }
+        for h in favs
+    ]
+    brands = sorted((profile.brand_affinity or {}).items(), key=lambda kv: kv[1], reverse=True)
+    return {
+        **customer_row(profile),
+        "brand_affinity": profile.brand_affinity or {},
+        "category_affinity": profile.category_affinity or {},
+        "strain_type_affinity": profile.strain_type_affinity or {},
+        "subcategory_affinity": profile.subcategory_affinity or {},
+        "bucket_mix": profile.bucket_mix or {},
+        "top_brand": brands[0][0] if brands else "",
+        "favorites": favorites,
+        "purchase_count": len(hist),
+        "thc_min": profile.thc_min,
+        "thc_max": profile.thc_max,
+    }

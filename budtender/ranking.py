@@ -5,6 +5,7 @@ overriding a clearly on-profile pick.
 """
 from __future__ import annotations
 
+import math
 import re
 
 from .models import CustomerProfile, Product
@@ -13,6 +14,37 @@ from .models import CustomerProfile, Product
 # weight sets are blended by whether we have a customer profile.
 W_ANON = {"margin": 0.55, "affinity": 0.0, "effect": 0.18, "category": 0.05, "bucket": 0.12, "quality": 0.0, "budget": 0.10}
 W_KNOWN = {"margin": 0.22, "affinity": 0.34, "effect": 0.10, "category": 0.04, "bucket": 0.12, "quality": 0.14, "budget": 0.04}
+
+
+def _request_weights(config: dict | None, profile: CustomerProfile | None) -> dict[str, float]:
+    base = W_KNOWN if profile else W_ANON
+    if not isinstance(config, dict):
+        return base
+    raw = config.get("w_known" if profile else "w_anon")
+    if not isinstance(raw, dict):
+        return base
+
+    weights = dict(base)
+    for key in base:
+        try:
+            value = float(raw[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(value) and value >= 0:
+            weights[key] = value
+
+    if not profile:
+        try:
+            emphasis = float(config.get("margin_emphasis", 1.0))
+        except (TypeError, ValueError):
+            emphasis = 1.0
+        if math.isfinite(emphasis) and emphasis >= 0:
+            weights["margin"] *= emphasis
+
+    total = sum(weights.values())
+    if total <= 0 or not math.isfinite(total):
+        return base
+    return {key: value / total for key, value in weights.items()}
 
 # Profit nudge by bucket (balanced — never overrides taste/budget gates).
 BUCKET_NUDGE = {"profit": 1.0, "core": 0.4, "traffic": 0.0}
@@ -463,7 +495,8 @@ def available_sizes(rows, category: str | None, min_count: int = 1) -> list[dict
 
 
 def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
-                  limit: int = 5, exclude_skus: set[str] | None = None) -> list[tuple[Product, str]]:
+                  limit: int = 5, exclude_skus: set[str] | None = None,
+                  ranking_weights: dict | None = None) -> list[tuple[Product, str]]:
     exclude_skus = exclude_skus or set()
     cat_slot = slots.get("category")
     category = CATEGORY_BY_SLOTKEY.get(cat_slot, cat_slot) if cat_slot else None
@@ -554,7 +587,7 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
 
     # Taste leads when we know the customer; margin-first when anonymous. Price-
     # sensitive customers (value tier) make traffic-drivers acceptable.
-    W = W_KNOWN if profile else W_ANON
+    W = _request_weights(ranking_weights, profile)
     price_sensitive = bool(profile and profile.price_tier == "value")
     recent_brands, recent_cats = _recent_affinity(profile)
 

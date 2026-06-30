@@ -5,10 +5,14 @@ No response ever includes cost/margin (see serializers.public_product).
 from __future__ import annotations
 
 import hashlib
+import json
+import math
 import re
 import secrets
 from datetime import timedelta
 
+from django.core.cache import cache
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -17,10 +21,10 @@ from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
                      CustomerProfile, Feedback, Product, SuggestedProduct)
 from .pairing import pair_for
 from . import facets
-from .ranking import (CATEGORY_BY_SLOTKEY, MIN_STOCK, available_sizes,
-                      price_bands, product_subtype, rank_products,
-                      subtype_label, _size_match)
-from .serializers import profile_summary, public_message, public_product
+from .gemini_chat import GeminiChatUnavailable, generate_chat_reply
+from .ranking import MIN_STOCK, W_ANON, W_KNOWN, rank_products
+from .serializers import (customer_detail, customer_row, profile_summary,
+                          public_message, public_product)
 from .tasks import (_normalize_phone, ensure_inventory_fresh,
                     inventory_is_stale, recompute_affinity)
 
@@ -41,6 +45,107 @@ def _slug_from_name(name: str) -> str:
     s = re.sub(r"-+", "-", s)
     s = re.sub(r"^-|-$", "", s)
     return s
+
+
+def _safe_chat_text(text: str) -> str:
+    s = " ".join(str(text or "").split())[:1200]
+    return re.sub(r"\b(cost|margin|profit|wholesale)\b", "[redacted]", s, flags=re.IGNORECASE)
+
+
+_CHANNELS = {"chat", "web", "menu", "questionnaire", "voice"}
+_STORE_ALIASES = {"mt-vernon": "mount-vernon", "mt vernon": "mount-vernon", "mount vernon": "mount-vernon"}
+_PHONEISH_RE = re.compile(r"(?<!\w)(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})(?!\w)")
+_PII_PROP_KEYS = {"phone", "phone_number", "email", "contact_email"}
+_RANKING_WEIGHTS_CACHE_KEY = "budtender:ranking_weights:v1"
+
+
+def _safe_location(value, default: str = "yakima") -> str:
+    loc = str(value or "").strip().lower()
+    loc = _STORE_ALIASES.get(loc, loc)
+    return loc if loc in {s[0] for s in STORES} else default
+
+
+def _safe_channel(value, default: str = "chat") -> str:
+    channel = str(value or "").strip().lower()
+    return channel if channel in _CHANNELS else default
+
+
+def _safe_message_role(value) -> str:
+    return "assistant" if str(value or "").strip().lower() == "assistant" else "user"
+
+
+def _bounded_int(value, *, default: int, lo: int, hi: int) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        n = default
+    return min(max(n, lo), hi)
+
+
+def _safe_props(value) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    value = {str(k): _safe_prop_value(v) for k, v in value.items() if str(k).lower() not in _PII_PROP_KEYS}
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return {}
+    return value if len(encoded) <= 12000 else {"_truncated": True}
+
+
+def _safe_list(value, *, limit: int, item_limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item or "")[:item_limit] for item in value[:limit]]
+
+
+def _safe_prop_value(value):
+    if isinstance(value, str):
+        return _redact_phoneish(value)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        return [_safe_prop_value(v) for v in value[:50]]
+    if isinstance(value, dict):
+        return {str(k): _safe_prop_value(v) for k, v in value.items() if str(k).lower() not in _PII_PROP_KEYS}
+    return _redact_phoneish(str(value))
+
+
+def _redact_phoneish(text: object) -> str:
+    # ponytail: US phone-shape redaction; add a PII service only if international capture matters.
+    return _PHONEISH_RE.sub("[phone redacted]", str(text or ""))
+
+
+def _clean_weight_set(raw: object, base: dict[str, float]) -> dict[str, float]:
+    weights = dict(base)
+    if isinstance(raw, dict):
+        for key in base:
+            try:
+                value = float(raw[key])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if math.isfinite(value) and value >= 0:
+                weights[key] = value
+    total = sum(weights.values())
+    if total <= 0 or not math.isfinite(total):
+        weights = dict(base)
+        total = sum(weights.values()) or 1.0
+    return {key: value / total for key, value in weights.items()}
+
+
+def _clean_ranking_weights(raw: object) -> dict:
+    data = raw if isinstance(raw, dict) else {}
+    try:
+        emphasis = float(data.get("margin_emphasis", 1.0))
+    except (TypeError, ValueError):
+        emphasis = 1.0
+    if not math.isfinite(emphasis) or emphasis < 0:
+        emphasis = 1.0
+    return {
+        "w_anon": _clean_weight_set(data.get("w_anon"), W_ANON),
+        "w_known": _clean_weight_set(data.get("w_known"), W_KNOWN),
+        "margin_emphasis": emphasis,
+    }
 
 
 class InStockProductsView(APIView):
@@ -90,7 +195,7 @@ class ProductBySkuView(APIView):
     {"product": {...}} or {} when not found / not in stock. Auth: global ServiceTokenPermission."""
 
     def get(self, request):
-        location = (request.query_params.get("store") or "yakima").strip()
+        location = _safe_location(request.query_params.get("store"))
         sku = (request.query_params.get("sku") or "").strip()
         if not sku:
             return Response({"error": "sku required"}, status=400)
@@ -124,17 +229,170 @@ class SessionStartView(APIView):
         token = "s-" + secrets.token_urlsafe(24)
         ChatSession.objects.create(
             session_token=token,
-            location_slug=request.data.get("location", ""),
-            channel=request.data.get("channel", "chat"),
+            location_slug=_safe_location(request.data.get("location"), default=""),
+            channel=_safe_channel(request.data.get("channel"), default="chat"),
         )
         return Response({"session_token": token, "stage": "WELCOME"})
+
+
+class ChatReplyView(APIView):
+    """Persist one website chat turn and answer with bounded Gemini context.
+
+    Auth is still the global service-token gate. The browser should call this
+    only through the website's server-side proxy, never directly.
+    """
+
+    def post(self, request):
+        data = request.data or {}
+        raw_message = str(data.get("message") or "").strip()
+        if not raw_message:
+            return Response({"ok": False, "error": "message required"}, status=400)
+
+        token = str(data.get("session_token") or data.get("session_id") or "").strip()
+        location = _safe_location(data.get("location") or data.get("store"))
+        channel = _safe_channel(data.get("channel"), default="chat")
+        if token:
+            session, _ = ChatSession.objects.get_or_create(
+                session_token=token,
+                defaults={"location_slug": location, "channel": channel},
+            )
+        else:
+            token = "s-" + secrets.token_urlsafe(24)
+            session = ChatSession.objects.create(session_token=token, location_slug=location, channel=channel)
+
+        phone = _normalize_phone(data.get("phone", "")) if data.get("phone") else ""
+        if phone:
+            profile = CustomerProfile.objects.filter(phone=phone).first()
+            session.phone = phone
+            session.customer = profile
+        if location and not session.location_slug:
+            session.location_slug = location
+        session.channel = channel
+        session.save()
+
+        user_msg = ChatMessage.objects.create(
+            session=session, role="user", content=_redact_phoneish(raw_message)[:4000]
+        )
+        AnalyticsEvent.objects.create(
+            session_token=session.session_token,
+            phone_hash=_hash_phone(phone),
+            location_slug=session.location_slug,
+            channel=session.channel,
+            event_type="chat_message",
+            props={"role": "user", "message_id": user_msg.id},
+        )
+
+        history = list(session.messages.order_by("ts", "id"))
+        try:
+            reply = _safe_chat_text(generate_chat_reply(history, store=session.location_slug))
+            source = "gemini"
+        except GeminiChatUnavailable:
+            # ponytail: generic fallback until Gemini auth is configured; upgrade path is env config.
+            reply = "I can help with product questions, store info, or finding something on the menu. What are you shopping for today?"
+            source = "fallback"
+
+        assistant_msg = ChatMessage.objects.create(session=session, role="assistant", content=reply)
+        AnalyticsEvent.objects.create(
+            session_token=session.session_token,
+            phone_hash=_hash_phone(phone),
+            location_slug=session.location_slug,
+            channel=session.channel,
+            event_type="chat_message",
+            props={"role": "assistant", "message_id": assistant_msg.id, "source": source},
+        )
+        return Response({
+            "ok": True,
+            "session_token": session.session_token,
+            "source": source,
+            "message": public_message(assistant_msg),
+        })
+
+
+class ChatHistoryView(APIView):
+    """Recent website/chatbot sessions for the voice dashboard.
+
+    Service-token only. Raw phone is never returned; staff get channel/store/session/message context.
+    """
+
+    def post(self, request):
+        data = request.data or {}
+        limit = _bounded_int(data.get("limit"), default=25, lo=1, hi=100)
+        message_limit = _bounded_int(data.get("message_limit"), default=200, lo=1, hi=500)
+        session_token = str(data.get("session_token") or "").strip()[:128]
+        sessions = (
+            ChatSession.objects
+            .prefetch_related("messages")
+            .order_by("-last_active_at")
+        )
+        if session_token:
+            sessions = sessions.filter(session_token=session_token)[:1]
+        else:
+            sessions = sessions[:limit]
+        rows = []
+        for session in sessions:
+            messages = list(session.messages.all())
+            if not messages:
+                continue
+            rows.append({
+                "session_token": session.session_token,
+                "channel": session.channel,
+                "location_slug": session.location_slug,
+                "stage": session.stage,
+                "message_count": len(messages),
+                "started_at": session.started_at.isoformat(),
+                "last_active_at": session.last_active_at.isoformat(),
+                "messages": [public_message(m) for m in messages[-message_limit:]],
+            })
+        return Response({"ok": True, "sessions": rows})
+
+
+class CustomerListView(APIView):
+    """Staff customer roster for the voice dashboard (service-token only, P7). Search by name or
+    phone; paginated. Returns leak-safe customer rows (no cost/margin). The live, auto-recomputed
+    profiles the bot uses — so the dashboard browse is always fresh."""
+
+    def post(self, request):
+        data = request.data or {}
+        q = str(data.get("q") or "").strip()[:80]
+        limit = _bounded_int(data.get("limit"), default=25, lo=1, hi=100)
+        offset = _bounded_int(data.get("offset"), default=0, lo=0, hi=1_000_000)
+        qs = CustomerProfile.objects.all()
+        if q:
+            qs = qs.filter(Q(name__icontains=q) | Q(phone__icontains=q))
+        total = qs.count()
+        page = qs.order_by("-last_purchase_at", "-id")[offset:offset + limit]
+        rows = [customer_row(p) for p in page]
+        return Response({
+            "ok": True, "total": total, "count": len(rows),
+            "offset": offset, "limit": limit, "customers": rows,
+        })
+
+
+class CustomerDetailView(APIView):
+    """One customer's full staff profile, by opaque ``id`` (preferred — so a phone never travels in
+    a dashboard URL) or by ``phone`` (service-token only, P7). Leak-safe."""
+
+    def post(self, request):
+        data = request.data or {}
+        profile = None
+        cid = data.get("id")
+        if cid not in (None, ""):
+            profile = CustomerProfile.objects.filter(pk=_bounded_int(cid, default=0, lo=0, hi=2**31)).first()
+        else:
+            phone = _normalize_phone(str(data.get("phone") or ""))
+            if not phone:
+                return Response({"ok": False, "reason": "missing id/phone"}, status=400)
+            profile = CustomerProfile.objects.filter(phone=phone).first()
+        if not profile:
+            return Response({"ok": False, "reason": "not found"}, status=404)
+        return Response({"ok": True, "customer": customer_detail(profile)})
 
 
 class ProductSearchView(APIView):
     def post(self, request):
         slots = request.data.get("slots") or {}
-        limit = int(request.data.get("limit", 5))
-        location = slots.get("store") or request.data.get("location") or "yakima"
+        limit = _bounded_int(request.data.get("limit"), default=5, lo=1, hi=20)
+        location = _safe_location(slots.get("store") or request.data.get("location"))
         exclude = {str(s) for s in (request.data.get("exclude_skus") or [])}
         token = request.data.get("session_token") or ""
         # Get-or-create the session so EVERY session (incl. anonymous
@@ -164,7 +422,18 @@ class ProductSearchView(APIView):
             except Exception:
                 pass
 
-        ranked = rank_products(location, slots, profile, limit=limit, exclude_skus=exclude)
+        ranking_weights = request.data.get("ranking_weights")
+        if ranking_weights is None:
+            ranking_weights = cache.get(_RANKING_WEIGHTS_CACHE_KEY)
+
+        ranked = rank_products(
+            location,
+            slots,
+            profile,
+            limit=limit,
+            exclude_skus=exclude,
+            ranking_weights=ranking_weights,
+        )
         results = [public_product(p, rank=i + 1, why_this=why) for i, (p, why) in enumerate(ranked)]
 
         if session:
@@ -176,13 +445,27 @@ class ProductSearchView(APIView):
         return Response({"results": results, "source": "vps"})
 
 
+class AdminRankingWeightsView(APIView):
+    """Dashboard admin hook: accept owner ranking levers from the voice dashboard.
+
+    Bearer auth is still the global service-token gate. Stored in cache only; use
+    env/DB config if multiple independent budtender processes need distinct values.
+    """
+
+    def post(self, request):
+        applied = _clean_ranking_weights(request.data or {})
+        # ponytail: cache-backed override; move to a model if multi-process admin edits need audit history.
+        cache.set(_RANKING_WEIGHTS_CACHE_KEY, applied, None)
+        return Response({"ok": True, "applied": applied})
+
+
 class PriceBandsView(APIView):
     """Data-driven budget buckets for a store+category+size, so the
     questionnaire's price step is granular and relevant to the subcategory."""
 
     def post(self, request):
         slots = request.data.get("slots") or request.data or {}
-        location = slots.get("store") or request.data.get("location") or "yakima"
+        location = _safe_location(slots.get("store") or request.data.get("location"))
         category = facets.resolve_category(slots.get("category"))
         # Served from the precomputed cache (warmed on every inventory sync); a cold
         # combo is computed once + cached. The request path does NO product scan.
@@ -198,7 +481,7 @@ class SubtypesView(APIView):
 
     def post(self, request):
         slots = request.data.get("slots") or request.data or {}
-        location = slots.get("store") or request.data.get("location") or "yakima"
+        location = _safe_location(slots.get("store") or request.data.get("location"))
         category = facets.resolve_category(slots.get("category"))
         return Response({"subtypes": facets.subtypes(location, category)})
 
@@ -213,7 +496,7 @@ class SizesView(APIView):
 
     def post(self, request):
         slots = request.data.get("slots") or request.data or {}
-        location = slots.get("store") or request.data.get("location") or "yakima"
+        location = _safe_location(slots.get("store") or request.data.get("location"))
         category = facets.resolve_category(slots.get("category"))
         return Response({"sizes": facets.sizes(location, category, slots.get("subcategory"))})
 
@@ -226,7 +509,7 @@ class DohOptionsView(APIView):
 
     def post(self, request):
         slots = request.data.get("slots") or request.data or {}
-        location = slots.get("store") or request.data.get("location") or "yakima"
+        location = _safe_location(slots.get("store") or request.data.get("location"))
         category = facets.resolve_category(slots.get("category"))
         return Response(facets.doh(location, category, slots.get("size"), slots.get("subcategory"),
                                    slots.get("price_min"), slots.get("price_max")))
@@ -240,7 +523,7 @@ class AnalyticsSummaryView(APIView):
     def post(self, request):
         from datetime import timedelta
 
-        days = int((request.data or {}).get("days", 30))
+        days = _bounded_int((request.data or {}).get("days"), default=30, lo=1, hi=365)
         since = timezone.now() - timedelta(days=days)
         qs = AnalyticsEvent.objects.filter(ts__gte=since)
 
@@ -338,7 +621,8 @@ class AnalyticsSummaryView(APIView):
         name_by_sku: dict[str, str] = {}
         for sku_, name_ in Product.objects.filter(sku__in=list(want)).values_list("sku", "name"):
             name_by_sku.setdefault(sku_, name_)
-        nm = lambda s: name_by_sku.get(s, s)
+        def nm(s):
+            return name_by_sku.get(s, s)
         click_n = dict(clicked)
 
         fb_qs = Feedback.objects.filter(ts__gte=since)
@@ -400,7 +684,7 @@ class AnalyticsSummaryView(APIView):
 
 class PairingView(APIView):
     def post(self, request):
-        location = request.data.get("location") or "yakima"
+        location = _safe_location(request.data.get("location"))
         sku = request.data.get("sku")
         slug = request.data.get("slug")
         phone = request.data.get("phone") or ""
@@ -431,7 +715,6 @@ class PairingView(APIView):
 class ResumeByPhoneView(APIView):
     def post(self, request):
         phone = _normalize_phone(request.data.get("phone", ""))
-        location = request.data.get("location", "")
         current = request.data.get("current_session_token")
         profile = CustomerProfile.objects.filter(phone=phone).first() if phone else None
 
@@ -480,7 +763,9 @@ class PersistView(APIView):
         phone = _normalize_phone(data.get("phone", "")) if data.get("phone") else ""
         profile = CustomerProfile.objects.filter(phone=phone).first() if phone else None
         session, _ = ChatSession.objects.get_or_create(session_token=token)
-        session.location_slug = (data.get("slots") or {}).get("store") or session.location_slug
+        session.location_slug = _safe_location(
+            (data.get("slots") or {}).get("store"), default=session.location_slug
+        )
         session.slots = data.get("slots") or session.slots
         session.stage = data.get("stage") or session.stage
         if phone:
@@ -488,14 +773,22 @@ class PersistView(APIView):
             session.customer = profile
         session.save()
         # Replace message log with the latest snapshot.
-        msgs = data.get("messages") or []
+        msgs = data.get("messages") if isinstance(data.get("messages"), list) else []
         if msgs:
             session.messages.all().delete()
-            for m in msgs:
+            # ponytail: cap browser snapshots; move to paged transcript ingest if sessions exceed 500 turns.
+            for m in msgs[-500:]:
+                if not isinstance(m, dict):
+                    continue
                 ChatMessage.objects.create(
-                    session=session, role=m.get("role", "user"),
-                    content=m.get("content", ""), chips=m.get("chips", []),
-                    result_skus=[r.get("sku") for r in (m.get("search_results") or []) if r.get("sku")],
+                    session=session, role=_safe_message_role(m.get("role")),
+                    content=_redact_phoneish(m.get("content"))[:4000],
+                    chips=_safe_list(m.get("chips"), limit=20, item_limit=80),
+                    result_skus=[
+                        str(r.get("sku"))[:64]
+                        for r in (m.get("search_results") or [])[:50]
+                        if isinstance(r, dict) and r.get("sku")
+                    ],
                 )
         return Response({"ok": True}, status=202)
 
@@ -512,8 +805,8 @@ class TrackView(APIView):
         AnalyticsEvent.objects.create(
             session_token=str(session_token or "")[:64],
             phone_hash=_hash_phone(phone or ""),
-            location_slug=str(location_slug or "")[:32],
-            channel=str(channel or "web")[:16],
+            location_slug=_safe_location(location_slug, default=""),
+            channel=_safe_channel(channel, default="web"),
             event_type=str(event_type)[:32],
             props=props if isinstance(props, dict) else {},
         )
@@ -531,7 +824,7 @@ class TrackView(APIView):
                           "visitor_id": e.get("visitor_id"), "ts": e.get("ts")}
                 rows.append(dict(
                     event_type=e.get("event"),
-                    props={k: v for k, v in merged.items() if v is not None},
+                    props=_safe_props({k: v for k, v in merged.items() if v is not None}),
                     session_token=props.get("session_id") or e.get("session_id"),
                     phone=props.get("phone"),
                     location_slug=props.get("store") or props.get("location_slug"),
@@ -539,7 +832,7 @@ class TrackView(APIView):
                 ))
         else:
             rows.append(dict(
-                event_type=d.get("event_type"), props=d.get("props"),
+                event_type=d.get("event_type"), props=_safe_props(d.get("props")),
                 session_token=d.get("session_token"), phone=d.get("phone"),
                 location_slug=d.get("location_slug"), channel=d.get("channel") or "chat",
             ))
@@ -567,11 +860,11 @@ class FeedbackView(APIView):
         fb = Feedback.objects.create(
             rating=rating,
             category=str(d.get("category") or "")[:32],
-            message=msg[:4000],
+            message=_redact_phoneish(msg)[:4000],
             session_token=str(d.get("session_token") or "")[:64],
             phone_hash=_hash_phone(d.get("phone") or ""),
-            location_slug=str(d.get("location_slug") or "")[:32],
-            channel=str(d.get("channel") or "chat")[:16],
+            location_slug=_safe_location(d.get("location_slug"), default=""),
+            channel=_safe_channel(d.get("channel"), default="chat"),
             contact_email=str(d.get("contact_email") or "")[:254] if d.get("contact_ok") else "",
         )
         AnalyticsEvent.objects.create(

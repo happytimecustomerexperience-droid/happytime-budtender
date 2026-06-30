@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from celery import shared_task
+from django.conf import settings
 from django.core.cache import cache
 from django.utils.text import slugify
 
@@ -146,53 +147,88 @@ def ensure_inventory_fresh(max_age_hours: int = 24) -> dict:
 
 
 @shared_task
-def sync_transactions(location_slug: str, days: int = 90) -> int:
+def sync_transactions(location_slug: str, days: int | None = None, full: bool = False) -> int:
     """Build customer purchase history + sales velocity from detailed transactions.
 
     `/reporting/transactions?includeDetail=true` gives each sale's line items
     (productId, qty, unitPrice, unitWeight, isReturned) + a `customerId`. We map
-    customerId→phone via the customers list, and productId→Product (our synced,
-    classified inventory) to attach brand/category/strain/strain_type/subcategory/
-    bucket.
+    customerId→phone (and customerId→name) via the customers list, and productId→Product
+    (our synced, classified inventory) to attach brand/category/strain/strain_type/subcategory/bucket.
 
-    CORRECTNESS (what counts as a real sale for velocity):
-      • Returns + voids are skipped (header isVoid/isReturn, line isReturned).
-      • Only lines that resolve to a real, synced Product count — trade samples
-        and other non-sellable items never become Products, so they can't inflate
-        velocity.
-      • Velocity = recency-blended NET units/day, 0.7·(28d) + 0.3·(84d), stored to
-        Redis `vel:{loc}` and consumed by classify_products → Product.velocity.
-    90 days keeps both the velocity windows and recent affinity FRESH.
+    HISTORY IS CUMULATIVE + EXACTLY-ONCE (P7): the pull always covers the velocity window (so
+    velocity stays fresh), but a transaction is folded into customer history ONLY if it is strictly
+    newer than the store's ``SyncState.last_tx_at`` watermark — so the recurring sync never
+    re-counts a transaction it already folded (the old code re-folded the whole window every run and
+    inflated counts). The watermark advances to the newest transaction seen. History is never
+    pruned — folding only adds/updates per-product rows (``_fold_history``).
+      • First run / ``full=True`` (watermark null): folds the FULL lookback window
+        (``HHT_TX_LOOKBACK_DAYS``, default 1825 ≈ 5y) → a complete backfill of all history.
+      • Steady state: folds only transactions after the watermark → just the new ones.
+
+    VELOCITY (unchanged): recency-blended NET units/day 0.7·(28d)+0.3·(84d) over the pulled window,
+    Redis ``vel:{loc}`` → classify_products → Product.velocity. Returns the # of customers folded.
     """
     now = datetime.now(timezone.utc)
     cutoff_28 = now - timedelta(days=28)
     cutoff_84 = now - timedelta(days=84)
+
+    # Watermark: fold ONLY transactions newer than this (exactly-once). full/null → backfill window.
+    st = SyncState.objects.filter(location_slug=location_slug).first()
+    watermark = None if full else (st.last_tx_at if st else None)
+    # The EXPLICIT full backfill pulls the absolute-oldest history Dutchie retains (≈20y default —
+    # the API is paged in 31-day chunks, so this just makes more calls). The recurring beat stays
+    # bounded to a recent window so it never accidentally does a 20-year pull; it relies on the
+    # backfill command for the deep history, then folds only new transactions via the watermark.
+    full_lookback = int(getattr(settings, "HHT_TX_LOOKBACK_DAYS", 7300))  # ≈20y — "absolute oldest"
+    recent = int(getattr(settings, "HHT_TX_RECENT_DAYS", 120))           # beat / top-up window
+    if full:
+        window_days = int(days or full_lookback)        # explicit full backfill (oldest data)
+    elif watermark is None:
+        window_days = int(days or recent)               # first beat run — bounded, not the full pull
+    else:
+        window_days = max(recent, int(days or recent))  # steady state — covers the velocity window
+    window_start = now - timedelta(days=window_days)
+
     u28: Counter = Counter()   # net units sold per sku, last 28 days
     u84: Counter = Counter()   # net units sold per sku, last 84 days
-    # customerId → phone (prefer mobile).
+    # customerId → phone (prefer mobile) + customerId → display name.
     phone_by_id: dict[str, str] = {}
+    name_by_id: dict[str, str] = {}
     for c in dutchie.get_customers(location_slug):
         cid = str(c.get("customerId") or c.get("id") or "")
         ph = c.get("cellPhone") or c.get("phone") or ""
         if cid and ph:
             phone_by_id[cid] = ph
+        nm = (f"{c.get('firstName', '') or ''} {c.get('lastName', '') or ''}".strip()
+              or c.get("name") or c.get("fullName") or "")
+        if cid and nm:
+            name_by_id[cid] = str(nm)[:120]
     # productId → Product (this location) for attribute + bucket join.
     prod_by_pid: dict[str, Product] = {}
     for p in Product.objects.filter(location_slug=location_slug).exclude(product_id=""):
         prod_by_pid[str(p.product_id)] = p
 
     rows = dutchie.get_transactions_detailed(
-        location_slug, (now - timedelta(days=days)).isoformat(), now.isoformat()
+        location_slug, window_start.isoformat(), now.isoformat()
     )
     by_phone: dict[str, list[dict]] = defaultdict(list)
+    name_by_phone: dict[str, str] = {}
+    max_tx_dt = watermark  # advance the watermark to the newest folded transaction
     for tx in rows:
         if tx.get("isVoid") or tx.get("isReturn"):
             continue
-        phone = _normalize_phone(phone_by_id.get(str(tx.get("customerId") or ""), ""))
+        cid = str(tx.get("customerId") or "")
+        phone = _normalize_phone(phone_by_id.get(cid, ""))
         if not phone:
             continue
         bought_at = tx.get("transactionDate") or tx.get("lastModifiedDateUTC") or now.isoformat()
         bought_dt = dutchie._parse_iso(bought_at)
+        # Exactly-once gate: only NEW transactions (after the watermark) fold into history.
+        is_new = watermark is None or (bought_dt is not None and bought_dt > watermark)
+        if is_new and bought_dt is not None and (max_tx_dt is None or bought_dt > max_tx_dt):
+            max_tx_dt = bought_dt
+        if name_by_id.get(cid):
+            name_by_phone[phone] = name_by_id[cid]
         for it in (tx.get("items") or []):
             if it.get("isReturned"):
                 continue
@@ -201,29 +237,37 @@ def sync_transactions(location_slug: str, days: int = 90) -> int:
                 continue
             prod = prod_by_pid.get(pid)
             qty = float(it.get("quantity", 1) or 1)
-            # Sales velocity: count NET units only for real, sellable products
-            # (prod resolved). `prod is None` ⇒ trade sample / non-sellable, excluded.
+            # Sales velocity: count NET units for real, sellable products over the WHOLE pulled
+            # window (independent of the history watermark — velocity is a rolling recompute).
             if prod is not None and qty > 0 and bought_dt is not None and bought_dt >= cutoff_84:
                 u84[prod.sku] += qty
                 if bought_dt >= cutoff_28:
                     u28[prod.sku] += qty
-            by_phone[phone].append({
-                "product_id": pid,
-                "sku": prod.sku if prod else pid,
-                "brand": prod.brand if prod else "",
-                "category": prod.category if prod else "",
-                "subcategory": prod.subcategory if prod else "",
-                "strain": prod.strain if prod else "",
-                "strain_type": prod.strain_type if prod else "",
-                "bucket": prod.bucket if prod else "",
-                "dominant_terpene": prod.dominant_terpene if prod else "",
-                "price_z": float(prod.price_z) if prod else 0.0,
-                "qty": qty,
-                "unit_price": float(it.get("unitPrice") or 0),
-                "bought_at": bought_at,
-            })
+            # History: fold only NEW transactions (exactly-once / no over-count).
+            if is_new:
+                by_phone[phone].append({
+                    "product_id": pid,
+                    "sku": prod.sku if prod else pid,
+                    "brand": prod.brand if prod else "",
+                    "category": prod.category if prod else "",
+                    "subcategory": prod.subcategory if prod else "",
+                    "strain": prod.strain if prod else "",
+                    "strain_type": prod.strain_type if prod else "",
+                    "bucket": prod.bucket if prod else "",
+                    "dominant_terpene": prod.dominant_terpene if prod else "",
+                    "price_z": float(prod.price_z) if prod else 0.0,
+                    "qty": qty,
+                    "unit_price": float(it.get("unitPrice") or 0),
+                    "bought_at": bought_at,
+                })
     for phone, lines in by_phone.items():
-        _fold_history(phone, lines)
+        _fold_history(phone, lines, name=name_by_phone.get(phone))
+
+    # Advance the watermark so the next run folds only newer transactions.
+    if max_tx_dt is not None:
+        SyncState.objects.update_or_create(
+            location_slug=location_slug, defaults={"last_tx_at": max_tx_dt}
+        )
 
     # Recency-blended velocity (units/day): recent 28d weighted 0.7, trailing 84d
     # 0.3 — the dashboard's method, so picks track what's selling NOW. Stored in
@@ -486,7 +530,7 @@ def _normalize_phone(raw: str) -> str:
     return ""
 
 
-def _fold_history(phone: str, lines: list[dict]) -> None:
+def _fold_history(phone: str, lines: list[dict], name: str | None = None) -> None:
     profile, _ = CustomerProfile.objects.get_or_create(phone=phone)
     key = lambda h: str(h.get("product_id") or h.get("sku") or "")
     agg: dict[str, dict] = {key(h): h for h in (profile.purchase_history or []) if key(h)}
@@ -510,8 +554,11 @@ def _fold_history(phone: str, lines: list[dict]) -> None:
                 entry[f] = ln[f]
         agg[k] = entry
     profile.purchase_history = list(agg.values())
-    profile.last_purchase_at = profile.last_purchase_at  # touched by recompute below
-    profile.save(update_fields=["purchase_history"])
+    fields = ["purchase_history"]
+    if name and name != profile.name:
+        profile.name = name  # latest known display name from Dutchie (staff browse)
+        fields.append("name")
+    profile.save(update_fields=fields)
 
     # Conversion attribution: a previously-suggested SKU that the customer now
     # bought is marked accepted=True. Powers "did our suggestion convert?".

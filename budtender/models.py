@@ -70,6 +70,10 @@ class SyncState(models.Model):
     location_slug = models.CharField(max_length=32, unique=True, db_index=True, choices=STORES)
     last_synced_at = models.DateTimeField(null=True, blank=True)
     item_count = models.IntegerField(default=0)  # in-stock SKUs in the last pull
+    # Transaction-ingest watermark: the max transactionDate folded into customer history so far.
+    # The recurring sync folds ONLY transactions strictly newer than this (exactly-once, no
+    # over-count); null = no history ingested yet → next sync backfills the full lookback window.
+    last_tx_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self) -> str:
@@ -78,6 +82,7 @@ class SyncState(models.Model):
 
 class CustomerProfile(models.Model):
     phone = models.CharField(max_length=20, unique=True, db_index=True)  # E.164
+    name = models.CharField(max_length=120, blank=True, db_index=True)  # from Dutchie (staff browse)
     total_orders = models.IntegerField(default=0)
     last_purchase_at = models.DateTimeField(null=True, blank=True)
 
