@@ -64,6 +64,10 @@
     .badge.slate { background: #f1f5f9; color: var(--slate); }
     .note-green { background: var(--green-bg); border: 1px solid #bbf7d0; color: #166534;
                   padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; display: flex; gap: 8px; }
+    .note-red { background: var(--red-bg); border: 1px solid #fecaca; color: #991b1b;
+                padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; display: flex; gap: 8px; }
+    /* Wrap a wide table in <div class="table-wrap"> so it scrolls instead of overflowing. */
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .toast-stack { position: fixed; bottom: 16px; right: 16px; z-index: 60; display: flex; flex-direction: column; gap: 8px; }
     .toast { padding: 10px 16px; border-radius: 8px; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); }
     .toast.success { background: var(--green); } .toast.error { background: var(--red); }
@@ -76,6 +80,22 @@
     .bubble.user { align-self: flex-end; background: var(--primary-l); }
     .bubble.assistant { align-self: flex-start; background: #f1f5f9; }
     .bubble.tool { align-self: center; background: var(--amber-bg); font-size: 12px; color: var(--amber); }
+
+    /* ── Mobile (P6): collapse multi-column grids, let wide tables scroll, tighten the nav. ── */
+    @media (max-width: 720px) {
+      main { padding: 14px 10px; }
+      h1 { font-size: 20px; }
+      .grid { grid-template-columns: 1fr !important; }
+      /* Any table becomes horizontally scrollable rather than overflowing the viewport. */
+      table { display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+      .topnav { padding: 0 10px; }
+      .topnav-inner { gap: 0; }
+      .topnav .brand { margin-right: 8px; }
+      .topnav a.nav { padding: 10px 8px; }
+      .bubble { max-width: 90%; }
+      .pill { min-width: 0; flex: 1 1 45%; }
+      .row.between { gap: 8px; }
+    }
   </style>
 </head>
 <body>

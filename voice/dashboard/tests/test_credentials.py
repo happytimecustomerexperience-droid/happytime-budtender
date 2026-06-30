@@ -69,3 +69,13 @@ def test_save_view_rejects_unknown_credential(client, django_user_model):
     client.force_login(staff)
     resp = client.post(reverse("dash-credentials-save"), {"name": "NOT_A_REAL_KEY", "value": "x"})
     assert resp.status_code == 400
+
+
+@pytest.mark.django_db
+def test_credentials_page_renders_grouped_catalog(client, django_user_model):
+    staff = django_user_model.objects.create_user("s3", password="x", is_staff=True, is_superuser=True)
+    client.force_login(staff)
+    resp = client.get(reverse("dash-credentials"))
+    assert resp.status_code == 200
+    assert b"VAPI_PRIVATE_KEY" in resp.content  # the catalog renders
+    assert b"N8N_WEBHOOK_URL" in resp.content
