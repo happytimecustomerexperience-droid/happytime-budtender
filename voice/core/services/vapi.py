@@ -301,6 +301,20 @@ def find_assistant_by_name(name: str) -> dict | None:
     return _find_by_name(list_assistants(), name)
 
 
+# ── Calls (read-only — the post-call transcript + tool-call timeline; P6) ──────
+# GET /call/{id} → the full record: artifact.transcript (string), artifact.messages[] (the
+# per-message union incl. ToolCallMessage / ToolCallResultMessage), and analysis.summary. Used by
+# the dashboard /full-conversation action to fetch the authoritative transcript straight from Vapi.
+def get_call(call_id: str) -> dict:
+    return get(f"/call/{call_id}")
+
+
+def list_calls(**filters) -> list[dict]:
+    """Recent calls. Vapi filters by assistantId/phoneNumberId/limit/createdAt* (NOT squadId — a
+    squad's calls are filtered client-side on each call's ``squadId``)."""
+    return _paginated("/call", filters)
+
+
 # ── Squads ────────────────────────────────────────────────────────────────────
 def list_squads(**filters) -> list[dict]:
     return _paginated("/squad", filters)

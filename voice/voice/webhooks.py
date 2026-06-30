@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 
 from django.http import JsonResponse
@@ -29,6 +30,9 @@ from voice import guardrails, outcomes, signing
 from voice.tools import dispatch as dispatch_tool
 
 logger = logging.getLogger(__name__)
+
+_VALID_STORES = {"yakima", "mount-vernon", "pullman"}
+_PHONEISH_RE = re.compile(r"(?<!\w)(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})(?!\w)")
 
 
 # ── Body / store helpers ──────────────────────────────────────────────────────
@@ -44,11 +48,46 @@ def _parse_body(request) -> dict:
 
 
 def _resolve_store(message: dict) -> str:
-    """Resolve the caller's store. P0 default: a single inbound number → ``HHT_DEFAULT_STORE``
-    (O-4). When per-store numbers land, map ``call.phoneNumberId`` → store here (one place)."""
+    """Resolve the caller's store from Vapi phone number metadata, falling back safely."""
     from django.conf import settings
 
-    return getattr(settings, "HHT_DEFAULT_STORE", "yakima") or "yakima"
+    default = _valid_store(getattr(settings, "HHT_DEFAULT_STORE", "yakima")) or "yakima"
+    phone_number_id = _phone_number_id(message)
+    if not phone_number_id:
+        return default
+
+    return _phone_number_store_map().get(phone_number_id, default)
+
+
+def _valid_store(value: object) -> str:
+    store = str(value or "").strip()
+    return store if store in _VALID_STORES else ""
+
+
+def _phone_number_id(message: dict) -> str:
+    call = message.get("call") or {}
+    phone_number = call.get("phoneNumber") or {}
+    return str(
+        call.get("phoneNumberId")
+        or phone_number.get("id")
+        or message.get("phoneNumberId")
+        or ""
+    ).strip()
+
+
+def _phone_number_store_map() -> dict[str, str]:
+    from django.conf import settings
+
+    raw = getattr(settings, "VAPI_PHONE_NUMBER_STORE_MAP", "") or ""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k).strip(): store for k, v in data.items() if (store := _valid_store(v))}
 
 
 # ── R-2: tolerant tool-call extraction (the cross-version normalizer) ──────────
@@ -172,7 +211,32 @@ def handle_tool_calls(message: dict) -> JsonResponse:
         # Belt-and-suspenders: the central scrub already ran in dispatch; assert the wall held.
         guardrails.assert_no_leak(result)
         results.append({"toolCallId": tc["id"], "result": result})
+        _log_tool_call(ctx["call_id"], store, tc, args, result)
     return JsonResponse({"results": results})
+
+
+def _log_tool_call(call_id: str, store: str, tc: dict, args: dict, result) -> None:
+    """Persist one tool invocation (args + result) for the dashboard tool-call audit (P6). Args are
+    leak-scrubbed (cost/margin) + PII-masked (a spoken phone/number) before storing; the result is
+    already leak-scrubbed by ``dispatch``. Best-effort — a logging failure NEVER breaks the call."""
+    if not call_id:
+        return
+    from voice.models import VoiceToolCall
+
+    try:
+        VoiceToolCall.objects.update_or_create(
+            call_id=call_id,
+            tool_call_id=(tc.get("id") or ""),
+            name=(tc.get("name") or ""),
+            defaults={
+                "args": guardrails.redact_pii(guardrails.scrub_leak(args)),
+                "result": result,
+                "store": store or "",
+                "source": "webhook",
+            },
+        )
+    except Exception:  # noqa: BLE001 — audit logging must never break the tool response
+        logger.warning("tool-call log failed for %s/%s", call_id, tc.get("name"), exc_info=True)
 
 
 def _apply_correction(args: dict) -> dict:
@@ -220,7 +284,7 @@ def handle_status_update(message: dict) -> JsonResponse:
         VoiceTurn.objects.get_or_create(
             call=vc,
             seq=seq,
-            defaults={"role": role or "assistant", "text": transcript},
+            defaults={"role": role or "assistant", "text": _redact_phoneish(transcript)},
         )
     return JsonResponse({})
 
@@ -256,7 +320,7 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
         defaults={
             "store": store,
             "caller_phone_hash": phone_hash(raw_number),
-            "transcript": transcript,
+            "transcript": _redact_phoneish(transcript),
             "duration_s": duration,
             "outcome": outcome,
             "reason": reason,
@@ -270,11 +334,15 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
     for idx, msg in enumerate(message.get("messages") or []):
         if not isinstance(msg, dict):
             continue
-        text = msg.get("message") or msg.get("content") or ""
+        tool_name = _message_tool_name(msg)
         VoiceTurn.objects.update_or_create(
             call=vc,
             seq=idx,
-            defaults={"role": msg.get("role", ""), "text": text},
+            defaults={
+                "role": str(msg.get("role") or ("tool" if tool_name else ""))[:16],
+                "text": _message_text(msg),
+                "tool_name": tool_name,
+            },
         )
 
     # (2+3) Post-call work — summary + staff digest. The durable write above is ALREADY done, so
@@ -302,6 +370,22 @@ def _transfer_key_for_store(store: str) -> str:
     """The HHT_TRANSFER_NUMBER_<KEY> key for the caller's store (default YAKIMA). Recorded on the
     VoiceCall so the staff email + dashboard show which store line the warm transfer targeted."""
     return _STORE_TRANSFER_KEY.get(store, "YAKIMA")
+
+
+def _message_text(msg: dict) -> str:
+    text = msg.get("message") or msg.get("content") or ""
+    if isinstance(text, (dict, list)):
+        text = json.dumps(text, ensure_ascii=False, default=str)
+    return _redact_phoneish(str(text or "")[:4000])
+
+
+def _redact_phoneish(text: object) -> str:
+    # ponytail: US phone-shape redaction; use libphonenumber if international callers matter.
+    return _PHONEISH_RE.sub("[phone redacted]", str(text or ""))
+
+
+def _message_tool_name(msg: dict) -> str:
+    return str(msg.get("toolName") or msg.get("name") or "")[:64]
 
 
 _DISPATCH = {

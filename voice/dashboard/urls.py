@@ -35,9 +35,13 @@ urlpatterns = [
     path("weights/", views.weights_tuner, name="dash-weights"),
     # calls
     path("calls/", views.call_monitor, name="dash-calls"),
+    path("calls/history/", views.conversation_history, name="dash-conversation-history"),
     path("calls/log/", views.call_log, name="dash-call-log"),
+    path("calls/chatbot/", views.chat_history, name="dash-chat-history"),
+    path("calls/chatbot/session/", views.chat_detail, name="dash-chat-detail"),
     path("calls/<int:pk>/", views.call_detail, name="dash-call-detail"),
     path("calls/<int:pk>/transcript", views.call_transcript, name="dash-call-transcript"),
+    path("calls/<int:pk>/fetch-full", views.call_fetch_full, name="dash-call-fetch-full"),
     path("escalations/", views.escalation_review, name="dash-escalations"),
     # vendor callbacks
     path("vendor-callbacks/", views.vendor_queue, name="dash-vendor-queue"),

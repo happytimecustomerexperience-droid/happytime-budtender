@@ -76,6 +76,24 @@ def scrub_leak(payload):
     return payload
 
 
+# Phone-like digit run (7+ digits with optional +, spaces, dashes, parens) — masked before any
+# tool-call arg / fetched transcript is PERSISTED (PII discipline, 23-SPEC §3.5: the DB keeps only
+# the peppered hash; a number a caller spoke into a tool arg must never land in cleartext).
+_PHONE_RE = re.compile(r"\+?\d[\d\-.\s()]{5,}\d")
+
+
+def redact_pii(payload):
+    """Structure-preserving mask of phone-like digit runs in every string value. Defense-in-depth
+    for stored tool-call args + transcripts fetched from Vapi. Returns a cleaned copy."""
+    if isinstance(payload, dict):
+        return {k: redact_pii(v) for k, v in payload.items()}
+    if isinstance(payload, (list, tuple)):
+        return [redact_pii(v) for v in payload]
+    if isinstance(payload, str):
+        return _PHONE_RE.sub("[redacted]", payload)
+    return payload
+
+
 def assert_no_leak(payload) -> None:
     """Raise ``LeakError`` if any forbidden key/substring survives. The contract-test gate
     (23-SPEC §7 AC-5) + an optional DEBUG belt-and-suspenders assert in dispatch."""

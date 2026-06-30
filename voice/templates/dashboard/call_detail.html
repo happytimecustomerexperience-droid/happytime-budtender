@@ -2,7 +2,14 @@
 {% block title %}Call {{ call.call_id }} — Happy Time Voice{% endblock %}
 {% block content %}
 <p class="muted"><a href="{% url 'dash-call-log' %}">← Call log</a></p>
-<h1>Call {{ call.call_id }}</h1>
+<div class="row between">
+  <h1>Call {{ call.call_id }}</h1>
+  <form method="post" action="{% url 'dash-call-fetch-full' call.pk %}" style="margin:0">
+    {% csrf_token %}
+    <button class="btn" type="submit" title="Pull the authoritative transcript + tool-call timeline from Vapi">⤓ Fetch full conversation</button>
+  </form>
+</div>
+{% if fetch_note %}<div class="note-green {% if fetch_level == 'error' %}note-red{% endif %}">{{ fetch_note }}</div>{% endif %}
 
 <div class="card">
   <table>
@@ -19,6 +26,27 @@
 <div class="card">
   <h2>AI summary</h2>
   <p>{{ call.ai_summary|default:'(none)' }}</p>
+</div>
+
+<div class="card">
+  <h2>Tool calls <span class="muted">· {{ tool_calls|length }}</span></h2>
+  {% if tool_calls %}
+  <table class="tool-calls">
+    <thead><tr><th>Tool</th><th>Arguments</th><th>Result</th><th>Source</th></tr></thead>
+    <tbody>
+      {% for tc in tool_calls %}
+      <tr>
+        <td><code>{{ tc.name }}</code></td>
+        <td><pre style="margin:0;white-space:pre-wrap;font-size:12px">{{ tc.args|pprint }}</pre></td>
+        <td><pre style="margin:0;white-space:pre-wrap;font-size:12px">{{ tc.result|pprint }}</pre></td>
+        <td><span class="badge slate">{{ tc.source }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No tool calls logged for this call. Use <strong>Fetch full conversation</strong> to pull them from Vapi.</p>
+  {% endif %}
 </div>
 
 <div class="card">

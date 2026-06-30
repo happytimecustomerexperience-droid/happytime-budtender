@@ -78,6 +78,37 @@ class VoiceTurn(models.Model):
         return f"VoiceTurn<{self.call_id}/{self.seq} {self.role}>"
 
 
+class VoiceToolCall(models.Model):
+    """One row per tool invocation in a call — the args the assistant SENT and the result it got
+    back (P6 "tool calls must be logged"). Pre-P6 only the tool NAME survived (on ``VoiceTurn``);
+    args+results were dropped on the floor in ``handle_tool_calls``. Keyed by the Vapi ``call_id``
+    string (not a FK) because tool-calls arrive BEFORE the end-of-call-report creates the
+    ``VoiceCall`` row — the dashboard joins on ``call_id``.
+
+    Leak/PII discipline: ``result`` is already leak-scrubbed by ``tools.dispatch`` (no cost/margin);
+    ``args`` is run through ``guardrails.scrub_leak`` + ``redact_pii`` before storing (a phone/number
+    a caller spoke into an arg is masked — 23-SPEC §3.5)."""
+
+    call_id = models.CharField(max_length=64, db_index=True)  # Vapi call.id (links to VoiceCall)
+    tool_call_id = models.CharField(max_length=80, blank=True)  # Vapi toolCall id (idempotency)
+    name = models.CharField(max_length=64)
+    args = models.JSONField(default=dict, blank=True)  # redacted (PII-masked, leak-scrubbed)
+    result = models.JSONField(default=dict, blank=True)  # leak-scrubbed by dispatch
+    store = models.CharField(max_length=32, blank=True)
+    source = models.CharField(max_length=16, default="webhook")  # webhook | vapi_fetch
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # Idempotent re-delivery: a repeated tool-call webhook / re-fetch updates in place.
+        # ponytail: when tool_call_id is "" (Vapi omitted it) the uniqueness degrades to
+        # (call_id, name, "") — acceptable; synthesize an id upstream if collisions ever matter.
+        unique_together = [("call_id", "tool_call_id", "name")]
+        ordering = ["created_at", "id"]
+
+    def __str__(self) -> str:
+        return f"VoiceToolCall<{self.call_id}/{self.name}>"
+
+
 class VapiObject(models.Model):
     """The local id-map written back by the provisioner (10-P0 §3.6; 20-SPEC §4.6). One row per
     provisioned Vapi object (assistant/squad/tool/phone-number/file) keyed by ``(kind, name)`` so a

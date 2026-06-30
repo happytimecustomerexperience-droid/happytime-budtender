@@ -806,20 +806,65 @@ def conversation_history(request):
 
 @staff_member_required
 def call_detail(request, pk: int):
-    from voice.models import VoiceCall
+    from voice.models import VoiceCall, VoiceToolCall
 
     from . import monitor
 
     call = get_object_or_404(VoiceCall, pk=pk)
+    tool_calls = VoiceToolCall.objects.filter(call_id=call.call_id).order_by("created_at", "id")
     return render(
         request,
         "dashboard/call_detail.html",
         {
             "call": call,
             "turns": call.turns.order_by("seq"),
+            "tool_calls": tool_calls,
             "badge": monitor.call_outcome_badge,
         },
     )
+
+
+@staff_member_required
+@require_POST
+def call_fetch_full(request, pk: int):
+    """"Fetch full conversation" — pull GET /call/{id} from Vapi, store the authoritative transcript
+    + tool-call timeline, and re-render the call detail. Degrades with a toast when Vapi is
+    unconfigured or errors (never 500s the page)."""
+    from core.services import vapi
+    from voice import callfetch
+    from voice.models import VoiceCall, VoiceToolCall
+
+    from . import monitor
+
+    call = get_object_or_404(VoiceCall, pk=pk)
+    note, level = "", "success"
+    if not vapi.configured():
+        note, level = "Vapi not configured — cannot fetch", "error"
+    else:
+        try:
+            out = callfetch.fetch_full_conversation(call.call_id)
+            note = f"Fetched from Vapi — {len(out['tool_calls'])} tool call(s)"
+        except vapi.VapiError as exc:
+            note, level = f"Vapi fetch failed: {exc}", "error"
+        except Exception as exc:  # noqa: BLE001 — never 500 the dashboard
+            note, level = f"fetch error: {exc}", "error"
+
+    call.refresh_from_db()
+    tool_calls = VoiceToolCall.objects.filter(call_id=call.call_id).order_by("created_at", "id")
+    resp = render(
+        request,
+        "dashboard/call_detail.html",
+        {
+            "call": call,
+            "turns": call.turns.order_by("seq"),
+            "tool_calls": tool_calls,
+            "badge": monitor.call_outcome_badge,
+            "fetch_note": note,
+            "fetch_level": level,
+        },
+    )
+    resp["HX-Trigger"] = _toast(level, note)
+    return resp
 
 
 @staff_member_required
