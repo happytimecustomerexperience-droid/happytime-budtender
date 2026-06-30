@@ -146,10 +146,7 @@ class BudtenderClient:
         P4 ranking-weights lever (14-P4 item 1): the owner-tuned ``RankingWeights`` singleton
         (dashboard) is forwarded as ``ranking_weights`` on EVERY suggestion request so the owner's
         "high margin first" / taste levers reach the ranker per call. Omitted when the owner hasn't
-        changed anything off budtender's baseline (zero behavior change until a lever is tuned).
-        TODO-BUDTENDER: budtender must read a ``ranking_weights`` request param in
-        ``products/search/`` (``ranking.score`` currently reads its module-level ``W_ANON``/
-        ``W_KNOWN``); until it does, this param is sent + ignored harmlessly (no error)."""
+        changed anything off budtender's baseline (zero behavior change until a lever is tuned)."""
         loc = location or slots.get("store") or "yakima"
         payload: dict = {"slots": slots, "limit": limit, "location": loc}
         if phone:
@@ -216,6 +213,38 @@ class BudtenderClient:
         out.setdefault("reason_code", "none")
         return out
 
+    # ── staff customer browse (P7) — the dashboard reads the LIVE, auto-recomputed profiles ──
+    def list_customers(self, *, q: str = "", limit: int = 25, offset: int = 0) -> dict:
+        """``POST /customer/list`` — the staff roster for the dashboard Customers page. Returns
+        ``{ok, total, count, offset, limit, customers:[…leak-safe rows…]}``; graceful-empty (budtender
+        unreachable / token unset) = ``{ok: False, customers: [], total: 0}`` so the dashboard can
+        fall back to its local snapshot."""
+        empty = {"ok": False, "customers": [], "total": 0, "offset": offset, "limit": limit}
+        out = self._post(
+            "/customer/list", {"q": q or "", "limit": limit, "offset": offset}, empty=empty
+        )
+        if not isinstance(out, dict):
+            return dict(empty)
+        out.setdefault("ok", True)
+        out.setdefault("customers", [])
+        out.setdefault("total", len(out["customers"]))
+        return out
+
+    def get_customer(self, *, customer_id=None, phone: str | None = None) -> dict | None:
+        """``POST /customer/detail`` — one full profile by opaque id (preferred) or phone. Returns
+        the leak-safe ``customer`` dict, or ``None`` when missing/unreachable."""
+        if customer_id in (None, "") and not phone:
+            return None
+        payload: dict = {}
+        if customer_id not in (None, ""):
+            payload["id"] = customer_id
+        elif phone:
+            payload["phone"] = phone
+        out = self._post("/customer/detail", payload, empty={})
+        if isinstance(out, dict) and out.get("ok") and isinstance(out.get("customer"), dict):
+            return out["customer"]
+        return None
+
     # ── returning-caller handshake (§7) ───────────────────────────────────────
     def resume_by_phone(
         self,
@@ -271,6 +300,37 @@ class BudtenderClient:
         return self._post("/chat/persist/", payload, empty={"ok": False})
 
     # ── facets (slot prep) ─────────────────────────────────────────────────────
+    def chat_message(
+        self,
+        message: str,
+        *,
+        session_token: str | None = None,
+        location: str | None = None,
+        channel: str = "chat",
+        phone: str | None = None,
+    ) -> dict:
+        """``POST /chat/message``: persist a shopper turn and get the Gemini-backed reply.
+
+        This is for server-side website/proxy callers. It reuses the same pooled Bearer seam as
+        product tools, so the browser never gets the backend token.
+        """
+        text = str(message or "").strip()
+        if not text:
+            return {"ok": False, "message": None, "source": "empty"}
+        payload: dict = {"message": text, "channel": channel or "chat"}
+        if session_token:
+            payload["session_token"] = session_token
+        if location:
+            payload["location"] = location
+        if phone:
+            payload["phone"] = phone
+        out = self._post(
+            "/chat/message",
+            payload,
+            empty={"ok": False, "message": None, "source": "unavailable"},
+        )
+        return out if isinstance(out, dict) else {"ok": False, "message": None, "source": "unavailable"}
+
     def facets_subtypes(self, store: str, category: str) -> list[str]:
         out = self._post(
             "/products/subtypes", {"slots": {"store": store, "category": category}}, empty={}

@@ -886,43 +886,117 @@ def escalation_review(request):
     return call_log(request, _outcomes=["escalation"])
 
 
-# ── Customer intelligence browse (P6) ─────────────────────────────────────────
+# ── Customer intelligence browse (P7) — reads budtender's LIVE, auto-recomputed profiles ──
+# The bot's own profiles (recomputed from Dutchie transactions every 6h) are the single source of
+# truth, so the browse is always fresh. If budtender is unreachable we fall back to the local
+# imported snapshot (clearly flagged), so the page never hard-fails.
+def _row_from_bt(c: dict) -> dict:
+    cats = c.get("top_categories") or []
+    return {
+        "id": c.get("id"), "name": c.get("name") or "(unknown)",
+        "orders": c.get("total_orders", 0), "recency": c.get("last_purchase_at", ""),
+        "price_tier": c.get("price_tier", ""),
+        "top_category": (cats[0].get("category") if cats else "") or "",
+    }
+
+
+def _row_from_local(p) -> dict:
+    cats = p.top_categories or []
+    return {
+        "id": p.pk, "name": p.name or p.customer_key,
+        "orders": p.orders, "recency": p.last_order or "",
+        "price_tier": "", "segment": p.segment,
+        "top_category": (cats[0].get("category") if cats else "") or "",
+    }
+
+
+def _detail_from_bt(c: dict) -> dict:
+    return {
+        "id": c.get("id"), "name": c.get("name") or "(unknown)", "orders": c.get("total_orders", 0),
+        "last_purchase": c.get("last_purchase_at", ""), "price_tier": c.get("price_tier", ""),
+        "novelty": c.get("novelty_score", 0), "top_categories": c.get("top_categories", []),
+        "favorites": c.get("favorites", []), "category_affinity": c.get("category_affinity", {}),
+        "brand_affinity": c.get("brand_affinity", {}), "bucket_mix": c.get("bucket_mix", {}),
+        "top_brand": c.get("top_brand", ""), "tier_by_category": {}, "persona": "",
+        "purchase_count": c.get("purchase_count", 0),
+    }
+
+
+def _detail_from_local(p) -> dict:
+    return {
+        "id": p.pk, "name": p.name or p.customer_key, "orders": p.orders,
+        "last_purchase": p.last_order or "", "price_tier": "", "novelty": "",
+        "top_categories": p.top_categories or [], "favorites": p.favorites or [],
+        "category_affinity": {}, "brand_affinity": {}, "bucket_mix": {},
+        "top_brand": p.top_brand, "tier_by_category": p.tier_by_category or {},
+        "persona": p.persona, "purchase_count": len(p.favorites or []),
+    }
+
+
 @staff_member_required
 def customers_list(request):
-    """Searchable, paginated customer-profile browse (imported POS intelligence)."""
-    from crm.models import CustomerProfile
+    """Searchable, paginated customer browse — LIVE from budtender, with a local-snapshot fallback."""
+    from voice.budtender_client import budtender
 
     q = (request.GET.get("q") or "").strip()
-    seg = (request.GET.get("segment") or "").strip()
-    qs = CustomerProfile.objects.all()
-    if q:
-        qs = qs.filter(name__icontains=q)
-    if seg:
-        qs = qs.filter(segment=seg)
-    page = Paginator(qs, PER_PAGE).get_page(request.GET.get("page"))
-    segments = (
-        CustomerProfile.objects.exclude(segment="")
-        .values_list("segment", flat=True)
-        .distinct()
-        .order_by("segment")
-    )
-    return render(
-        request,
-        "dashboard/customers.html",
-        {"page": page, "q": q, "segment": seg, "segments": segments,
-         "total": CustomerProfile.objects.count()},
-    )
+    page_no = _bounded_int(request.GET.get("page"), default=1, lo=1, hi=10_000_000)
+    offset = (page_no - 1) * PER_PAGE
+
+    bt = budtender().list_customers(q=q, limit=PER_PAGE, offset=offset)
+    if bt.get("ok"):
+        rows = [_row_from_bt(c) for c in bt.get("customers", [])]
+        total, source = bt.get("total", len(rows)), "live"
+    else:
+        # Fallback: the local imported snapshot (budtender unreachable).
+        from crm.models import CustomerProfile
+
+        qs = CustomerProfile.objects.all()
+        if q:
+            qs = qs.filter(name__icontains=q)
+        total = qs.count()
+        rows = [_row_from_local(p) for p in qs.order_by("-total_spend", "id")[offset:offset + PER_PAGE]]
+        source = "snapshot"
+
+    num_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
+    return render(request, "dashboard/customers.html", {
+        "rows": rows, "q": q, "total": total, "source": source,
+        "page_no": page_no, "num_pages": num_pages,
+        "has_prev": page_no > 1, "has_next": page_no < num_pages,
+    })
 
 
 @staff_member_required
 def customer_detail(request, pk: int):
-    """One customer: full profile + the personalized suggestion feed."""
-    from crm import suggestions
-    from crm.models import CustomerProfile
+    """One customer: full LIVE profile (budtender) + the personalized suggestion feed; snapshot
+    fallback when budtender is unreachable."""
+    from types import SimpleNamespace
 
-    c = get_object_or_404(CustomerProfile, pk=pk)
-    feed = suggestions.build_feed(c, baskets_index=_baskets_index())
-    return render(request, "dashboard/customer_detail.html", {"c": c, "feed": feed})
+    from crm import suggestions
+    from voice.budtender_client import budtender
+
+    c = budtender().get_customer(customer_id=pk)
+    source = "live"
+    if c is None:
+        # Fallback to the local snapshot row of the same id (budtender unreachable / not found).
+        from crm.models import CustomerProfile
+
+        local = CustomerProfile.objects.filter(pk=pk).first()
+        if not local:
+            from django.http import Http404
+
+            raise Http404("customer not found")
+        detail, source = _detail_from_local(local), "snapshot"
+    else:
+        detail = _detail_from_bt(c)
+
+    feed_input = SimpleNamespace(
+        favorites=detail.get("favorites", []), top_categories=detail.get("top_categories", []),
+        tier_by_category=detail.get("tier_by_category", {}), orders=detail.get("orders", 0) or 0,
+        persona=detail.get("persona", ""),
+    )
+    feed = suggestions.build_feed(feed_input, baskets_index=_baskets_index())
+    return render(request, "dashboard/customer_detail.html",
+                  {"c": detail, "feed": feed, "source": source})
 
 
 # Lazily-loaded frequently-bought-with index (optional; only if the owner dropped baskets.json in).

@@ -1,17 +1,17 @@
 {% extends "dashboard/base.html" %}
-{% block title %}{{ c.name|default:c.customer_key }} — Customer{% endblock %}
+{% block title %}{{ c.name }} — Customer{% endblock %}
 {% block content %}
 <p class="muted"><a href="{% url 'dash-customers' %}">← Customers</a></p>
 <div class="row between">
-  <h1>{{ c.name|default:c.customer_key }}</h1>
-  <span class="badge {% if c.intent == 'due to replenish' %}green{% elif c.intent == 'lapsing' %}amber{% else %}slate{% endif %}">{{ c.intent }}</span>
+  <h1>{{ c.name }}</h1>
+  {% if source == 'live' %}<span class="badge green">live</span>{% else %}<span class="badge amber">snapshot</span>{% endif %}
 </div>
 
 <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:10px">
   <div class="card"><div class="muted">Orders</div><div style="font-size:24px"><strong>{{ c.orders }}</strong></div></div>
-  <div class="card"><div class="muted">Total spend</div><div style="font-size:24px"><strong>${{ c.total_spend|floatformat:0 }}</strong></div></div>
-  <div class="card"><div class="muted">Avg order</div><div style="font-size:24px"><strong>${{ c.aov|floatformat:0 }}</strong></div></div>
-  <div class="card"><div class="muted">Recency</div><div style="font-size:24px"><strong>{{ c.recency_days|default:'—' }}d</strong></div>{% if c.cadence_days %}<div class="muted" style="font-size:12px">≈{{ c.cadence_days }}d cadence</div>{% endif %}</div>
+  <div class="card"><div class="muted">Last purchase</div><div style="font-size:20px"><strong>{{ c.last_purchase|slice:":10"|default:"—" }}</strong></div></div>
+  <div class="card"><div class="muted">Price tier</div><div style="font-size:24px"><strong>{{ c.price_tier|default:"—" }}</strong></div></div>
+  <div class="card"><div class="muted">Novelty</div><div style="font-size:24px"><strong>{{ c.novelty|default:"—" }}</strong></div><div class="muted" style="font-size:11px">0 habit · 1 explorer</div></div>
 </div>
 
 <div class="card">
@@ -32,25 +32,22 @@
 
 <div class="grid" style="grid-template-columns:1fr 1fr;gap:10px">
   <div class="card">
-    <h2>Profile</h2>
-    <table>
-      <tr><th>Segment</th><td>{{ c.segment|default:'—' }}</td></tr>
-      <tr><th>Persona</th><td>{{ c.persona|default:'—' }}</td></tr>
-      <tr><th>Cohort</th><td>{{ c.cohort_month|default:'—' }}</td></tr>
-      <tr><th>Medical</th><td>{{ c.medical_share|floatformat:0 }}%</td></tr>
-      <tr><th>Top brand</th><td>{{ c.top_brand|default:'—' }}</td></tr>
-      <tr><th>Top vendor</th><td>{{ c.top_vendor|default:'—' }}</td></tr>
-      <tr><th>First / last</th><td>{{ c.first_order|default:'—' }} → {{ c.last_order|default:'—' }}</td></tr>
-    </table>
-  </div>
-  <div class="card">
-    <h2>Category mix</h2>
+    <h2>Top categories</h2>
     {% if c.top_categories %}
     <ul style="list-style:none;padding:0">
       {% for cat in c.top_categories %}
-      <li class="row between"><span>{{ cat.category|default:'—' }}</span><span class="muted">{% if cat.share %}{{ cat.share|floatformat:0 }}%{% endif %}</span></li>
+      <li class="row between"><span>{{ cat.category|default:"—" }}</span><span class="muted">{% if cat.share %}{{ cat.share|floatformat:0 }}%{% endif %}</span></li>
       {% endfor %}
     </ul>
+    {% else %}<p class="muted">—</p>{% endif %}
+    {% if c.top_brand %}<p class="muted" style="margin-top:8px">Top brand: <strong>{{ c.top_brand }}</strong></p>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Bucket mix</h2>
+    {% if c.bucket_mix %}
+    <div class="row" style="flex-wrap:wrap;gap:6px">
+      {% for k, v in c.bucket_mix.items %}<span class="badge slate">{{ k }}: {{ v|floatformat:2 }}</span>{% endfor %}
+    </div>
     {% else %}<p class="muted">—</p>{% endif %}
     {% if c.tier_by_category %}<h3 style="margin-top:10px">Tier by category</h3>
     <div class="row" style="flex-wrap:wrap;gap:6px">
@@ -61,12 +58,12 @@
 
 {% if c.favorites %}
 <div class="card">
-  <h2>Favorite products</h2>
+  <h2>Favorite products <span class="muted">· {{ c.purchase_count }} distinct bought</span></h2>
   <table style="width:100%">
-    <thead><tr><th>Product</th><th>Brand</th><th>Units</th><th>Orders</th></tr></thead>
+    <thead><tr><th>Product</th><th>Brand</th><th>Category</th><th>Times bought</th><th>Last</th></tr></thead>
     <tbody>
       {% for f in c.favorites %}
-      <tr><td>{{ f.product|default:'—' }}</td><td>{{ f.brand|default:'—' }}</td><td>{{ f.units|default:'—' }}</td><td>{{ f.orders|default:'—' }}</td></tr>
+      <tr><td>{{ f.product|default:"—" }}</td><td>{{ f.brand|default:"—" }}</td><td>{{ f.category|default:"—" }}</td><td>{{ f.units|default:"—" }}</td><td>{{ f.last_bought_at|slice:":10"|default:"—" }}</td></tr>
       {% endfor %}
     </tbody>
   </table>

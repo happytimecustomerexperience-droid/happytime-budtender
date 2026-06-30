@@ -77,10 +77,56 @@ def test_import_customer_profiles(tmp_path):
     assert CustomerProfile.objects.count() == 2
 
 
-# ── dashboard browse ──────────────────────────────────────────────────────────
+# ── dashboard browse — reads budtender LIVE, falls back to the local snapshot (P7) ──
+class _FakeBT:
+    """A stand-in budtender client returning live profiles (or empty to force the fallback)."""
+
+    def __init__(self, *, ok=True):
+        self.ok = ok
+
+    def list_customers(self, *, q="", limit=25, offset=0):
+        if not self.ok:
+            return {"ok": False, "customers": [], "total": 0}
+        return {"ok": True, "total": 1, "offset": offset, "limit": limit, "customers": [
+            {"id": 7, "name": "Live Larry", "total_orders": 9, "last_purchase_at": "2026-06-01T00:00:00",
+             "price_tier": "top", "top_categories": [{"category": "flower", "share": 0.6}]},
+        ]}
+
+    def get_customer(self, *, customer_id=None, phone=None):
+        if not self.ok:
+            return None
+        return {"id": 7, "name": "Live Larry", "total_orders": 9, "price_tier": "top",
+                "novelty_score": 0.4, "top_categories": [{"category": "flower", "share": 0.6}],
+                "favorites": [{"product": "Blue Dream 3.5g", "brand": "Acme", "category": "flower", "units": 5}],
+                "category_affinity": {"flower": 0.6}, "brand_affinity": {"Acme": 1.0},
+                "bucket_mix": {"core": 0.7}, "top_brand": "Acme", "purchase_count": 3}
+
+
 @pytest.mark.django_db
-def test_customers_pages_render(client, django_user_model):
+def test_customers_pages_render_live_from_budtender(client, django_user_model, monkeypatch):
+    from voice import budtender_client
+    monkeypatch.setattr(budtender_client, "budtender", lambda: _FakeBT(ok=True))
+
+    staff = django_user_model.objects.create_user("st", password="x", is_staff=True, is_superuser=True)
+    client.force_login(staff)
+
+    resp = client.get(reverse("dash-customers"))
+    assert resp.status_code == 200
+    assert b"Live Larry" in resp.content
+    assert b"live" in resp.content  # the live source badge
+
+    resp = client.get(reverse("dash-customer-detail", args=[7]))
+    assert resp.status_code == 200
+    assert b"Live Larry" in resp.content
+    assert b"Blue Dream" in resp.content       # favorite from the live profile
+    assert b"Personalized feed" in resp.content
+
+
+@pytest.mark.django_db
+def test_customers_pages_fall_back_to_local_snapshot(client, django_user_model, monkeypatch):
     from crm.models import CustomerProfile
+    from voice import budtender_client
+    monkeypatch.setattr(budtender_client, "budtender", lambda: _FakeBT(ok=False))  # budtender down
 
     staff = django_user_model.objects.create_user("st", password="x", is_staff=True, is_superuser=True)
     client.force_login(staff)
@@ -91,6 +137,7 @@ def test_customers_pages_render(client, django_user_model):
     resp = client.get(reverse("dash-customers"))
     assert resp.status_code == 200
     assert b"Jane Doe" in resp.content
+    assert b"snapshot" in resp.content  # the fallback badge
 
     resp = client.get(reverse("dash-customer-detail", args=[c.pk]))
     assert resp.status_code == 200

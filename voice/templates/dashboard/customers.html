@@ -2,40 +2,34 @@
 {% block title %}Customers — Happy Time Voice{% endblock %}
 {% block content %}
 <div class="row between">
-  <div><h1>Customers</h1><p class="muted">{{ total }} profiles · POS customer intelligence. The
-  budtender persona personalizes live calls from this same history (via budtender, by phone).</p></div>
+  <div>
+    <h1>Customers</h1>
+    <p class="muted">{{ total }} profiles ·
+      {% if source == 'live' %}<span class="badge green">live</span> from budtender — auto-recomputed from transactions every 6h (same data the bot uses)
+      {% else %}<span class="badge amber">snapshot</span> — budtender unreachable, showing the last imported snapshot
+      {% endif %}
+    </p>
+  </div>
 </div>
 
-{% if total == 0 %}
-<div class="card muted">
-  No customer profiles yet. Import them:
-  <pre style="white-space:pre-wrap">uv run python manage.py import_customer_profiles --customers /path/to/customers.json</pre>
-  (the export carries customer names, so it's loaded by the owner, not committed.)
-</div>
-{% else %}
 <form method="get" class="row" style="gap:8px;margin-bottom:12px">
-  <input type="search" name="q" value="{{ q }}" placeholder="Search by name…" style="flex:1">
-  <select name="segment">
-    <option value="">All segments</option>
-    {% for s in segments %}<option value="{{ s }}" {% if s == segment %}selected{% endif %}>{{ s }}</option>{% endfor %}
-  </select>
+  <input type="search" name="q" value="{{ q }}" placeholder="Search by name or phone…" style="flex:1">
   <button class="btn btn-primary" type="submit">Search</button>
 </form>
 
+{% if rows %}
 <div class="card">
   <table style="width:100%">
-    <thead><tr><th>Customer</th><th>Segment</th><th>Orders</th><th>Spend</th><th>AOV</th><th>Recency</th><th>Top category</th></tr></thead>
+    <thead><tr><th>Customer</th><th>Orders</th><th>Last purchase</th><th>Price tier</th><th>Top category</th></tr></thead>
     <tbody>
-      {% for c in page %}
+      {% for r in rows %}
       <tr>
-        <td><a href="{% url 'dash-customer-detail' c.pk %}"><strong>{{ c.name|default:c.customer_key }}</strong></a>
-          {% if c.persona %}<br><span class="muted" style="font-size:12px">{{ c.persona }}</span>{% endif %}</td>
-        <td><span class="badge slate">{{ c.segment|default:'—' }}</span></td>
-        <td>{{ c.orders }}</td>
-        <td>${{ c.total_spend|floatformat:0 }}</td>
-        <td>${{ c.aov|floatformat:0 }}</td>
-        <td>{{ c.recency_days|default:'—' }}d</td>
-        <td>{% if c.top_categories %}{{ c.top_categories.0.category|default:'—' }}{% else %}—{% endif %}</td>
+        <td><a href="{% url 'dash-customer-detail' r.id %}"><strong>{{ r.name }}</strong></a>
+          {% if r.segment %}<br><span class="muted" style="font-size:12px">{{ r.segment }}</span>{% endif %}</td>
+        <td>{{ r.orders }}</td>
+        <td>{{ r.recency|slice:":10"|default:"—" }}</td>
+        <td>{% if r.price_tier %}<span class="badge slate">{{ r.price_tier }}</span>{% else %}—{% endif %}</td>
+        <td>{{ r.top_category|default:"—" }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -43,11 +37,20 @@
 </div>
 
 <div class="row between" style="margin-top:10px">
-  <span class="muted">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+  <span class="muted">Page {{ page_no }} of {{ num_pages }}</span>
   <span>
-    {% if page.has_previous %}<a class="btn" href="?q={{ q }}&segment={{ segment }}&page={{ page.previous_page_number }}">← Prev</a>{% endif %}
-    {% if page.has_next %}<a class="btn" href="?q={{ q }}&segment={{ segment }}&page={{ page.next_page_number }}">Next →</a>{% endif %}
+    {% if has_prev %}<a class="btn" href="?q={{ q }}&page={{ page_no|add:'-1' }}">← Prev</a>{% endif %}
+    {% if has_next %}<a class="btn" href="?q={{ q }}&page={{ page_no|add:'1' }}">Next →</a>{% endif %}
   </span>
+</div>
+{% else %}
+<div class="card muted">
+  {% if source == 'snapshot' %}
+    No customers in the local snapshot. Budtender is unreachable — once it's back, this page shows the live profiles automatically.
+  {% else %}
+    No customers yet. budtender builds profiles from Dutchie transactions; run the backfill to load the full history:
+    <pre style="white-space:pre-wrap">docker compose exec web python manage.py rebuild_customer_history</pre>
+  {% endif %}
 </div>
 {% endif %}
 {% endblock %}
