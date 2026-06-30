@@ -17,17 +17,19 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--days", type=int, default=None,
-                            help="Lookback days for the backfill (default HHT_TX_LOOKBACK_DAYS ≈ 5y).")
-        parser.add_argument("--store", default=None, help="One store slug (default: all stores).")
+                            help="Lookback days for the backfill (default HHT_TX_LOOKBACK_DAYS ≈ 20y).")
 
     def handle(self, *args, **opts):
         from budtender import tasks
         from budtender.models import STORES, CustomerProfile, SyncState
 
-        slugs = [opts["store"]] if opts["store"] else [s[0] for s in STORES]
+        # ALWAYS all stores. purchase_history is phone-keyed with NO per-store tag, so the wipe is
+        # inherently global — a single-store rebuild would blank every customer's OTHER stores' buys
+        # and never rebuild them (their watermarks wouldn't reset), causing permanent data loss.
+        slugs = [s[0] for s in STORES]
         # Clean slate so the rebuild folds the full window exactly-once (no leftover over-count).
         CustomerProfile.objects.update(purchase_history=[], total_orders=0)
-        SyncState.objects.filter(location_slug__in=slugs).update(last_tx_at=None)
+        SyncState.objects.all().update(last_tx_at=None, last_tx_ids=[])
 
         total = 0
         for slug in slugs:

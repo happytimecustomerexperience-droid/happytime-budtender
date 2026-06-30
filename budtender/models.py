@@ -71,9 +71,11 @@ class SyncState(models.Model):
     last_synced_at = models.DateTimeField(null=True, blank=True)
     item_count = models.IntegerField(default=0)  # in-stock SKUs in the last pull
     # Transaction-ingest watermark: the max transactionDate folded into customer history so far.
-    # The recurring sync folds ONLY transactions strictly newer than this (exactly-once, no
-    # over-count); null = no history ingested yet → next sync backfills the full lookback window.
+    # The recurring sync folds transactions newer than this, PLUS any at exactly this timestamp whose
+    # id isn't in last_tx_ids — so same-second sales at the boundary are neither dropped nor
+    # double-counted (lossless + exactly-once). null = no history yet → next sync backfills.
     last_tx_at = models.DateTimeField(null=True, blank=True)
+    last_tx_ids = models.JSONField(default=list, blank=True)  # tx ids folded AT exactly last_tx_at
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self) -> str:

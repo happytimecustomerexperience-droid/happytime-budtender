@@ -66,8 +66,30 @@ class CustomerHistorySyncTests(TestCase):
         p.save()
 
         # The backfill resets + rebuilds from the full history → correct counts, not 999.
-        with patch("budtender.dutchie.get_transactions_detailed", lambda *a, **k: [tx1]):
-            call_command("rebuild_customer_history", "--store", "yakima")
+        # (--store removed: the wipe is global, so the rebuild is always all-stores. The mock is
+        # store-aware — tx1 belongs to yakima only, so it folds once, not once per store.)
+        with patch("budtender.dutchie.get_transactions_detailed",
+                   lambda slug, *a, **k: [tx1] if slug == "yakima" else []):
+            call_command("rebuild_customer_history")
         p.refresh_from_db()
         self.assertEqual(p.total_orders, 1)
         self.assertEqual(p.purchase_history[0]["times_bought"], 1)
+
+    def test_same_second_boundary_tx_not_dropped_or_double_counted(self):
+        """Two sales in the SAME second: one in run 1, a second (late-arriving) at the same second in
+        run 2 → the late one folds exactly once (lossless), the first never re-counts (exactly-once)."""
+        tx_a = {"customerId": "1", "transactionId": "A", "transactionDate": T0.isoformat(),
+                "items": [{"productId": "P1", "quantity": 1, "unitPrice": 10.0}]}
+        tx_b = {"customerId": "1", "transactionId": "B", "transactionDate": T0.isoformat(),
+                "items": [{"productId": "P2", "quantity": 1, "unitPrice": 10.0}]}
+        with patch("budtender.dutchie.get_transactions_detailed", lambda *a, **k: [tx_a]):
+            tasks.sync_transactions("yakima")
+        p = CustomerProfile.objects.get()
+        self.assertEqual(p.total_orders, 1)  # only A
+
+        # Run 2: both A (already folded, same second) and B (new, same second) are returned.
+        with patch("budtender.dutchie.get_transactions_detailed", lambda *a, **k: [tx_a, tx_b]):
+            tasks.sync_transactions("yakima")
+        p.refresh_from_db()
+        self.assertEqual(p.total_orders, 2)  # A not re-counted, B folded → exactly 2
+        self.assertEqual(len(p.purchase_history), 2)

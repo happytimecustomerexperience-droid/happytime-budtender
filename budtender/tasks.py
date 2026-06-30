@@ -213,7 +213,12 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
     )
     by_phone: dict[str, list[dict]] = defaultdict(list)
     name_by_phone: dict[str, str] = {}
-    max_tx_dt = watermark  # advance the watermark to the newest folded transaction
+    # Boundary dedup: ids already folded AT exactly the watermark second — so a same-second sale is
+    # neither dropped (lossless) nor re-counted (exactly-once). max_tx_dt + new_boundary track the
+    # new watermark and the ids sitting on it.
+    old_boundary = set(st.last_tx_ids or []) if (st and not full) else set()
+    max_tx_dt = watermark
+    new_boundary = set(old_boundary)
     for tx in rows:
         if tx.get("isVoid") or tx.get("isReturn"):
             continue
@@ -221,12 +226,27 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
         phone = _normalize_phone(phone_by_id.get(cid, ""))
         if not phone:
             continue
+        tx_id = str(tx.get("transactionId") or tx.get("id") or tx.get("transactionNumber") or "")
         bought_at = tx.get("transactionDate") or tx.get("lastModifiedDateUTC") or now.isoformat()
         bought_dt = dutchie._parse_iso(bought_at)
-        # Exactly-once gate: only NEW transactions (after the watermark) fold into history.
-        is_new = watermark is None or (bought_dt is not None and bought_dt > watermark)
-        if is_new and bought_dt is not None and (max_tx_dt is None or bought_dt > max_tx_dt):
-            max_tx_dt = bought_dt
+        # Exactly-once + lossless gate.
+        if watermark is None:
+            is_new = True
+        elif bought_dt is None:
+            is_new = False
+        elif bought_dt > watermark:
+            is_new = True
+        elif bought_dt == watermark:
+            # same-second as the watermark — fold only if this id wasn't already folded there.
+            is_new = bool(tx_id) and tx_id not in old_boundary
+        else:
+            is_new = False
+        if is_new and bought_dt is not None:
+            if max_tx_dt is None or bought_dt > max_tx_dt:
+                max_tx_dt, new_boundary = bought_dt, ({tx_id} if tx_id else set())
+            elif bought_dt == max_tx_dt and tx_id:
+                new_boundary.add(tx_id)
+        # Always capture the latest Dutchie name for EVERY customer seen (even gated ones).
         if name_by_id.get(cid):
             name_by_phone[phone] = name_by_id[cid]
         for it in (tx.get("items") or []):
@@ -263,10 +283,17 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
     for phone, lines in by_phone.items():
         _fold_history(phone, lines, name=name_by_phone.get(phone))
 
-    # Advance the watermark so the next run folds only newer transactions.
+    # Refresh the name for customers SEEN but not folded this run (gated transactions), so a changed
+    # Dutchie display name isn't stuck until their next brand-new purchase.
+    for phone, nm in name_by_phone.items():
+        if phone not in by_phone:
+            CustomerProfile.objects.filter(phone=phone).exclude(name=nm).update(name=nm)
+
+    # Advance the watermark + boundary id set so the next run folds only genuinely-new transactions.
     if max_tx_dt is not None:
         SyncState.objects.update_or_create(
-            location_slug=location_slug, defaults={"last_tx_at": max_tx_dt}
+            location_slug=location_slug,
+            defaults={"last_tx_at": max_tx_dt, "last_tx_ids": list(new_boundary)},
         )
 
     # Recency-blended velocity (units/day): recent 28d weighted 0.7, trailing 84d
