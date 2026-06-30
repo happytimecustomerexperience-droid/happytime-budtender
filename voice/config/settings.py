@@ -97,7 +97,9 @@ if _USE_SQLITE:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": ":memory:",
+            # In-memory for the test suite; a file path (HHT_SQLITE_PATH) lets you boot a real local
+            # dashboard on SQLite without Postgres (dev/demo). pytest always uses :memory:.
+            "NAME": ":memory:" if ("pytest" in _sys.modules) else os.environ.get("HHT_SQLITE_PATH", ":memory:"),
         }
     }
 else:
