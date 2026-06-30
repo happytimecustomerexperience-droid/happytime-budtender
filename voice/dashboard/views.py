@@ -967,7 +967,8 @@ def credentials_save(request):
     name = (request.POST.get("name") or "").strip()
     if not cred.is_known(name):
         return HttpResponseBadRequest("unknown credential")
-    value = request.POST.get("value", "")
+    # Strip — a trailing newline/space silently breaks a token or URL. Whitespace-only → "" → keep.
+    value = (request.POST.get("value", "") or "").strip()
     # Blank submit = "keep existing" (the placeholder says so) — never silently wipe a set secret.
     # To CLEAR a credential, delete the row in Django admin (ponytail: clearing is rare).
     saved = False

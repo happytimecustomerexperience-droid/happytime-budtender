@@ -230,7 +230,8 @@ def _log_tool_call(call_id: str, store: str, tc: dict, args: dict, result) -> No
             name=(tc.get("name") or ""),
             defaults={
                 "args": guardrails.redact_pii(guardrails.scrub_leak(args)),
-                "result": result,
+                # result is already leak-scrubbed by dispatch; mask PII too (symmetric with args).
+                "result": guardrails.redact_pii(result),
                 "store": store or "",
                 "source": "webhook",
             },
@@ -380,8 +381,12 @@ def _message_text(msg: dict) -> str:
 
 
 def _redact_phoneish(text: object) -> str:
-    # ponytail: US phone-shape redaction; use libphonenumber if international callers matter.
-    return _PHONEISH_RE.sub("[phone redacted]", str(text or ""))
+    # US phone-shape redaction first (keeps the familiar "[phone redacted]" marker), then the shared
+    # guardrails.redact_pii pass so international / run-together digit runs are masked too — one
+    # masker across all three persistence paths (turns, transcript, args/fetch). (libphonenumber if
+    # exact international formatting ever matters.)
+    us = _PHONEISH_RE.sub("[phone redacted]", str(text or ""))
+    return guardrails.redact_pii(us)
 
 
 def _message_tool_name(msg: dict) -> str:

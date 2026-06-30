@@ -14,6 +14,15 @@ from __future__ import annotations
 _HIGH, _MED = 6, 2
 
 
+def _num(v) -> float:
+    """Coerce a possibly-string POS value to a number (0.0 on failure) — favorites/lift feed into
+    arithmetic and a raw "6" from the export would otherwise TypeError and crash the render."""
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _confidence(orders: int) -> str:
     if orders >= _HIGH:
         return "high"
@@ -34,12 +43,12 @@ def build_feed(profile, *, baskets_index: dict | None = None, limit: int = 6) ->
         name = fav.get("product") or fav.get("Product Name") or fav.get("name") or ""
         if not name:
             continue
-        units = fav.get("units") or fav.get("Units") or 0
+        units = _num(fav.get("units") or fav.get("Units"))
         feed.append({
             "kind": "favorite",
             "title": name,
-            "reason": f"A usual favorite — bought {units} unit(s) historically. Lead with a restock.",
-            "score": 100 + (units or 0),
+            "reason": f"A usual favorite — bought {units:g} unit(s) historically. Lead with a restock.",
+            "score": 100 + units,
             "confidence": conf,
         })
 

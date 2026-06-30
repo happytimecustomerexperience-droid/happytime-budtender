@@ -56,6 +56,26 @@ def test_notify_n8n_posts_event(settings, monkeypatch):
     assert "number" not in sent["body"]
 
 
+def test_notify_n8n_masks_phone_in_summary(settings, monkeypatch):
+    """A phone the model put in the summary is masked before the payload leaves for n8n."""
+    import urllib.request
+
+    from voice.tools.n8n import notify_n8n
+
+    settings.N8N_WEBHOOK_URL = "https://n8n.example/webhook/x"
+    sent = {}
+
+    class _Resp:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda req, timeout=10: (sent.update(body=json.loads(req.data.decode())) or _Resp()))
+    notify_n8n({"event_type": "callback_request", "summary": "call me at 509-555-9999"}, {"call_id": "c"})
+    assert "509-555-9999" not in sent["body"]["summary"]
+
+
 @pytest.mark.django_db
 def test_binding_a_tool_auto_provisions_it_on_publish(monkeypatch):
     """Adding notify_n8n to a bot from the dashboard → publish provisions the Vapi tool (no separate

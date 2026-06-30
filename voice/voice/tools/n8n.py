@@ -18,6 +18,7 @@ import urllib.request
 
 from django.conf import settings
 
+from voice import guardrails
 from voice.constants import spoken_store
 from voice.tools import register
 
@@ -40,7 +41,9 @@ def notify_n8n(args: dict, ctx: dict) -> dict:
     payload = {
         "event": "bot_action",
         "event_type": event_type,
-        "summary": (args.get("summary") or "").strip(),
+        # The summary is LLM-written and could echo a number the caller spoke — mask before it
+        # leaves the system to an external webhook (a prompt rule is not a security boundary).
+        "summary": guardrails.redact_pii((args.get("summary") or "").strip()),
         "store": store,
         "store_spoken": spoken_store(store) if store else "",
         "call_id": ctx.get("call_id", ""),

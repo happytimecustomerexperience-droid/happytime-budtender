@@ -83,7 +83,9 @@ def fetch_full_conversation(call_id: str) -> dict:
     artifact = raw.get("artifact") or {}
     transcript = guardrails.redact_pii(artifact.get("transcript") or "")
     messages = artifact.get("messages") or []
-    summary = (raw.get("analysis") or {}).get("summary") or ""
+    # The Vapi LLM summary is free text that can echo a number the caller spoke — mask it like the
+    # transcript before it lands on the row / renders / is forwarded to a sink (PII discipline).
+    summary = guardrails.redact_pii((raw.get("analysis") or {}).get("summary") or "")
     tool_calls = parse_tool_calls(messages)
 
     persisted = _persist(call_id, raw, transcript, summary, tool_calls)
@@ -124,7 +126,7 @@ def _persist(call_id: str, raw: dict, transcript: str, summary: str, tool_calls:
             name=tc.get("name") or "",
             defaults={
                 "args": guardrails.redact_pii(guardrails.scrub_leak(tc.get("args") or {})),
-                "result": guardrails.scrub_leak(tc.get("result") or {}),
+                "result": guardrails.redact_pii(guardrails.scrub_leak(tc.get("result") or {})),
                 "store": vc.store or "",
                 "source": "vapi_fetch",
             },

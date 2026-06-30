@@ -112,7 +112,9 @@ def _norm_favorites(sku_list) -> list[dict]:
         out.append({
             "product": s.get("Product Name") or s.get("product") or s.get("name") or "",
             "brand": s.get("Brand") or s.get("brand") or "",
-            "units": s.get("Units") or s.get("units") or 0,
-            "orders": s.get("Orders") or s.get("orders") or 0,
+            # Coerce to int — the POS export may ship these as strings; build_feed does arithmetic
+            # on units, so a bare "6" would TypeError and crash the customer page render.
+            "units": _as_int(s.get("Units") or s.get("units")) or 0,
+            "orders": _as_int(s.get("Orders") or s.get("orders")) or 0,
         })
     return out

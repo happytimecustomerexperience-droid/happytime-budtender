@@ -167,16 +167,6 @@ class EmailSink(Sink):
         transfer = (
             f"{voice_call.transfer_disposition or '—'} ({voice_call.transfer_number_key or '—'})"
         )
-        body = (
-            f"New voice call — {voice_call.store or '—'}.\n"
-            f"Outcome: {voice_call.outcome or '—'}{reason_line}\n"
-            f"Caller (hashed): {(voice_call.caller_phone_hash or '—')[:12]}…\n"
-            f"Duration: {voice_call.duration_s or '—'}s\n"
-            f"Human requested: {voice_call.human_requested_count}×\n"
-            f"Transfer: {transfer}\n\n"
-            f"Summary:\n{voice_call.ai_summary or '(none)'}\n\n"
-            f"Call id: {voice_call.call_id}   ·   logged {voice_call.created_at}\n"
-        )
         body = _text_body(voice_call, transfer, reason_line)
         msg = EmailMultiAlternatives(
             subject=subject[:120],

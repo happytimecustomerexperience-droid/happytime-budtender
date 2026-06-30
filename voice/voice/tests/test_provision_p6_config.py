@@ -58,3 +58,33 @@ def test_falls_back_to_constants_with_no_row():
     assert payload["voice"]["provider"] == "cartesia"
     assert payload["voice"]["voiceId"] == C.CARTESIA_VOICE["voiceId"]
     assert any("no AgentPrompt" in w for w in warnings)
+
+
+@pytest.mark.django_db
+def test_partial_row_uses_constant_and_entry_router_token_fallback():
+    """A row that sets provider/model but leaves temperature/max_output_tokens null falls back to
+    the constants, and entry_router keeps its tight 200-token default."""
+    from kb.models import AgentPrompt
+
+    AgentPrompt.objects.create(
+        role="entry_router", body="route", model_provider="google", vapi_model="gemini-2.5-flash",
+        temperature=None, max_output_tokens=None, is_active=True,
+    )
+    payload, _ = provision.build_assistant_payload("entry_router", name="entry_router")
+    assert payload["model"]["temperature"] == C.ASSISTANT_TEMPERATURE  # null → constant
+    assert payload["model"]["maxTokens"] == 200  # entry_router default kept
+
+
+@pytest.mark.django_db
+def test_cartesia_per_row_voice_override():
+    """A Cartesia row with a custom voice_id + voice_settings overrides the constant voice block."""
+    from kb.models import AgentPrompt
+
+    AgentPrompt.objects.create(
+        role="faq", body="x", voice_provider="cartesia", voice_id="custom-cartesia-id",
+        voice_settings={"speed": "fast"}, is_active=True,
+    )
+    payload, _ = provision.build_assistant_payload("faq", name="faq")
+    assert payload["voice"]["provider"] == "cartesia"
+    assert payload["voice"]["voiceId"] == "custom-cartesia-id"
+    assert payload["voice"]["speed"] == "fast"  # voice_settings spread through
