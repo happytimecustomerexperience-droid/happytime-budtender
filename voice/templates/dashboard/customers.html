@@ -5,8 +5,9 @@
   <div>
     <h1>Customers</h1>
     <p class="muted">{{ total }} profiles ·
-      {% if source == 'live' %}<span class="badge green">live</span> from budtender — auto-recomputed from transactions every 6h (same data the bot uses)
-      {% else %}<span class="badge amber">snapshot</span> — budtender unreachable, showing the last imported snapshot
+      {% if source == 'analytics' %}<span class="badge blue">analytics</span> — RFM/persona/cohort/LTV (auto-refreshed); open a customer to merge in budtender's live affinities
+      {% elif source == 'live' %}<span class="badge green">live</span> from budtender — no analytics snapshot loaded yet
+      {% else %}<span class="badge amber">empty</span> — no snapshot and budtender unreachable
       {% endif %}
     </p>
   </div>
@@ -45,12 +46,9 @@
 </div>
 {% else %}
 <div class="card muted">
-  {% if source == 'snapshot' %}
-    No customers in the local snapshot. Budtender is unreachable — once it's back, this page shows the live profiles automatically.
-  {% else %}
-    No customers yet. budtender builds profiles from Dutchie transactions; run the backfill to load the full history:
-    <pre style="white-space:pre-wrap">docker compose exec web python manage.py rebuild_customer_history</pre>
-  {% endif %}
+  No customers yet. Either import the analytics snapshot (RFM/persona/cohort), or build budtender's live profiles from Dutchie:
+  <pre style="white-space:pre-wrap">docker compose exec voice-web python manage.py import_customer_profiles --customers /tmp/customers.json
+docker compose exec web python manage.py rebuild_customer_history</pre>
 </div>
 {% endif %}
 {% endblock %}

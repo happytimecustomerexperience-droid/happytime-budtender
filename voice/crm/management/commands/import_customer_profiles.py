@@ -34,16 +34,28 @@ class Command(BaseCommand):
     help = "Import customer profiles from the analytics customers.json (+ optional baskets.json)."
 
     def add_arguments(self, parser):
-        parser.add_argument("--customers", required=True, help="Path to customers.json")
+        parser.add_argument("--customers", default=None, help="Path to a local customers.json")
+        parser.add_argument("--url", default=None,
+                            help="Fetch customers.json from this URL (e.g. the analytics repo's raw "
+                                 "GitHub link). Defaults to the CUSTOMERS_JSON_URL env var — set that "
+                                 "+ a nightly cron to auto-refresh the snapshot.")
         parser.add_argument("--limit", type=int, default=0, help="Import only the top-N by spend.")
 
     def handle(self, *args, **opts):
+        import os
+
         from crm.models import CustomerProfile
 
-        path = Path(opts["customers"])
-        if not path.exists():
-            raise CommandError(f"customers.json not found: {path}")
-        data = json.loads(path.read_text(encoding="utf-8"))
+        url = opts.get("url") or os.environ.get("CUSTOMERS_JSON_URL", "")
+        if url:
+            data = self._fetch(url)
+        elif opts.get("customers"):
+            path = Path(opts["customers"])
+            if not path.exists():
+                raise CommandError(f"customers.json not found: {path}")
+            data = json.loads(path.read_text(encoding="utf-8"))
+        else:
+            raise CommandError("provide --customers PATH, --url URL, or set CUSTOMERS_JSON_URL")
         profiles = data.get("customerProfiles") or {}
         rich = data.get("customerRichDetail") or {}
         if not profiles:
@@ -93,6 +105,18 @@ class Command(BaseCommand):
                 self.stdout.write(f"  …{n} imported")
 
         self.stdout.write(self.style.SUCCESS(f"Imported {n} customer profiles ({len(rich)} with rich detail)."))
+
+    def _fetch(self, url: str) -> dict:
+        """Download customers.json from a URL (the analytics repo regenerates + commits it nightly)."""
+        import requests
+
+        self.stdout.write(f"Fetching customers.json from {url} …")
+        resp = requests.get(url, timeout=120)
+        resp.raise_for_status()
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise CommandError(f"URL did not return JSON: {exc}") from exc
 
 
 def _as_int(v):

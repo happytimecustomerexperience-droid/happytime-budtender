@@ -376,12 +376,18 @@ class CustomerDetailView(APIView):
         data = request.data or {}
         profile = None
         cid = data.get("id")
+        name = str(data.get("name") or "").strip()
         if cid not in (None, ""):
             profile = CustomerProfile.objects.filter(pk=_bounded_int(cid, default=0, lo=0, hi=2**31)).first()
+        elif name:
+            # Name match (case-insensitive) — used by the dashboard to enrich an analytics profile
+            # with this customer's live affinities. Most-recent buyer wins on a duplicate name.
+            profile = (CustomerProfile.objects.filter(name__iexact=name)
+                       .order_by("-last_purchase_at", "-id").first())
         else:
             phone = _normalize_phone(str(data.get("phone") or ""))
             if not phone:
-                return Response({"ok": False, "reason": "missing id/phone"}, status=400)
+                return Response({"ok": False, "reason": "missing id/name/phone"}, status=400)
             profile = CustomerProfile.objects.filter(phone=phone).first()
         if not profile:
             return Response({"ok": False, "reason": "not found"}, status=404)

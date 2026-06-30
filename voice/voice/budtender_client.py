@@ -230,14 +230,18 @@ class BudtenderClient:
         out.setdefault("total", len(out["customers"]))
         return out
 
-    def get_customer(self, *, customer_id=None, phone: str | None = None) -> dict | None:
-        """``POST /customer/detail`` — one full profile by opaque id (preferred) or phone. Returns
-        the leak-safe ``customer`` dict, or ``None`` when missing/unreachable."""
-        if customer_id in (None, "") and not phone:
+    def get_customer(self, *, customer_id=None, phone: str | None = None,
+                     name: str | None = None) -> dict | None:
+        """``POST /customer/detail`` — one full profile by opaque id (preferred), name (for the
+        dashboard's analytics→live enrichment), or phone. Returns the leak-safe ``customer`` dict,
+        or ``None`` when missing/unreachable."""
+        if customer_id in (None, "") and not name and not phone:
             return None
         payload: dict = {}
         if customer_id not in (None, ""):
             payload["id"] = customer_id
+        elif name:
+            payload["name"] = name
         elif phone:
             payload["phone"] = phone
         out = self._post("/customer/detail", payload, empty={})

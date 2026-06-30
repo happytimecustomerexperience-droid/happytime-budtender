@@ -886,16 +886,17 @@ def escalation_review(request):
     return call_log(request, _outcomes=["escalation"])
 
 
-# ── Customer intelligence browse (P7) — reads budtender's LIVE, auto-recomputed profiles ──
-# The bot's own profiles (recomputed from Dutchie transactions every 6h) are the single source of
-# truth, so the browse is always fresh. If budtender is unreachable we fall back to the local
-# imported snapshot (clearly flagged), so the page never hard-fails.
+# ── Customer intelligence browse (P7) — BOTH sources, with per-field fallback ──
+# The analytics snapshot (rich RFM/persona/cohort/LTV, auto-refreshed) is the roster; the customer
+# detail MERGES it with budtender's live, 6h-recomputed affinities (joined by name) so each field
+# comes from whichever source has it. List falls back to the budtender live roster if the snapshot
+# is empty; detail falls back to budtender-only when there's no snapshot row.
 def _row_from_bt(c: dict) -> dict:
     cats = c.get("top_categories") or []
     return {
         "id": c.get("id"), "name": c.get("name") or "(unknown)",
         "orders": c.get("total_orders", 0), "recency": c.get("last_purchase_at", ""),
-        "price_tier": c.get("price_tier", ""),
+        "price_tier": c.get("price_tier", ""), "segment": "",
         "top_category": (cats[0].get("category") if cats else "") or "",
     }
 
@@ -910,52 +911,63 @@ def _row_from_local(p) -> dict:
     }
 
 
-def _detail_from_bt(c: dict) -> dict:
+def _merge_detail(local, live: dict | None) -> dict:
+    """Merge the analytics snapshot row (``local`` model, may be None) with budtender's live profile
+    dict (``live``, may be None), field-by-field: analytics owns RFM/persona/cohort/LTV; budtender
+    owns live affinities/bucket-mix/novelty/price-tier; shared fields prefer the live (more current)
+    value, falling back to analytics. So you get everything either source knows."""
+    live = live or {}
     return {
-        "id": c.get("id"), "name": c.get("name") or "(unknown)", "orders": c.get("total_orders", 0),
-        "last_purchase": c.get("last_purchase_at", ""), "price_tier": c.get("price_tier", ""),
-        "novelty": c.get("novelty_score", 0), "top_categories": c.get("top_categories", []),
-        "favorites": c.get("favorites", []), "category_affinity": c.get("category_affinity", {}),
-        "brand_affinity": c.get("brand_affinity", {}), "bucket_mix": c.get("bucket_mix", {}),
-        "top_brand": c.get("top_brand", ""), "tier_by_category": {}, "persona": "",
-        "purchase_count": c.get("purchase_count", 0),
-    }
-
-
-def _detail_from_local(p) -> dict:
-    return {
-        "id": p.pk, "name": p.name or p.customer_key, "orders": p.orders,
-        "last_purchase": p.last_order or "", "price_tier": "", "novelty": "",
-        "top_categories": p.top_categories or [], "favorites": p.favorites or [],
-        "category_affinity": {}, "brand_affinity": {}, "bucket_mix": {},
-        "top_brand": p.top_brand, "tier_by_category": p.tier_by_category or {},
-        "persona": p.persona, "purchase_count": len(p.favorites or []),
+        "name": (local.name if local and local.name else "") or live.get("name")
+                or (local.customer_key if local else "") or "(unknown)",
+        # analytics-owned (RFM / LTV)
+        "segment": local.segment if local else "",
+        "persona": (local.persona if local else "") or "",
+        "cohort_month": local.cohort_month if local else "",
+        "total_spend": local.total_spend if local else None,
+        "aov": local.aov if local else None,
+        "tier_by_category": (local.tier_by_category if local else {}) or {},
+        # current-state — prefer live
+        "orders": live.get("total_orders") or (local.orders if local else 0) or 0,
+        "last_purchase": live.get("last_purchase_at") or (local.last_order if local else "") or "",
+        "price_tier": live.get("price_tier", ""),
+        "novelty": live.get("novelty_score", ""),
+        # live-owned affinity
+        "category_affinity": live.get("category_affinity", {}),
+        "brand_affinity": live.get("brand_affinity", {}),
+        "bucket_mix": live.get("bucket_mix", {}),
+        # shared — live then analytics
+        "top_categories": live.get("top_categories") or (local.top_categories if local else []) or [],
+        "favorites": live.get("favorites") or (local.favorites if local else []) or [],
+        "top_brand": live.get("top_brand") or (local.top_brand if local else "") or "",
+        "purchase_count": live.get("purchase_count") or (len(local.favorites or []) if local else 0) or 0,
+        "has_analytics": bool(local), "has_live": bool(live),
     }
 
 
 @staff_member_required
 def customers_list(request):
-    """Searchable, paginated customer browse — LIVE from budtender, with a local-snapshot fallback."""
+    """Searchable, paginated roster — the analytics snapshot (rich), budtender-live fallback."""
+    from crm.models import CustomerProfile
     from voice.budtender_client import budtender
 
     q = (request.GET.get("q") or "").strip()
     page_no = _bounded_int(request.GET.get("page"), default=1, lo=1, hi=10_000_000)
     offset = (page_no - 1) * PER_PAGE
 
-    bt = budtender().list_customers(q=q, limit=PER_PAGE, offset=offset)
-    if bt.get("ok"):
-        rows = [_row_from_bt(c) for c in bt.get("customers", [])]
-        total, source = bt.get("total", len(rows)), "live"
-    else:
-        # Fallback: the local imported snapshot (budtender unreachable).
-        from crm.models import CustomerProfile
-
-        qs = CustomerProfile.objects.all()
-        if q:
-            qs = qs.filter(name__icontains=q)
-        total = qs.count()
+    qs = CustomerProfile.objects.all()
+    if q:
+        qs = qs.filter(name__icontains=q)
+    total = qs.count()
+    if total:
         rows = [_row_from_local(p) for p in qs.order_by("-total_spend", "id")[offset:offset + PER_PAGE]]
-        source = "snapshot"
+        source = "analytics"
+    else:
+        # No snapshot loaded → fall back to budtender's live roster.
+        bt = budtender().list_customers(q=q, limit=PER_PAGE, offset=offset)
+        rows = [_row_from_bt(c) for c in bt.get("customers", [])]
+        total = bt.get("total", len(rows))
+        source = "live" if bt.get("ok") else "empty"
 
     num_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
     return render(request, "dashboard/customers.html", {
@@ -967,32 +979,33 @@ def customers_list(request):
 
 @staff_member_required
 def customer_detail(request, pk: int):
-    """One customer: full LIVE profile (budtender) + the personalized suggestion feed; snapshot
-    fallback when budtender is unreachable."""
+    """One customer: the analytics profile MERGED with budtender's live affinities (joined by name),
+    plus the personalized feed. Falls back to budtender-only when there's no snapshot row."""
     from types import SimpleNamespace
 
     from crm import suggestions
+    from crm.models import CustomerProfile
     from voice.budtender_client import budtender
 
-    c = budtender().get_customer(customer_id=pk)
-    source = "live"
-    if c is None:
-        # Fallback to the local snapshot row of the same id (budtender unreachable / not found).
-        from crm.models import CustomerProfile
-
-        local = CustomerProfile.objects.filter(pk=pk).first()
-        if not local:
+    local = CustomerProfile.objects.filter(pk=pk).first()
+    if local:
+        live = budtender().get_customer(name=local.name or local.customer_key)  # enrich by name
+        detail = _merge_detail(local, live)
+        source = "both" if live else "analytics"
+    else:
+        # No snapshot row → the id came from the budtender-live roster fallback; fetch by id.
+        live = budtender().get_customer(customer_id=pk)
+        if not live:
             from django.http import Http404
 
             raise Http404("customer not found")
-        detail, source = _detail_from_local(local), "snapshot"
-    else:
-        detail = _detail_from_bt(c)
+        detail = _merge_detail(None, live)
+        source = "live"
 
     feed_input = SimpleNamespace(
-        favorites=detail.get("favorites", []), top_categories=detail.get("top_categories", []),
-        tier_by_category=detail.get("tier_by_category", {}), orders=detail.get("orders", 0) or 0,
-        persona=detail.get("persona", ""),
+        favorites=detail["favorites"], top_categories=detail["top_categories"],
+        tier_by_category=detail["tier_by_category"], orders=detail["orders"] or 0,
+        persona=detail["persona"],
     )
     feed = suggestions.build_feed(feed_input, baskets_index=_baskets_index())
     return render(request, "dashboard/customer_detail.html",

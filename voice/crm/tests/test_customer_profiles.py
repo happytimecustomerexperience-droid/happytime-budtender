@@ -92,10 +92,10 @@ class _FakeBT:
              "price_tier": "top", "top_categories": [{"category": "flower", "share": 0.6}]},
         ]}
 
-    def get_customer(self, *, customer_id=None, phone=None):
+    def get_customer(self, *, customer_id=None, phone=None, name=None):
         if not self.ok:
             return None
-        return {"id": 7, "name": "Live Larry", "total_orders": 9, "price_tier": "top",
+        return {"id": 7, "name": name or "Live Larry", "total_orders": 9, "price_tier": "top",
                 "novelty_score": 0.4, "top_categories": [{"category": "flower", "share": 0.6}],
                 "favorites": [{"product": "Blue Dream 3.5g", "brand": "Acme", "category": "flower", "units": 5}],
                 "category_affinity": {"flower": 0.6}, "brand_affinity": {"Acme": 1.0},
@@ -103,42 +103,47 @@ class _FakeBT:
 
 
 @pytest.mark.django_db
-def test_customers_pages_render_live_from_budtender(client, django_user_model, monkeypatch):
+def test_list_analytics_primary_detail_merges_live(client, django_user_model, monkeypatch):
+    """Roster = analytics snapshot (rich RFM); detail MERGES analytics + budtender live by name."""
+    from crm.models import CustomerProfile
     from voice import budtender_client
     monkeypatch.setattr(budtender_client, "budtender", lambda: _FakeBT(ok=True))
 
     staff = django_user_model.objects.create_user("st", password="x", is_staff=True, is_superuser=True)
     client.force_login(staff)
+    c = CustomerProfile.objects.create(customer_key="Live Larry", name="Live Larry", orders=4,
+                                       total_spend=500, segment="Loyalist",
+                                       favorites=[{"product": "Old Fav", "units": 2}],
+                                       top_categories=[{"category": "edible", "share": 40}])
 
-    resp = client.get(reverse("dash-customers"))
+    resp = client.get(reverse("dash-customers"))  # analytics-primary roster
     assert resp.status_code == 200
     assert b"Live Larry" in resp.content
-    assert b"live" in resp.content  # the live source badge
+    assert b"analytics" in resp.content
 
-    resp = client.get(reverse("dash-customer-detail", args=[7]))
+    resp = client.get(reverse("dash-customer-detail", args=[c.pk]))
     assert resp.status_code == 200
-    assert b"Live Larry" in resp.content
-    assert b"Blue Dream" in resp.content       # favorite from the live profile
+    assert b"Loyalist" in resp.content       # analytics RFM segment
+    assert b"Blue Dream" in resp.content      # live favorite (preferred over the analytics one)
+    assert b"flower" in resp.content          # live affinity merged in
     assert b"Personalized feed" in resp.content
 
 
 @pytest.mark.django_db
-def test_customers_pages_fall_back_to_local_snapshot(client, django_user_model, monkeypatch):
-    from crm.models import CustomerProfile
+def test_falls_back_to_budtender_live_when_no_snapshot(client, django_user_model, monkeypatch):
     from voice import budtender_client
-    monkeypatch.setattr(budtender_client, "budtender", lambda: _FakeBT(ok=False))  # budtender down
+    monkeypatch.setattr(budtender_client, "budtender", lambda: _FakeBT(ok=True))
 
     staff = django_user_model.objects.create_user("st", password="x", is_staff=True, is_superuser=True)
     client.force_login(staff)
-    c = CustomerProfile.objects.create(customer_key="Jane Doe", name="Jane Doe", orders=5,
-                                       total_spend=400, segment="Active",
-                                       favorites=[{"product": "X", "units": 3}])
-
+    # No analytics snapshot rows → the roster falls back to budtender's live customers.
     resp = client.get(reverse("dash-customers"))
     assert resp.status_code == 200
-    assert b"Jane Doe" in resp.content
-    assert b"snapshot" in resp.content  # the fallback badge
+    assert b"Live Larry" in resp.content
+    assert b"live" in resp.content
 
-    resp = client.get(reverse("dash-customer-detail", args=[c.pk]))
+    resp = client.get(reverse("dash-customer-detail", args=[7]))  # budtender id
     assert resp.status_code == 200
+    assert b"Live Larry" in resp.content
+    assert b"Blue Dream" in resp.content
     assert b"Personalized feed" in resp.content
