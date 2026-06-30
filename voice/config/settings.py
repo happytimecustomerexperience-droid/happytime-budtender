@@ -201,6 +201,10 @@ STAFF_ALERT_EMAIL_PULLMAN = os.environ.get("STAFF_ALERT_EMAIL_PULLMAN", "")
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 SLACK_ALERTS_ENABLED = _env_bool("SLACK_ALERTS_ENABLED", "0")
 
+# ── n8n (optional outbound automation sink; P6) — POST each call event here ───
+# Set from the credentials editor (or .env). Empty → the n8n sink is skipped.
+N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "")
+
 # ── Security hardening / PII (03-CONVENTIONS.md §3.9) ─────────────────
 # Phone-hash pepper for returning-caller recognition — MUST differ from SECRET_KEY.
 PHONE_HASH_PEPPER = os.environ.get("PHONE_HASH_PEPPER", "dev-pepper-change-me")

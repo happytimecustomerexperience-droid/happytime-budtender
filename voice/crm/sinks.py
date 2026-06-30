@@ -21,9 +21,10 @@ from __future__ import annotations
 import json
 import logging
 import urllib.request
+from html import escape
 
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
 
 from voice import outcomes
 
@@ -49,6 +50,83 @@ def _recipients_for(store: str) -> list[str]:
 def _is_immediate(voice_call) -> bool:
     """Whether this call warrants an immediate (URGENT) alert — escalation/vendor/defective."""
     return outcomes.is_immediate_alert(voice_call.outcome or "", voice_call.reason or "")
+
+
+def _safe_text(value, default: str = "") -> str:
+    """Email-safe text with the same no-cost/no-margin wall as spoken tool results."""
+    from voice import guardrails
+
+    text = str(value or default)
+    scrubbed = guardrails.scrub_leak(text)
+    if isinstance(scrubbed, dict):
+        return "[redacted: leak blocked]"
+    return scrubbed
+
+
+def _conversation_lines(voice_call) -> list[str]:
+    """Full conversation log for staff: VoiceTurn rows first, transcript fallback second."""
+    turns = list(voice_call.turns.order_by("seq"))
+    if turns:
+        lines = []
+        for t in turns:
+            text = _safe_text(t.text)
+            tool = _safe_text(t.tool_name)
+            if not text and not tool:
+                continue
+            label = (t.role or "turn").upper()
+            if tool:
+                label = f"{label} [{tool}]"
+            lines.append(f"{label}: {text or '(tool call)'}")
+        return lines
+    transcript = _safe_text(getattr(voice_call, "transcript", ""))
+    return [transcript] if transcript else ["(no transcript captured)"]
+
+
+def _text_body(voice_call, transfer: str, reason_line: str) -> str:
+    conversation = "\n".join(_conversation_lines(voice_call))
+    return (
+        f"New voice call - {voice_call.store or '-'}.\n"
+        f"Outcome: {voice_call.outcome or '-'}{reason_line}\n"
+        f"Caller (hashed): {(voice_call.caller_phone_hash or '-')[:12]}...\n"
+        f"Duration: {voice_call.duration_s or '-'}s\n"
+        f"Human requested: {voice_call.human_requested_count}x\n"
+        f"Transfer: {transfer}\n\n"
+        f"Summary:\n{_safe_text(voice_call.ai_summary, '(none)')}\n\n"
+        f"Conversation log:\n{conversation}\n\n"
+        f"Call id: {voice_call.call_id}   logged {voice_call.created_at}\n"
+    )
+
+
+def _html_body(voice_call, transfer: str, reason_line: str, immediate: bool) -> str:
+    rows = []
+    for line in _conversation_lines(voice_call):
+        role, _, text = line.partition(":")
+        rows.append(
+            f"<tr><td>{escape(role)}</td><td>{escape(text.strip() if text else role)}</td></tr>"
+        )
+    badge = "URGENT" if immediate else "Call"
+    return f"""<!doctype html>
+<html>
+  <body style="font-family:Arial,sans-serif;color:#1f2933;line-height:1.45">
+    <h2>Happy Time voice alert</h2>
+    <p><strong>{escape(badge)}</strong> - {escape(voice_call.store or 'store')} - {escape(voice_call.outcome or 'call')}</p>
+    <table cellpadding="6" cellspacing="0" style="border-collapse:collapse">
+      <tr><td><strong>Reason</strong></td><td>{escape(reason_line.strip() or '-')}</td></tr>
+      <tr><td><strong>Caller hash</strong></td><td>{escape((voice_call.caller_phone_hash or '-')[:12])}</td></tr>
+      <tr><td><strong>Duration</strong></td><td>{escape(str(voice_call.duration_s or '-'))}s</td></tr>
+      <tr><td><strong>Human requested</strong></td><td>{voice_call.human_requested_count}x</td></tr>
+      <tr><td><strong>Transfer</strong></td><td>{escape(transfer)}</td></tr>
+      <tr><td><strong>Call id</strong></td><td>{escape(voice_call.call_id)}</td></tr>
+    </table>
+    <h3>Summary</h3>
+    <p>{escape(_safe_text(voice_call.ai_summary, '(none)'))}</p>
+    <h3>Conversation log</h3>
+    <table cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+      <tr><th align="left">Role</th><th align="left">Message</th></tr>
+      {''.join(rows)}
+    </table>
+  </body>
+</html>"""
 
 
 class Sink:
@@ -85,7 +163,7 @@ class EmailSink(Sink):
             f"[Happy Time voice] {voice_call.store or 'store'} — "
             f"{voice_call.outcome or 'call'}{urgent}"
         )
-        reason_line = f"  (reason: {voice_call.reason})" if voice_call.reason else ""
+        reason_line = f"  (reason: {_safe_text(voice_call.reason)})" if voice_call.reason else ""
         transfer = (
             f"{voice_call.transfer_disposition or '—'} ({voice_call.transfer_number_key or '—'})"
         )
@@ -99,13 +177,15 @@ class EmailSink(Sink):
             f"Summary:\n{voice_call.ai_summary or '(none)'}\n\n"
             f"Call id: {voice_call.call_id}   ·   logged {voice_call.created_at}\n"
         )
-        send_mail(
+        body = _text_body(voice_call, transfer, reason_line)
+        msg = EmailMultiAlternatives(
             subject=subject[:120],
-            message=body,
+            body=body,
             from_email=getattr(settings, "LEAD_EMAIL_FROM", "bot@happytimeweed.com"),
-            recipient_list=recipients,
-            fail_silently=False,
+            to=recipients,
         )
+        msg.attach_alternative(_html_body(voice_call, transfer, reason_line, immediate), "text/html")
+        msg.send(fail_silently=False)
 
 
 class SlackSink(Sink):
@@ -124,8 +204,8 @@ class SlackSink(Sink):
         block = {
             "store": voice_call.store or "store",
             "outcome": voice_call.outcome or "call",
-            "reason": voice_call.reason or "",
-            "summary": voice_call.ai_summary or "(no summary)",
+            "reason": _safe_text(voice_call.reason),
+            "summary": _safe_text(voice_call.ai_summary, "(no summary)"),
             "call_id": voice_call.call_id,
         }
         data = json.dumps({"text": json.dumps(block)}).encode()
@@ -137,7 +217,43 @@ class SlackSink(Sink):
                 raise RuntimeError(f"slack HTTP {r.status}")
 
 
-SINKS: list[Sink] = [DBSink(), EmailSink(), SlackSink()]
+class N8nSink(Sink):
+    """POST a leak-safe call event to a configured n8n webhook (P6). Fires on EVERY call when
+    ``N8N_WEBHOOK_URL`` is set (the credentials editor surfaces it) — n8n owns the downstream
+    automation (CRM sync, SMS, sheets, etc.). Leak-safe: VoiceCall carries no cost/margin; the
+    caller is the peppered hash, never a raw number (PII discipline)."""
+
+    name = "n8n"
+
+    def enabled(self, voice_call) -> bool:
+        # The credentials editor applies N8N_WEBHOOK_URL to settings (and os.environ) on save.
+        return bool(getattr(settings, "N8N_WEBHOOK_URL", ""))
+
+    def deliver(self, voice_call) -> None:
+        url = settings.N8N_WEBHOOK_URL
+        payload = {
+            "event": "voice_call",
+            "call_id": voice_call.call_id,
+            "store": voice_call.store or "",
+            "outcome": voice_call.outcome or "",
+            "reason": voice_call.reason or "",
+            "escalated": bool(voice_call.escalated),
+            "human_requested": voice_call.human_requested_count,
+            "duration_s": voice_call.duration_s,
+            "caller_hash": (voice_call.caller_phone_hash or "")[:16],
+            "suggested_skus": list(voice_call.suggested_skus or []),
+            "summary": _safe_text(voice_call.ai_summary, ""),
+        }
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 (config-supplied URL)
+            if r.status >= 300:
+                raise RuntimeError(f"n8n HTTP {r.status}")
+
+
+SINKS: list[Sink] = [DBSink(), EmailSink(), SlackSink(), N8nSink()]
 
 
 def dispatch(voice_call) -> dict[str, str]:
