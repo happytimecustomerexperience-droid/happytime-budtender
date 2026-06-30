@@ -31,8 +31,10 @@
    tool-call timeline from Vapi (`GET /call/{id}`) via the call-detail "Fetch full conversation"
    button or `manage.py full_conversation <call_id>`.
 
-7. **n8n** — set `N8N_WEBHOOK_URL` (credentials page) and every call POSTs a leak-safe event to your
-   n8n webhook (`N8nSink`), so n8n can drive downstream automation.
+7. **n8n** — two directions: (a) set `N8N_WEBHOOK_URL` (credentials page) and every call POSTs a
+   leak-safe event to your n8n webhook (`N8nSink`); (b) the bot-callable `notify_n8n` tool lets an
+   assistant trigger an n8n workflow mid-call for a caller-requested follow-up (bind it to a bot
+   from the Agents page — binding a new tool auto-provisions it on the next publish).
 
 8. **Customer intelligence** (`/dashboard/customers/`) — rich per-customer profiles (RFM, spend,
    persona, category/tier affinities, favorite SKUs, shopping rhythm) + a personalized suggestion
@@ -51,6 +53,16 @@
   `uv run python manage.py seed_kb`, then **Publish to Vapi** (or just save a prompt — auto-publish).
 - A Django-settings credential changed from the UI is live immediately; a process restart re-reads
   `.env` first, then re-applies DB credentials on the first request.
+
+## Verification
+- 434 offline tests green; `ruff` clean; `makemigrations --check` clean; `manage.py check` clean.
+- Booted locally on SQLite (`HHT_SQLITE_PATH`), imported 400 real customer profiles, and confirmed
+  every new page renders 200 with real data (agents, credentials, customers + a real profile, call
+  detail with tool calls).
+- A 20-agent adversarial review of the P6 diff produced 12 confirmed findings (all medium/low),
+  all fixed — chiefly **PII-redaction parity** (the transcript was masked, but the fetched summary,
+  tool-call results, the n8n outbound summary, and the eocr transcript path now share one masker)
+  and a units→TypeError crash on the customer page. See commit 8116936.
 
 ## ADR-024 — Vapi assistant model = Gemini 2.5 Flash (supersedes ADR-010)
 Owner direction (2026-06-30): the squad assistants run **google / gemini-2.5-flash**, editable
