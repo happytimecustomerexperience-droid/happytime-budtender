@@ -26,7 +26,7 @@ from urllib.parse import urlencode
 
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.paginator import Paginator
-from django.http import JsonResponse
+from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -884,6 +884,41 @@ def call_transcript(request, pk: int):
 def escalation_review(request):
     """The call log pre-filtered to escalation outcomes (a thin wrapper over ``call_log``)."""
     return call_log(request, _outcomes=["escalation"])
+
+
+# ── Credentials editor (P6) ───────────────────────────────────────────────────
+@staff_member_required
+def credentials_page(request):
+    """The credentials/config editor — every secret + integration config in one place, masked."""
+    from . import credentials as cred
+
+    return render(request, "dashboard/credentials.html", {"groups": cred.catalog_with_values()})
+
+
+@staff_member_required
+@require_POST
+def credentials_save(request):
+    """Inline-save one credential. Applies it live (os.environ + settings) and re-renders the row."""
+    from . import credentials as cred
+
+    name = (request.POST.get("name") or "").strip()
+    if not cred.is_known(name):
+        return HttpResponseBadRequest("unknown credential")
+    value = request.POST.get("value", "")
+    # Blank submit = "keep existing" (the placeholder says so) — never silently wipe a set secret.
+    # To CLEAR a credential, delete the row in Django admin (ponytail: clearing is rare).
+    saved = False
+    if value != "":
+        cred.set_credential(name, value)
+        saved = True
+
+    entry = cred._CATALOG_BY_NAME[name]
+    val = cred.current_value(name)
+    item = {**entry, "is_set": bool(val), "preview": cred.mask(val) if entry["secret"] else val}
+    resp = render(request, "dashboard/_credential_row.html", {"c": item, "saved": saved})
+    if saved:
+        resp["HX-Trigger"] = _toast("success", f"{entry['label']} saved — live now ✓")
+    return resp
 
 
 # ── Specials / hours editor (14-P4 item 5) ─────────────────────────────────────

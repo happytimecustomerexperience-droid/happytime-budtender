@@ -33,6 +33,27 @@ DEFAULT_W_KNOWN = {
 }
 
 
+class Credential(models.Model):
+    """A dashboard-editable secret/config value (P6 "configure everything, incl. credentials").
+
+    Stored in the DB and applied to BOTH ``os.environ[name]`` and ``settings.<name>`` on save +
+    on app startup (``DashboardConfig.ready``), so a change is live for os.environ readers (the
+    Vapi client) AND Django-settings readers (transfer numbers, SMTP, budtender token) without an
+    env-file edit or redeploy. ``name`` is the canonical ENV/settings var name. The value is NEVER
+    rendered in cleartext (the dashboard masks it). Env/.env remains the bootstrap default; a
+    Credential row is the override layer on top."""
+
+    name = models.CharField(max_length=64, unique=True)  # ENV var name e.g. VAPI_PRIVATE_KEY
+    value = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return f"Credential<{self.name}>"
+
+
 class RankingWeights(models.Model):
     """Singleton (pk=1) — the owner's ranking-weight levers, pushed to budtender (§4.6)."""
 

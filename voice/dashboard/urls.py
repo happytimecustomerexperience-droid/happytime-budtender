@@ -33,6 +33,9 @@ urlpatterns = [
     path("specials-hours/", views.specials_hours, name="dash-specials-hours"),
     # ranking weights
     path("weights/", views.weights_tuner, name="dash-weights"),
+    # credentials / config editor
+    path("credentials/", views.credentials_page, name="dash-credentials"),
+    path("credentials/save", views.credentials_save, name="dash-credentials-save"),
     # calls
     path("calls/", views.call_monitor, name="dash-calls"),
     path("calls/history/", views.conversation_history, name="dash-conversation-history"),

@@ -29,6 +29,8 @@ DASH_ROUTES = [
     ("dash-kb-row-delete", {"pk": 1}),
     ("dash-specials-hours", {}),
     ("dash-weights", {}),
+    ("dash-credentials", {}),
+    ("dash-credentials-save", {}),
     ("dash-calls", {}),
     ("dash-conversation-history", {}),
     ("dash-call-log", {}),
