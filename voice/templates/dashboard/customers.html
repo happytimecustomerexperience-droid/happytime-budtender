@@ -1,0 +1,53 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Customers — Happy Time Voice{% endblock %}
+{% block content %}
+<div class="row between">
+  <div><h1>Customers</h1><p class="muted">{{ total }} profiles · POS customer intelligence. The
+  budtender persona personalizes live calls from this same history (via budtender, by phone).</p></div>
+</div>
+
+{% if total == 0 %}
+<div class="card muted">
+  No customer profiles yet. Import them:
+  <pre style="white-space:pre-wrap">uv run python manage.py import_customer_profiles --customers /path/to/customers.json</pre>
+  (the export carries customer names, so it's loaded by the owner, not committed.)
+</div>
+{% else %}
+<form method="get" class="row" style="gap:8px;margin-bottom:12px">
+  <input type="search" name="q" value="{{ q }}" placeholder="Search by name…" style="flex:1">
+  <select name="segment">
+    <option value="">All segments</option>
+    {% for s in segments %}<option value="{{ s }}" {% if s == segment %}selected{% endif %}>{{ s }}</option>{% endfor %}
+  </select>
+  <button class="btn btn-primary" type="submit">Search</button>
+</form>
+
+<div class="card">
+  <table style="width:100%">
+    <thead><tr><th>Customer</th><th>Segment</th><th>Orders</th><th>Spend</th><th>AOV</th><th>Recency</th><th>Top category</th></tr></thead>
+    <tbody>
+      {% for c in page %}
+      <tr>
+        <td><a href="{% url 'dash-customer-detail' c.pk %}"><strong>{{ c.name|default:c.customer_key }}</strong></a>
+          {% if c.persona %}<br><span class="muted" style="font-size:12px">{{ c.persona }}</span>{% endif %}</td>
+        <td><span class="badge slate">{{ c.segment|default:'—' }}</span></td>
+        <td>{{ c.orders }}</td>
+        <td>${{ c.total_spend|floatformat:0 }}</td>
+        <td>${{ c.aov|floatformat:0 }}</td>
+        <td>{{ c.recency_days|default:'—' }}d</td>
+        <td>{% if c.top_categories %}{{ c.top_categories.0.category|default:'—' }}{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="row between" style="margin-top:10px">
+  <span class="muted">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+  <span>
+    {% if page.has_previous %}<a class="btn" href="?q={{ q }}&segment={{ segment }}&page={{ page.previous_page_number }}">← Prev</a>{% endif %}
+    {% if page.has_next %}<a class="btn" href="?q={{ q }}&segment={{ segment }}&page={{ page.next_page_number }}">Next →</a>{% endif %}
+  </span>
+</div>
+{% endif %}
+{% endblock %}

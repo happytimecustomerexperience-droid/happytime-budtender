@@ -127,6 +127,64 @@ class VendorCallback(models.Model):
         self.save(update_fields=["status", "updated_at"])
 
 
+class CustomerProfile(models.Model):
+    """Staff-facing customer intelligence imported from the POS analytics export (P6).
+
+    This is the dashboard's "Customers" browse — the rich per-customer history (RFM, spend,
+    persona, category/brand affinities, favorite SKUs, shopping rhythm) that mirrors what the
+    budtender persona uses to personalize a live call. It is DISTINCT from the phone-hash call log:
+    the live call-time personalization runs through the budtender service by phone (never stored
+    here); this table is the historical CRM view staff browse. Names are POS-sourced and
+    staff-visible (the same names staff see in Dutchie); it carries NO phone number.
+
+    Imported by ``manage.py import_customer_profiles`` from the analytics ``customers.json`` +
+    ``baskets.json``. Keyed by a stable ``customer_key`` (the POS customer key/name) so a re-import
+    upserts in place. Leak-safe: no cost/margin column — only customer-facing spend aggregates."""
+
+    customer_key = models.CharField(max_length=160, unique=True, db_index=True)
+    name = models.CharField(max_length=160, blank=True)
+    orders = models.IntegerField(default=0)
+    total_spend = models.FloatField(default=0.0)
+    aov = models.FloatField(default=0.0)
+    recency_days = models.IntegerField(null=True, blank=True)
+    cadence_days = models.IntegerField(null=True, blank=True)  # avg days between orders (replenish)
+    segment = models.CharField(max_length=40, blank=True, db_index=True)  # RFM segment
+    persona = models.CharField(max_length=80, blank=True)
+    cohort_month = models.CharField(max_length=16, blank=True)
+    medical_share = models.FloatField(default=0.0)
+    is_medical = models.BooleanField(default=False)
+    top_brand = models.CharField(max_length=120, blank=True)
+    top_vendor = models.CharField(max_length=120, blank=True)
+    first_order = models.CharField(max_length=32, blank=True)
+    last_order = models.CharField(max_length=32, blank=True)
+    # JSON detail (present for all on the basic import; richer for the top-spend cohort).
+    top_categories = models.JSONField(default=list, blank=True)  # [{category,revenue,share}]
+    tier_by_category = models.JSONField(default=dict, blank=True)  # {cat: Bottom|Middle|Top}
+    favorites = models.JSONField(default=list, blank=True)  # topSkus [{product,units,orders,...}]
+    favorite_brands = models.JSONField(default=list, blank=True)
+    hourly_pattern = models.JSONField(default=list, blank=True)  # [24]
+    day_pattern = models.JSONField(default=list, blank=True)  # [7]
+    store_affinity = models.JSONField(default=list, blank=True)  # [{location,revenue}]
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-total_spend", "customer_key"]
+        indexes = [models.Index(fields=["-total_spend"]), models.Index(fields=["segment"])]
+
+    def __str__(self) -> str:
+        return f"CustomerProfile<{self.name or self.customer_key}>"
+
+    def intent(self) -> str:
+        """A coarse call-intent hint from recency vs cadence: due-to-replenish / lapsing / browsing."""
+        if self.recency_days is None or not self.cadence_days:
+            return "new" if self.orders <= 1 else "browsing"
+        if self.recency_days >= self.cadence_days * 3:
+            return "lapsing"
+        if self.recency_days >= self.cadence_days:
+            return "due to replenish"
+        return "recent"
+
+
 class AlertDelivery(models.Model):
     """The per-(voice_call, sink) idempotency ledger for staff alerts (12-P2 §4.2).
 

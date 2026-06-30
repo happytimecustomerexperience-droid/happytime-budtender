@@ -31,6 +31,8 @@ DASH_ROUTES = [
     ("dash-weights", {}),
     ("dash-credentials", {}),
     ("dash-credentials-save", {}),
+    ("dash-customers", {}),
+    ("dash-customer-detail", {"pk": 1}),
     ("dash-calls", {}),
     ("dash-conversation-history", {}),
     ("dash-call-log", {}),

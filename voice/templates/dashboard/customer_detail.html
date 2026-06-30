@@ -1,0 +1,75 @@
+{% extends "dashboard/base.html" %}
+{% block title %}{{ c.name|default:c.customer_key }} — Customer{% endblock %}
+{% block content %}
+<p class="muted"><a href="{% url 'dash-customers' %}">← Customers</a></p>
+<div class="row between">
+  <h1>{{ c.name|default:c.customer_key }}</h1>
+  <span class="badge {% if c.intent == 'due to replenish' %}green{% elif c.intent == 'lapsing' %}amber{% else %}slate{% endif %}">{{ c.intent }}</span>
+</div>
+
+<div class="grid" style="grid-template-columns:repeat(4,1fr);gap:10px">
+  <div class="card"><div class="muted">Orders</div><div style="font-size:24px"><strong>{{ c.orders }}</strong></div></div>
+  <div class="card"><div class="muted">Total spend</div><div style="font-size:24px"><strong>${{ c.total_spend|floatformat:0 }}</strong></div></div>
+  <div class="card"><div class="muted">Avg order</div><div style="font-size:24px"><strong>${{ c.aov|floatformat:0 }}</strong></div></div>
+  <div class="card"><div class="muted">Recency</div><div style="font-size:24px"><strong>{{ c.recency_days|default:'—' }}d</strong></div>{% if c.cadence_days %}<div class="muted" style="font-size:12px">≈{{ c.cadence_days }}d cadence</div>{% endif %}</div>
+</div>
+
+<div class="card">
+  <h2>Personalized feed <span class="muted">· what we'd lead with</span></h2>
+  {% if feed %}
+  <ol style="padding-left:18px">
+    {% for s in feed %}
+    <li style="margin-bottom:8px">
+      <strong>{{ s.title }}</strong>
+      <span class="badge slate" style="font-size:11px">{{ s.kind }}</span>
+      <span class="badge {% if s.confidence == 'high' %}green{% elif s.confidence == 'medium' %}amber{% else %}slate{% endif %}" style="font-size:11px">{{ s.confidence }}</span>
+      <div class="muted">{{ s.reason }}</div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}<p class="muted">Not enough history for a tailored feed — use staff favorites.</p>{% endif %}
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr;gap:10px">
+  <div class="card">
+    <h2>Profile</h2>
+    <table>
+      <tr><th>Segment</th><td>{{ c.segment|default:'—' }}</td></tr>
+      <tr><th>Persona</th><td>{{ c.persona|default:'—' }}</td></tr>
+      <tr><th>Cohort</th><td>{{ c.cohort_month|default:'—' }}</td></tr>
+      <tr><th>Medical</th><td>{{ c.medical_share|floatformat:0 }}%</td></tr>
+      <tr><th>Top brand</th><td>{{ c.top_brand|default:'—' }}</td></tr>
+      <tr><th>Top vendor</th><td>{{ c.top_vendor|default:'—' }}</td></tr>
+      <tr><th>First / last</th><td>{{ c.first_order|default:'—' }} → {{ c.last_order|default:'—' }}</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h2>Category mix</h2>
+    {% if c.top_categories %}
+    <ul style="list-style:none;padding:0">
+      {% for cat in c.top_categories %}
+      <li class="row between"><span>{{ cat.category|default:'—' }}</span><span class="muted">{% if cat.share %}{{ cat.share|floatformat:0 }}%{% endif %}</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="muted">—</p>{% endif %}
+    {% if c.tier_by_category %}<h3 style="margin-top:10px">Tier by category</h3>
+    <div class="row" style="flex-wrap:wrap;gap:6px">
+      {% for cat, tier in c.tier_by_category.items %}<span class="badge slate">{{ cat }}: {{ tier }}</span>{% endfor %}
+    </div>{% endif %}
+  </div>
+</div>
+
+{% if c.favorites %}
+<div class="card">
+  <h2>Favorite products</h2>
+  <table style="width:100%">
+    <thead><tr><th>Product</th><th>Brand</th><th>Units</th><th>Orders</th></tr></thead>
+    <tbody>
+      {% for f in c.favorites %}
+      <tr><td>{{ f.product|default:'—' }}</td><td>{{ f.brand|default:'—' }}</td><td>{{ f.units|default:'—' }}</td><td>{{ f.orders|default:'—' }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

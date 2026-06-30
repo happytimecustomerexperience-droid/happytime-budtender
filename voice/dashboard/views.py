@@ -886,6 +886,69 @@ def escalation_review(request):
     return call_log(request, _outcomes=["escalation"])
 
 
+# ── Customer intelligence browse (P6) ─────────────────────────────────────────
+@staff_member_required
+def customers_list(request):
+    """Searchable, paginated customer-profile browse (imported POS intelligence)."""
+    from crm.models import CustomerProfile
+
+    q = (request.GET.get("q") or "").strip()
+    seg = (request.GET.get("segment") or "").strip()
+    qs = CustomerProfile.objects.all()
+    if q:
+        qs = qs.filter(name__icontains=q)
+    if seg:
+        qs = qs.filter(segment=seg)
+    page = Paginator(qs, PER_PAGE).get_page(request.GET.get("page"))
+    segments = (
+        CustomerProfile.objects.exclude(segment="")
+        .values_list("segment", flat=True)
+        .distinct()
+        .order_by("segment")
+    )
+    return render(
+        request,
+        "dashboard/customers.html",
+        {"page": page, "q": q, "segment": seg, "segments": segments,
+         "total": CustomerProfile.objects.count()},
+    )
+
+
+@staff_member_required
+def customer_detail(request, pk: int):
+    """One customer: full profile + the personalized suggestion feed."""
+    from crm import suggestions
+    from crm.models import CustomerProfile
+
+    c = get_object_or_404(CustomerProfile, pk=pk)
+    feed = suggestions.build_feed(c, baskets_index=_baskets_index())
+    return render(request, "dashboard/customer_detail.html", {"c": c, "feed": feed})
+
+
+# Lazily-loaded frequently-bought-with index (optional; only if the owner dropped baskets.json in).
+_BASKETS_CACHE: dict | None = None
+
+
+def _baskets_index() -> dict | None:
+    """Load ``baskets.json``'s frequentlyBoughtWith map once from BASKETS_JSON_PATH if configured.
+    Optional — the feed degrades to favorites/tier/cold-start without it (ponytail: no hard dep)."""
+    global _BASKETS_CACHE
+    if _BASKETS_CACHE is not None:
+        return _BASKETS_CACHE or None
+    import os
+
+    path = os.environ.get("BASKETS_JSON_PATH", "")
+    if not path or not os.path.exists(path):
+        _BASKETS_CACHE = {}
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            _BASKETS_CACHE = (json.load(fh) or {}).get("frequentlyBoughtWith") or {}
+    except (OSError, ValueError):
+        _BASKETS_CACHE = {}
+    return _BASKETS_CACHE or None
+
+
 # ── Credentials editor (P6) ───────────────────────────────────────────────────
 @staff_member_required
 def credentials_page(request):

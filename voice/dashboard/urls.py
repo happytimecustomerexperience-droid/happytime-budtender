@@ -36,6 +36,9 @@ urlpatterns = [
     # credentials / config editor
     path("credentials/", views.credentials_page, name="dash-credentials"),
     path("credentials/save", views.credentials_save, name="dash-credentials-save"),
+    # customer intelligence browse
+    path("customers/", views.customers_list, name="dash-customers"),
+    path("customers/<int:pk>/", views.customer_detail, name="dash-customer-detail"),
     # calls
     path("calls/", views.call_monitor, name="dash-calls"),
     path("calls/history/", views.conversation_history, name="dash-conversation-history"),
