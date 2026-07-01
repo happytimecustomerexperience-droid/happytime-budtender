@@ -369,13 +369,25 @@ def get_transactions_detailed(location_slug: str, from_iso: str, to_iso: str) ->
     if start is None or end is None:          # unparseable → single best-effort call
         return _rows(_pos_get(key, "/reporting/transactions",
                               {"fromDateUTC": from_iso, "toDateUTC": to_iso, "includeDetail": "true"}))
+    def _fetch(a, b, depth=0):
+        chunk = _pos_get(key, "/reporting/transactions",
+                         {"fromDateUTC": a.isoformat(), "toDateUTC": b.isoformat(),
+                          "includeDetail": "true"})
+        if chunk is not None:
+            return _rows(chunk)
+        # Dutchie 500/timeout on this window (usually a heavy old month with includeDetail).
+        # Halve and retry a couple of times — recovers size/transient failures; give up
+        # gracefully on a genuinely broken slice so it never aborts a 20-year backfill.
+        if depth >= 2 or (b - a) <= timedelta(days=2):
+            logger.warning("transactions %s..%s skipped after retries", a.date(), b.date())
+            return []
+        mid = a + (b - a) / 2
+        return _fetch(a, mid, depth + 1) + _fetch(mid, b, depth + 1)
+
     out: list[dict] = []
     cur = start
     while cur < end:
         nxt = min(cur + timedelta(days=_TX_WINDOW_DAYS), end)
-        chunk = _pos_get(key, "/reporting/transactions",
-                         {"fromDateUTC": cur.isoformat(), "toDateUTC": nxt.isoformat(),
-                          "includeDetail": "true"})
-        out.extend(_rows(chunk))
+        out.extend(_fetch(cur, nxt))
         cur = nxt
     return out
