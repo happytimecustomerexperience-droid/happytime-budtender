@@ -1,6 +1,8 @@
 .env
 .env.dutchie
 .env.local
+stores.json
+stores.local.json
 .git
 __pycache__/
 *.pyc
