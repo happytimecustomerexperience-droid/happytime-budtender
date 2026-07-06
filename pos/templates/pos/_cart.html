@@ -1,0 +1,17 @@
+<span id="cart-badge" hx-swap-oob="true">{{ cart|length }}</span>
+{% if add_error %}<p class="err">{{ add_error }}</p>{% endif %}
+{% if cart %}
+{% for it in cart %}
+  <div class="line">
+    <span class="nm">{{ it.ProductDesc|default:it.ProductId }}<br><span class="muted">×{{ it.Cnt|default:1 }} · ${{ it.UnitPrice|floatformat:0 }}{% if it.Discount %} <span class="was">${{ it.RecUnitPrice|floatformat:0 }}</span> <span class="save">−${{ it.Discount|floatformat:0 }}</span>{% endif %}</span></span>
+    <form hx-post="{% url 'cart_remove' %}" hx-target="#cart">
+      <input type="hidden" name="idx" value="{{ forloop.counter0 }}">
+      <button class="xbtn">✕</button>
+    </form>
+  </div>
+{% endfor %}
+<div class="total"><span>Total</span><span>${{ cart_total|floatformat:2 }}</span></div>
+<p class="muted" style="font-size:12px;margin-top:4px">Live price · auto-discounts &amp; loyalty applied at checkout</p>
+{% else %}
+<p class="muted">Cart empty — add items from the menu.</p>
+{% endif %}

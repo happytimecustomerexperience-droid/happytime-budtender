@@ -1,5 +1,7 @@
 .env
 .env.dutchie
+stores.json
+stores.local.json
 *.pyc
 __pycache__/
 *.sqlite3

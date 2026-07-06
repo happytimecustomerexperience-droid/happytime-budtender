@@ -1,0 +1,114 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rollups · Budtender POS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="{% url 'screen' %}">HAPPY&nbsp;TIME</a>
+  <nav class="topnav">
+    <a class="navlink" href="{% url 'sessions' %}">Sessions</a>
+    <a class="navlink active" href="{% url 'sessions_rollups' %}">Rollups</a>
+    <a class="navlink" href="{% url 'insights_overview' %}">Insights</a>
+  </nav>
+  <span class="spacer"></span>
+  <a class="link" href="{% url 'screen' %}">← POS</a>
+</header>
+
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'screen' %}">Menu</a><span class="sep">›</span>
+  <a href="{% url 'sessions' %}">Sessions</a><span class="sep">›</span><span class="here">Rollups</span>
+</nav>
+
+<main>
+  <div class="detail">
+    <form class="filters" method="get">
+      <select name="win" aria-label="Window">
+        <option value="today" {% if f.win == 'today' %}selected{% endif %}>today</option>
+        <option value="7d" {% if f.win == '7d' %}selected{% endif %}>7d</option>
+        <option value="30d" {% if f.win == '30d' %}selected{% endif %}>30d</option>
+        <option value="all" {% if f.win == 'all' %}selected{% endif %}>all</option>
+      </select>
+      <button type="submit">Apply</button>
+    </form>
+
+    <div class="kpis">
+      <div class="kpi-pill"><div class="v">{{ metrics.visits|default:0 }}</div><div class="k">Visits</div></div>
+      <div class="kpi-pill"><div class="v">{{ metrics.checkouts|default:0 }}</div><div class="k">Checkouts</div></div>
+      <div class="kpi-pill"><div class="v">{{ metrics.checkout_rate|default:0 }}%</div><div class="k">Checkout rate</div></div>
+      <div class="kpi-pill"><div class="v">${{ metrics.revenue|default:0|floatformat:0 }}</div><div class="k">Revenue</div></div>
+    </div>
+
+    <div class="cols two">
+      <section class="section card">
+        <h2>Per budtender</h2>
+        <table class="rtable">
+          <thead><tr><th>Budtender</th><th class="num">Visits</th><th class="num">Checkout%</th><th class="num">Viewed</th><th class="num">Added</th><th class="num">Revenue</th></tr></thead>
+          <tbody>
+          {% for b in by_budtender %}
+            <tr><td>{{ b.budtender|default:"—" }}</td><td class="num">{{ b.visits }}</td>
+              <td class="num">{{ b.rate }}%</td><td class="num">{{ b.items_viewed|default:0 }}</td>
+              <td class="num">{{ b.items_added|default:0 }}</td>
+              <td class="num">{% if b.revenue %}${{ b.revenue|floatformat:0 }}{% else %}—{% endif %}</td></tr>
+          {% empty %}<tr><td colspan="6" class="muted">No data.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="section card">
+        <h2>Top customers</h2>
+        <table class="rtable">
+          <thead><tr><th>Customer</th><th class="num">Visits</th><th class="num">Bought</th><th class="num">Last seen</th></tr></thead>
+          <tbody>
+          {% for c in by_customer %}
+            <tr><td>{{ c.acct_name|default:c.acct_id }}</td><td class="num">{{ c.visits }}</td>
+              <td class="num">{{ c.bought }}</td><td class="num">{{ c.last|date:"M j" }}</td></tr>
+          {% empty %}<tr><td colspan="4" class="muted">No data.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
+
+    <div class="cols two">
+      <section class="section card">
+        <h2>Most looked-up products</h2>
+        <table class="rtable">
+          <thead><tr><th>Product</th><th class="num">Views</th></tr></thead>
+          <tbody>
+          {% for p in top_lookup %}<tr><td>{{ p.product_name }}</td><td class="num">{{ p.n }}</td></tr>
+          {% empty %}<tr><td colspan="2" class="muted">No data.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="section card">
+        <h2>Most suggested products</h2>
+        <table class="rtable">
+          <thead><tr><th>Product</th><th class="num">Times</th></tr></thead>
+          <tbody>
+          {% for p in top_suggested %}<tr><td>{{ p.product_name }}</td><td class="num">{{ p.n }}</td></tr>
+          {% empty %}<tr><td colspan="2" class="muted">No data.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
+
+    <section class="section card">
+      <h2>Top searches</h2>
+      {% for s in top_search %}<span class="chip">{{ s.detail }} <b>×{{ s.n }}</b></span>{% empty %}<p class="muted">No searches.</p>{% endfor %}
+    </section>
+    <section class="section card">
+      <h2>Tracked events</h2>
+      {% for e in by_event %}<span class="chip">{{ e.kind }} <b>x{{ e.n }}</b></span>{% empty %}<p class="muted">No events.</p>{% endfor %}
+    </section>
+  </div>
+</main>
+</body>
+</html>

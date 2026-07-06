@@ -1,0 +1,67 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Budtender POS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+  <script src="{% static 'pos/htmx.min.js' %}" defer></script>
+  <script src="{% static 'pos/app.js' %}" defer></script>
+</head>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+<header class="top">
+  <a class="logo" href="{% url 'screen' %}">HAPPY&nbsp;TIME</a>
+  <select name="store" id="store" hx-get="{% url 'menu' %}" hx-target="#menu" hx-trigger="change">
+    {% for s in stores %}<option value="{{ s }}" {% if s == active %}selected{% endif %}>{{ s|title }}</option>{% endfor %}
+  </select>
+  <span class="spacer"></span>
+  <button type="button" class="cartbtn" data-cart-open>🛒 Cart <span class="badge" id="cart-badge">{{ cart|length }}</span></button>
+  {% if acct_id %}
+    <a class="cust-chip" href="{% url 'customer' %}">👤 <b>{{ acct_name|default:"Guest" }}</b></a>
+  {% else %}
+    <span class="cust-chip">👤 <b>{{ acct_name|default:"Guest" }}</b></span>
+  {% endif %}
+  <a class="restartbtn" href="{% url 'end' %}" title="Start a new session">↺ Restart</a>
+  <a class="link" href="{% url 'my_stats' %}">My stats</a>
+  {% if request.user.is_staff %}<a class="link" href="{% url 'sessions' %}">Sessions</a><a class="link" href="{% url 'insights_overview' %}">Insights</a>{% endif %}
+  <a class="link" href="{% url 'logout' %}">Sign out</a>
+</header>
+
+<div class="customerbar">
+  <form hx-post="{% url 'scan' %}" hx-target="#profile" hx-encoding="multipart/form-data">
+    <input type="file" name="images" accept="image/*" capture="environment" multiple aria-label="Scan ID">
+    <button type="submit" class="ghost">Scan ID</button>
+  </form>
+  <form hx-post="{% url 'lookup' %}" hx-target="#guests"
+        hx-trigger="submit, keyup changed delay:350ms" class="grow ac-form">
+    <input class="grow" name="phone" placeholder="Search customer by phone…" inputmode="tel" autocomplete="off">
+    <button type="submit">Find</button>
+  </form>
+  <div id="guests" class="ac-results"></div>
+  <div id="profile">{% if not acct_id %}<span class="muted">No customer selected — scan or search, or continue as guest.</span>{% endif %}</div>
+</div>
+
+<main>
+  <div id="menu" hx-get="{% url 'menu' %}{% if initial_cat %}?cat={{ initial_cat }}{% endif %}" hx-trigger="load, customerChanged from:body">
+    <p class="muted">Loading menu…</p>
+  </div>
+</main>
+
+<!-- cart drawer -->
+<div id="cart-backdrop" data-cart-close></div>
+<aside id="cart-drawer" aria-label="Cart">
+  <div class="hd"><h2>Cart</h2><button type="button" class="ghost" data-cart-close>Close</button></div>
+  <div class="bd cart"><div id="cart">{% include "pos/_cart.html" %}</div></div>
+  <div class="ft">
+    <form hx-post="{% url 'cart_submit' %}" hx-target="#submit-result">
+      <button type="submit" class="submit">Submit → Ready for pickup</button>
+    </form>
+    <div id="submit-result" style="margin-top:8px"></div>
+  </div>
+</aside>
+</body>
+</html>

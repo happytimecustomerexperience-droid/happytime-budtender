@@ -7,8 +7,10 @@ cost/margin to any caller. DEBUG must stay False in production.
 """
 import json
 import os
+import sys
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -39,24 +41,55 @@ CSRF_TRUSTED_ORIGINS = [o.strip() for o in env("CSRF_TRUSTED_ORIGINS", "").split
 
 # Service token the website presents. Required in production.
 HHT_BACKEND_TOKEN = env("HHT_BACKEND_TOKEN", "")
+HHT_VOICE_BASE_URL = env("HHT_VOICE_BASE_URL", "")
+HHT_VOICE_TIMEOUT = int(env("HHT_VOICE_TIMEOUT", "5"))
+
+
+def _prod_guard_errors(secret_key: str, backend_token: str) -> list[str]:
+    errors = []
+    if secret_key == "insecure-dev-key-change-me":
+        errors.append("SECRET_KEY")
+    if not backend_token.strip():
+        errors.append("HHT_BACKEND_TOKEN")
+    return errors
 
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",
+    "django.contrib.sessions",       # POS staff login sessions
     "django.contrib.staticfiles",
     "rest_framework",
     "django_celery_beat",
     "budtender",
+    # ── merged-in POS (in-store register screens, own tables) ──
+    "pos",
+    "customers",
 ]
 
+# The DRF API stays token-only (no session auth → CSRF inert for /api/v1). The POS
+# HTML screens add sessions/auth/CSRF/CSP/whitenoise on top; both coexist in one app.
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",              # serve POS static at scale
+    "pos_core.security.ContentSecurityPolicyMiddleware",       # CSP header for the POS HTML
+    "django.contrib.sessions.middleware.SessionMiddleware",    # POS login
     "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",               # guards POS HTML forms only
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
 ROOT_URLCONF = "core.urls"
 WSGI_APPLICATION = "core.wsgi.application"
-TEMPLATES = [{"BACKEND": "django.template.backends.django.DjangoTemplates", "DIRS": [], "APP_DIRS": True, "OPTIONS": {}}]
+TEMPLATES = [{
+    "BACKEND": "django.template.backends.django.DjangoTemplates",
+    "DIRS": [],
+    "APP_DIRS": True,   # finds pos/templates/pos/*
+    "OPTIONS": {"context_processors": [
+        "django.template.context_processors.request",
+        "django.contrib.auth.context_processors.auth",
+    ]},
+}]
 
 DATABASES = {
     "default": {
@@ -75,6 +108,11 @@ DATABASES = {
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
+}
+LOGIN_URL = "login"  # POS staff screens are @login_required
 USE_TZ = True
 TIME_ZONE = "America/Los_Angeles"
 
@@ -93,10 +131,15 @@ CELERY_BROKER_URL = env("CELERY_BROKER_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = env("CELERY_BACKEND_URL", "redis://localhost:6379/0")
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_EAGER", False)
 
-REDIS_URL = env("REDIS_URL", "redis://localhost:6379/1")
-CACHES = {
-    "default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL}
-}
+# Cache: Redis when configured (prod/docker), else in-process LocMem so dev and the
+# POS menu cache work without a running Redis. Under pytest we always use LocMem so a
+# deploy .env's REDIS_URL can't drag the suite onto an unreachable Redis (mirrors the
+# prod-guard's pytest check above). Matches the POS's original graceful default.
+REDIS_URL = env("REDIS_URL", "")
+if REDIS_URL and "pytest" not in sys.modules:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL}}
+else:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 
 # ── Dutchie per-store config (copied from marketing_dashboard) ────────────────
 def _users() -> list:
@@ -130,6 +173,12 @@ DUTCHIE = {
 
 # ── Production hardening (only when not DEBUG) ────────────────────────────────
 if not DEBUG:
+    # ponytail: pytest imports settings before per-test env overrides; real DEBUG=0 processes fail closed.
+    if "pytest" not in sys.modules:
+        if _missing := _prod_guard_errors(SECRET_KEY, HHT_BACKEND_TOKEN):
+            raise ImproperlyConfigured(
+                f"Missing required prod settings (DEBUG=0): {', '.join(_missing)}."
+            )
     SECURE_SSL_REDIRECT = False  # TLS terminates at Cloudflare tunnel
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     SESSION_COOKIE_SECURE = True
@@ -137,3 +186,9 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
+    # POS HTML surface hardening (the token API sets no session cookie).
+    SESSION_COOKIE_HTTPONLY = True
+    CSRF_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+    CSRF_COOKIE_SAMESITE = "Lax"
+    X_FRAME_OPTIONS = "DENY"

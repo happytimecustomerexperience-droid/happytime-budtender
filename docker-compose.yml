@@ -1,5 +1,7 @@
-# Happy Time — single-VPS stack for BOTH services in this repo:
-#   • budtender  (this repo root)  — suggestions/pairing API + admin/analytics
+# Happy Time — single-VPS stack for the services in this repo:
+#   • budtender  (this repo root)  — suggestions/pairing API (internal, `web`) +
+#                                    the in-store POS screens (public, `pos-web`) —
+#                                    ONE Django app (core.wsgi) sharing the engine + DB
 #   • voice      (./voice)         — Vapi Squad control plane (calls budtender)
 #
 # They run as INDEPENDENT containers with their OWN databases. Bring everything
@@ -45,7 +47,7 @@ services:
     # applied when its tables already exist (existing prod/dev DBs) instead of
     # trying to recreate them, so the analytics tables are stored durably and
     # deterministically. No runtime makemigrations (that was ephemeral/fragile).
-    command: sh -c "python manage.py migrate --noinput --fake-initial"
+    command: sh -c "python manage.py migrate --noinput --fake-initial && python manage.py collectstatic --noinput"
     env_file:
       - .env
       - .env.dutchie
@@ -85,6 +87,54 @@ services:
         # so the Host header is accepted under DEBUG=0 — no 400. Still reachable as `web` too.
         aliases:
           - budtender.internal
+
+  # In-store POS screens (login-gated HTMX). SAME Django app + image as `web`
+  # (one gunicorn serving core.wsgi — /api/v1 AND the POS root routes), but exposed
+  # PUBLICLY at the checkout domain via Traefik while `web` stays internal for the
+  # Bearer API. Set POS_HOST in .env to your checkout hostname (A-record → this VPS).
+  # The POS's Dutchie register keys come from .env / .env.dutchie / stores.json.
+  pos-web:
+    build: .
+    command: sh -c "exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers ${POS_GUNICORN_WORKERS:-3} --worker-class gthread --threads 4 --timeout 60 --keep-alive 5"
+    env_file:
+      - .env
+      - .env.dutchie
+    expose:
+      - "8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=happytime-budtender_default
+      - traefik.http.routers.pos.rule=Host(`${POS_HOST:-checkout.example.com}`)
+      - traefik.http.routers.pos.entrypoints=web,websecure
+      - traefik.http.routers.pos.tls=true
+      - traefik.http.routers.pos.tls.certresolver=letsencrypt
+      - traefik.http.services.pos.loadbalancer.server.port=8000
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost',8000),3).close()\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Keeps the POS live-inventory menu cache hot (the register pull is slow) so a
+  # staff menu render never pays for it. Cron-like sidecar (~every 8 min).
+  warmer:
+    build: .
+    command: sh -c "sleep 10; while true; do python manage.py warm_menu || true; sleep 480; done"
+    env_file:
+      - .env
+      - .env.dutchie
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
   celery-worker:
     build: .

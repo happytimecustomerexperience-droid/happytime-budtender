@@ -1,0 +1,131 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ acct_name|default:"Customer" }} · Profile</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+  <script src="{% static 'pos/htmx.min.js' %}" defer></script>
+  <script src="{% static 'pos/app.js' %}" defer></script>
+</head>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+<header class="top">
+  <a class="logo" href="{% url 'screen' %}">HAPPY&nbsp;TIME</a>
+  <span class="spacer"></span>
+  <button type="button" class="cartbtn" data-cart-open>🛒 Cart <span class="badge" id="cart-badge">{{ cart|length }}</span></button>
+  <span class="cust-chip">👤 <b>{{ acct_name|default:"Guest" }}</b></span>
+  <a class="restartbtn" href="{% url 'end' %}" title="Start a new session">↺ Restart</a>
+</header>
+
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'screen' %}">Menu</a>
+  <span class="sep">›</span>
+  <span class="here">{{ acct_name|default:"Customer" }}</span>
+</nav>
+
+<main>
+  <div class="detail">
+    <div class="idcard">
+      <div class="who">
+        <h1>{{ acct_name|default:"Customer" }}</h1>
+        {% if persona %}<div class="persona-line"><span class="seg seg-{{ persona.segment|lower }}">{{ persona.segment }}</span>{% if persona.line %} <span class="pline">{{ persona.line }}</span>{% endif %}</div>{% endif %}
+        <div class="meta-line">
+          {% if cust and cust.over_21 is not None %}<span class="{% if cust.over_21 %}badge-ok{% else %}badge-bad{% endif %}">{% if cust.over_21 %}21+ ✓{% else %}UNDER 21 ✕{% endif %}</span>{% endif %}
+          {% if acct_phone %} 📞 {{ acct_phone }}{% endif %}
+          {% if cust.city or cust.state %} · 📍 {{ cust.city }}{% if cust.city and cust.state %}, {% endif %}{{ cust.state }}{% endif %}
+        </div>
+        <div class="actions">
+          <a class="restartbtn" href="{% url 'screen' %}" style="background:var(--amber)">🛍 Shop for {{ acct_name|default:"customer" }}</a>
+          <a class="viewfull" href="{% url 'customer_full' %}">Open full profile →</a>
+        </div>
+      </div>
+    </div>
+
+    {% if profile %}
+    <div class="kpis">
+      <div class="kpi-pill"><div class="v">{{ profile.orders|default:"0" }}</div><div class="k">Orders</div></div>
+      <div class="kpi-pill"><div class="v">{{ profile.last_purchase|default:"—"|slice:":10" }}</div><div class="k">Last visit</div></div>
+      <div class="kpi-pill"><div class="v">{{ profile.price_tier|default:"—"|title }}</div><div class="k">Price tier</div></div>
+      <div class="kpi-pill"><div class="v">{{ history_count }}</div><div class="k">Products tried</div></div>
+    </div>
+    {% else %}
+    <div class="banner warn">New customer — no purchase history yet. Showing popular picks below.</div>
+    {% endif %}
+
+    <div class="cols two">
+      <div class="section card">
+        <h2>Favorite categories</h2>
+        {% if fav_categories %}
+        <div class="aflist">
+          {% for a in fav_categories %}
+          <div class="afrow"><span class="nm">{{ a.name|title }}</span>
+            <div class="track"><i style="width:{{ a.pct }}%"></i></div>
+            <span class="vv">{% if a.share %}{{ a.share }}%{% endif %}</span></div>
+          {% endfor %}
+        </div>
+        {% else %}<p class="muted">No history yet.</p>{% endif %}
+      </div>
+      <div class="section card">
+        <h2>Favorite brands</h2>
+        {% if fav_brands %}
+        <div class="aflist">
+          {% for a in fav_brands %}
+          <div class="afrow"><span class="nm">{{ a.name }}</span>
+            <div class="track"><i style="width:{{ a.pct }}%"></i></div>
+            <span class="vv">{% if a.share %}{{ a.share }}%{% endif %}</span></div>
+          {% endfor %}
+        </div>
+        {% else %}<p class="muted">No history yet.</p>{% endif %}
+      </div>
+    </div>
+
+    <div class="section card">
+      <h2>Favorite strains</h2>
+      {% if fav_strain_types or fav_strains %}
+        {% for a in fav_strain_types %}<span class="chip amber">{{ a.name|title }}</span>{% endfor %}
+        {% for s in fav_strains %}<span class="chip">{{ s.strain }}{% if s.times %} ×{{ s.times }}{% endif %}</span>{% endfor %}
+      {% else %}<p class="muted">No strain history yet.</p>{% endif %}
+    </div>
+
+    {% if suggestions %}
+    <section class="section">
+      <h2>Best for {{ acct_name|default:"this customer" }}</h2>
+      <div class="rail">{% for p in suggestions %}{% include "pos/_product_card.html" %}{% endfor %}</div>
+    </section>
+    {% endif %}
+
+    {% if picks %}
+    <section class="section">
+      <h2>Their picks by category</h2>
+      {% for g in picks %}
+      <div class="pickgroup">
+        <h3>{{ g.label }}</h3>
+        <div class="grid">{% for p in g.items %}{% include "pos/_product_card.html" %}{% endfor %}</div>
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    <div style="text-align:center;margin:20px 0">
+      <a class="viewfull" href="{% url 'customer_full' %}" style="font-size:17px;padding:13px 24px">Open full profile · all transactions →</a>
+    </div>
+  </div>
+</main>
+
+<div id="cart-backdrop" data-cart-close></div>
+<aside id="cart-drawer" aria-label="Cart">
+  <div class="hd"><h2>Cart</h2><button type="button" class="ghost" data-cart-close>Close</button></div>
+  <div class="bd cart"><div id="cart">{% include "pos/_cart.html" %}</div></div>
+  <div class="ft">
+    <form hx-post="{% url 'cart_submit' %}" hx-target="#submit-result">
+      <button type="submit" class="submit">Submit → Ready for pickup</button>
+    </form>
+    <div id="submit-result" style="margin-top:8px"></div>
+  </div>
+</aside>
+</body>
+</html>

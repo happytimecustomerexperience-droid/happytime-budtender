@@ -1,0 +1,6 @@
+{% if error %}
+  <p class="err">✕ {{ error }}</p>
+{% elif result %}
+  <p style="color:#15803d;font-size:14px">✓ Submitted — Shipment {{ result.shipment_id }}
+    (schedule {{ result.schedule_id }}), {{ result.added|length }} item(s), status “Ready for pickup”.</p>
+{% endif %}

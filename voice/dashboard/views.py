@@ -918,6 +918,7 @@ def _merge_detail(local, live: dict | None) -> dict:
     value, falling back to analytics. So you get everything either source knows."""
     live = live or {}
     return {
+        "id": (local.pk if local else None) or live.get("id"),
         "name": (local.name if local and local.name else "") or live.get("name")
                 or (local.customer_key if local else "") or "(unknown)",
         # analytics-owned (RFM / LTV)
@@ -935,6 +936,8 @@ def _merge_detail(local, live: dict | None) -> dict:
         # live-owned affinity
         "category_affinity": live.get("category_affinity", {}),
         "brand_affinity": live.get("brand_affinity", {}),
+        "favorite_brands": live.get("favorite_brands") or (local.favorite_brands if local else []) or [],
+        "purchase_history": live.get("purchase_history") or [],
         "bucket_mix": live.get("bucket_mix", {}),
         # shared — live then analytics
         "top_categories": live.get("top_categories") or (local.top_categories if local else []) or [],
@@ -1008,8 +1011,9 @@ def customer_detail(request, pk: int):
         persona=detail["persona"],
     )
     feed = suggestions.build_feed(feed_input, baskets_index=_baskets_index())
+    pairs = [s for s in feed if s.get("kind") == "pair"]
     return render(request, "dashboard/customer_detail.html",
-                  {"c": detail, "feed": feed, "source": source})
+                  {"c": detail, "feed": feed, "pairs": pairs, "source": source})
 
 
 # Lazily-loaded frequently-bought-with index (optional; only if the owner dropped baskets.json in).

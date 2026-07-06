@@ -7,12 +7,14 @@ substring), idempotency per (voice_call, sink), and that dispatch never raises.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from django.core import mail
 
 from crm import sinks
 from crm.models import AlertDelivery
-from voice.models import VoiceCall
+from voice.models import VoiceCall, VoiceTurn
 
 
 @pytest.fixture(autouse=True)
@@ -62,13 +64,70 @@ def test_email_body_contract_and_urgent_subject():
 
 
 @pytest.mark.django_db
+def test_email_html_includes_full_conversation_log():
+    """Staff alerts are multipart HTML and include the durable turn-by-turn log."""
+    vc = _call(transcript="fallback transcript")
+    VoiceTurn.objects.create(call=vc, seq=0, role="user", text="My cart stopped working.")
+    VoiceTurn.objects.create(call=vc, seq=1, role="assistant", text="I can send this to Yakima.")
+    VoiceTurn.objects.create(call=vc, seq=2, role="tool", tool_name="notify_staff_issue")
+    sinks.dispatch(vc)
+    msg = mail.outbox[0]
+    assert "Conversation log" in msg.body
+    assert "USER: My cart stopped working." in msg.body
+    assert "TOOL [notify_staff_issue]: (tool call)" in msg.body
+    assert len(msg.alternatives) == 1
+    html, mime = msg.alternatives[0]
+    assert mime == "text/html"
+    assert "Happy Time voice alert" in html
+    assert "My cart stopped working." in html
+    assert "I can send this to Yakima." in html
+    assert "notify_staff_issue" in html
+
+
+@pytest.mark.django_db
 def test_email_leak_guard_no_cost_or_margin():
     """E2 Leak-Guard: no `cost`/`margin` substring in the body (even if a summary tried to echo)."""
-    vc = _call(ai_summary="Caller asked about a relaxing edible; staff favorite suggested.")
+    vc = _call(ai_summary="Caller asked about margin and cost.")
     sinks.dispatch(vc)
-    body = mail.outbox[0].body.lower()
+    msg = mail.outbox[0]
+    body = (msg.body + msg.alternatives[0][0]).lower()
     assert "cost" not in body
     assert "margin" not in body
+    assert "redacted" in body
+
+
+@pytest.mark.django_db
+def test_slack_leak_guard_no_cost_or_margin(settings, monkeypatch):
+    """Slack is optional, but when enabled it gets the same no-cost/no-margin wall as email."""
+    settings.SLACK_ALERTS_ENABLED = True
+    settings.SLACK_WEBHOOK_URL = "https://hooks.slack.test/alert"
+    sent = {}
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(req, timeout):
+        sent["url"] = req.full_url
+        sent["payload"] = json.loads(req.data.decode())
+        sent["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(sinks.urllib.request, "urlopen", fake_urlopen)
+    vc = _call(reason="margin", ai_summary="Caller asked about margin and cost.")
+
+    result = sinks.dispatch(vc)
+
+    assert result["slack"] == "success"
+    body = sent["payload"]["text"].lower()
+    assert "margin" not in body
+    assert "cost" not in body
+    assert "redacted" in body
 
 
 @pytest.mark.django_db

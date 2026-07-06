@@ -1,0 +1,74 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My performance · Budtender POS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="{% url 'screen' %}">HAPPY&nbsp;TIME</a>
+  <span class="navlink active">My performance</span>
+  <span class="spacer"></span>
+  <a class="link" href="{% url 'screen' %}">← POS</a>
+  <a class="link" href="{% url 'logout' %}">Sign out</a>
+</header>
+
+<main>
+  <div class="detail wide">
+    <div class="mehead">
+      <h1 class="bebas">Hey {{ me }} 👋</h1>
+      <form class="filters" method="get">
+        <select name="win" aria-label="Window" onchange="this.form.submit()">
+          {% for w in windows %}<option value="{{ w }}" {% if win == w %}selected{% endif %}>{{ w }}</option>{% endfor %}
+        </select>
+        <noscript><button type="submit">Apply</button></noscript>
+      </form>
+    </div>
+
+    <div class="kpis six">
+      <div class="kpi-pill"><div class="v">{{ metrics.visits|default:0 }}</div><div class="k">Your visits</div>{{ spark_visits|safe }}</div>
+      <div class="kpi-pill"><div class="v">{{ metrics.checkouts|default:0 }}</div><div class="k">Your sales</div></div>
+      <div class="kpi-pill"><div class="v">${{ metrics.revenue|default:0|floatformat:0 }}</div><div class="k">Your revenue</div>{{ spark_rev|safe }}</div>
+      <div class="kpi-pill"><div class="v">{{ metrics.checkout_rate|default:0 }}%</div><div class="k">Checkout rate</div></div>
+      <div class="kpi-pill"><div class="v">{{ metrics.attach_rate|default:0 }}%</div><div class="k">Attach rate</div></div>
+      <div class="kpi-pill"><div class="v">${{ metrics.avg_basket|default:0|floatformat:0 }}</div><div class="k">Avg basket</div></div>
+    </div>
+
+    <section class="card">
+      <h2>You vs the team average</h2>
+      <div class="cmp">
+        {% include "pos/insights/_cmp.html" with label="Checkout rate" mine=metrics.checkout_rate avg=avg.checkout_rate suffix="%" %}
+        {% include "pos/insights/_cmp.html" with label="Attach rate" mine=metrics.attach_rate avg=avg.attach_rate suffix="%" %}
+        {% include "pos/insights/_cmp.html" with label="Avg basket" mine=metrics.avg_basket avg=avg.avg_basket prefix="$" %}
+      </div>
+    </section>
+
+    <div class="cols two">
+      <section class="card">
+        <h2>Your funnel</h2>
+        <div class="funnel">
+          {% for s in funnel %}
+          <div class="frow"><span class="fl">{{ s.label }}</span><span class="fbar"><i style="width:{{ s.pct }}%"></i></span><span class="fn">{{ s.n }} <em>{{ s.step_pct }}%</em></span></div>
+          {% endfor %}
+        </div>
+        <p class="muted" style="margin-top:12px">{{ sugg.rate }}% of your cart-adds came from a suggestion you showed.</p>
+      </section>
+
+      <section class="card">
+        <h2>What you sell most <span class="muted">categories</span></h2>
+        <div class="aflist">
+          {% for r in top_cats %}<div class="afrow"><span class="nm">{{ r.name }}</span><span class="track"><i style="width:{{ r.pct }}%"></i></span><span class="vv">{{ r.adds }}</span></div>
+          {% empty %}<p class="muted">Add some items to a cart and this fills in.</p>{% endfor %}
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+</body>
+</html>

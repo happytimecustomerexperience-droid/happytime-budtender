@@ -1,0 +1,52 @@
+{% extends "pos/insights/base.html" %}
+{% block subtitle %}Overview · Insights{% endblock %}
+{% block content %}
+
+<div class="kpis six">
+  <div class="kpi-pill"><div class="v">{{ metrics.visits|default:0 }}</div><div class="k">Visits</div>{{ spark_visits|safe }}</div>
+  <div class="kpi-pill"><div class="v">{{ metrics.checkout_rate|default:0 }}%</div><div class="k">Checkout rate</div></div>
+  <div class="kpi-pill"><div class="v">${{ metrics.revenue|default:0|floatformat:0 }}</div><div class="k">Revenue</div>{{ spark_rev|safe }}</div>
+  <div class="kpi-pill"><div class="v">${{ metrics.avg_basket|default:0|floatformat:0 }}</div><div class="k">Avg basket</div></div>
+  <div class="kpi-pill"><div class="v">{{ metrics.attach_rate|default:0 }}%</div><div class="k">Attach rate</div></div>
+  <div class="kpi-pill"><div class="v">{{ metrics.active|default:0 }}</div><div class="k">Active now</div></div>
+</div>
+
+<div class="cols two">
+  <section class="card">
+    <h2>Conversion funnel</h2>
+    <div class="funnel">
+      {% for s in funnel %}
+      <div class="frow">
+        <span class="fl">{{ s.label }}</span>
+        <span class="fbar"><i style="width:{{ s.pct }}%"></i></span>
+        <span class="fn">{{ s.n }} <em>{{ s.step_pct }}%</em></span>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="muted" style="margin-top:12px">Suggestions drove <b>{{ sugg.from_suggestion }}</b> of {{ sugg.total_adds }} cart-adds
+      <span class="chip amber">{{ sugg.rate }}% suggestion-sourced</span></p>
+  </section>
+
+  <section class="card">
+    <h2>Top categories <span class="muted">by adds</span></h2>
+    <div class="aflist">
+      {% for r in top_cats %}
+      <div class="afrow"><span class="nm">{{ r.name }}</span>
+        <span class="track"><i style="width:{{ r.pct }}%"></i></span>
+        <span class="vv">{{ r.adds }}</span></div>
+      {% empty %}<p class="muted">No product activity in this window yet.</p>{% endfor %}
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <h2>Top brands <span class="muted">by adds</span></h2>
+  <div class="aflist cols-bars">
+    {% for r in top_brands %}
+    <div class="afrow"><span class="nm">{{ r.name }}</span>
+      <span class="track"><i style="width:{{ r.pct }}%"></i></span>
+      <span class="vv">{{ r.adds }}</span></div>
+    {% empty %}<p class="muted">No brand activity in this window yet.</p>{% endfor %}
+  </div>
+</section>
+{% endblock %}

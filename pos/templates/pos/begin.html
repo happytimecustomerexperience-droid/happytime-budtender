@@ -1,0 +1,65 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Begin session · Budtender POS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+  <script src="{% static 'pos/htmx.min.js' %}" defer></script>
+  <script src="{% static 'pos/app.js' %}" defer></script>
+</head>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+<header class="top">
+  <span class="logo">HAPPY&nbsp;TIME</span>
+  <select name="store" id="store" form="startform">
+    {% for s in stores %}<option value="{{ s }}" {% if s == active %}selected{% endif %}>{{ s|title }}</option>{% endfor %}
+  </select>
+  <span class="spacer"></span>
+  <a class="signout" href="{% url 'logout' %}">Sign out</a>
+</header>
+
+<div class="auth" style="max-width:460px">
+  <div class="card">
+    <h2 style="font-size:14px">Begin a new session</h2>
+
+    {% if under21 %}
+      <div style="background:rgba(255,122,92,.14);border:1px solid var(--bad);border-radius:10px;padding:14px;margin:10px 0">
+        <div class="bebas" style="font-size:26px;color:var(--bad)">⛔ UNDER 21 — DO NOT SELL</div>
+        <p class="muted" style="margin:6px 0 0">
+          {{ scan.accts_name }}{% if scan.age %} · age {{ scan.age }}{% endif %}{% if scan.birth_date %} · DOB {{ scan.birth_date }}{% endif %}.
+          Cannot start a session.
+        </p>
+      </div>
+      <a href="{% url 'begin' %}"><button type="button" style="width:100%">Start over</button></a>
+    {% else %}
+      {% if no_account %}
+        <div class="banner" style="margin:10px 0">
+          No account for <strong>{{ phone }}</strong>. Scan the ID to <strong>create a profile</strong>,
+          or <strong>continue as guest</strong>.
+        </div>
+      {% elif error %}<p class="err">{{ error }}</p>{% endif %}
+      {% if scan and scan.over_21 %}<p class="badge-ok" style="font-size:14px">21+ ✓ {{ scan.accts_name }}{% if scan.age %} · {{ scan.age }}{% endif %}</p>{% endif %}
+
+      <form id="startform" method="post" action="{% url 'start' %}" enctype="multipart/form-data" class="stack">
+        {% csrf_token %}
+        <label style="display:block;font-size:12px;color:var(--sage);margin:10px 0 4px">Scan ID (camera)</label>
+        <input type="file" name="images" accept="image/*" capture="environment" multiple style="width:100%">
+        <label style="display:block;font-size:12px;color:var(--sage);margin:12px 0 4px">Phone number</label>
+        <input type="tel" name="phone" id="startphone" inputmode="tel" placeholder="509…" value="{{ phone }}"
+               style="width:100%" autocomplete="off"
+               hx-post="{% url 'lookup' %}" hx-trigger="keyup changed delay:350ms"
+               hx-target="#begin-guests" hx-vals='{"mode":"start"}'>
+        <div id="begin-guests" class="ac-results"></div>
+        <button type="submit" style="width:100%;margin-top:16px;min-height:48px">Begin session</button>
+        <button type="submit" name="guest" value="1" class="ghost" style="width:100%;margin-top:10px;min-height:46px">Continue as guest</button>
+      </form>
+      <p class="hint" style="margin-top:10px">Scan the ID to verify 21+ and auto-create an account if the phone is new,
+        enter a phone to look up an existing customer, or continue as guest.</p>
+    {% endif %}
+  </div>
+</div>
+</body>
+</html>

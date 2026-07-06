@@ -11,10 +11,28 @@ dependencies = [
     "celery>=5.4",
     "django-celery-beat>=2.7",
     "gunicorn>=23.0",
+    "google-genai>=1.0",
     "requests>=2.32",
     "python-dotenv>=1.0",
     "phonenumbers>=8.13",
+    # ── merged-in POS (pos/ + dutchie/ + idscan/ + pos_core/) ──
+    "whitenoise>=6",        # static serving for the login-gated POS screens
+    "curl_cffi>=0.7",       # Chrome-TLS impersonation for the Dutchie register client
+    "cryptography>=42",     # Fernet at-rest encryption for Dutchie store secrets
+    "Pillow>=10",           # upload magic-byte / decompression-bomb guard (id-scan)
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-django>=4",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "core.settings"
+python_files = ["test_*.py", "tests.py"]
+testpaths = ["budtender", "pos", "customers", "idscan", "tests"]
 
 [tool.uv]
 package = false

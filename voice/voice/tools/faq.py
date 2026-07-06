@@ -15,6 +15,7 @@ KB row text verbatim-ish.
 from __future__ import annotations
 
 import logging
+import re
 
 from voice.tools import register
 
@@ -24,6 +25,11 @@ logger = logging.getLogger(__name__)
 # Keyword-fallback scores (overlap counts) are >= 1 on any real hit, so this only gates the
 # embedding path; the keyword path's own "no overlap → []" already filters non-matches.
 _MIN_COSINE = 0.30
+_PROMPT_INJECTION = re.compile(
+    r"\b(ignore|disregard|override|reveal|print|show|leak)\b.{0,80}\b"
+    r"(instruction|prompt|system|developer|secret|tool|policy|rule)s?\b",
+    re.IGNORECASE | re.DOTALL,
+)
 
 _FALLBACK = "I'm not certain on that one — let me get a team member who can help."
 
@@ -60,6 +66,11 @@ def _row_answer(row) -> str:
     return row.chunk_text().strip()
 
 
+def _looks_poisoned(text: str) -> bool:
+    """True when KB content looks like instructions to hijack the assistant."""
+    return bool(_PROMPT_INJECTION.search(text or ""))
+
+
 def _grounded(query: str, store: str | None) -> dict | None:
     """Run KB retrieval; return the grounded answer dict, or ``None`` on no confident match."""
     from kb import semantic
@@ -74,11 +85,15 @@ def _grounded(query: str, store: str | None) -> dict | None:
     # by returning [] on zero overlap — so the cosine floor applies ONLY to the embedding path.
     if semantic.enabled() and top_score < _MIN_COSINE:
         return None
+    answer = _row_answer(top_row)
+    if _looks_poisoned(answer):
+        logger.warning("refusing suspicious KB row %s", getattr(top_row, "pk", ""))
+        return None
     sources = [
         {"kind": _source_kind(row), "id": row.pk, "title": _row_title(row)} for row, _ in ranked
     ]
     return {
-        "answer": _row_answer(top_row),
+        "answer": answer,
         "grounded": True,
         "sources": sources,
         "store": store or "",

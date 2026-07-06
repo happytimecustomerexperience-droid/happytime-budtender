@@ -86,6 +86,22 @@ def test_budtender_assistant_attaches_four_tool_ids(fake_vapi, p1_prompts):
 
 # ── G3. voice/model/keyterms ONCE on the budtender assistant payload (ADR-011) ──
 @pytest.mark.django_db
+def test_saved_tool_names_drive_budtender_payload(fake_vapi, p1_prompts):
+    from kb.models import AgentPrompt
+
+    for t in ("suggest_products", "check_inventory", "pair_upsell", "faq_lookup"):
+        provision.ensure_tool(t)
+    p = AgentPrompt.objects.get(role="budtender")
+    p.tool_names = ["suggest_products", "check_inventory"]
+    p.save()
+
+    payload, warnings = provision.build_assistant_payload("budtender", name="budtender")
+
+    assert not [w for w in warnings if w.startswith("tool not provisioned")]
+    assert len(payload["model"]["toolIds"]) == 2
+
+
+@pytest.mark.django_db
 def test_budtender_payload_emits_voice_model_once(fake_vapi, p1_prompts):
     for t in ("suggest_products", "check_inventory", "pair_upsell"):
         provision.ensure_tool(t)

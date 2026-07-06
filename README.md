@@ -17,6 +17,9 @@ service token), so nothing sensitive appears in the browser network tab and
   complementary high-margin item.
 - Persists sessions + suggested products per session AND per customer; resumes
   by phone (anonymous sessions always start fresh).
+- Answers free-form website chat through server-side Gemini while persisting
+  every user/assistant turn and pulling grounded KB context from the sibling
+  voice service's Google-embedding RAG endpoint when configured.
 
 ## Architecture
 ```
@@ -31,17 +34,22 @@ Next.js (server-side /api/* proxy)  ──Bearer token, TLS──►  Cloudflare
 |---|---|
 | `GET  /health/` | liveness |
 | `POST /chat/session/start` | mint a fresh session token |
+| `POST /chat/message` | persist one shopper message + return a Gemini-backed assistant reply |
 | `POST /products/search/` | margin-first ranked picks (no cost/margin in body) |
+| `GET  /products/by-sku/` | exact in-stock SKU lookup for voice inventory checks |
 | `POST /pairing/for-sku` | one "Budtender suggestion" |
 | `POST /chat/resume-by-phone` | resume prior session + generic profile hints |
 | `POST /chat/persist/` | upsert session + messages, link phone |
 | `POST /customer/profile-upsert` | (re)compute affinity for a phone |
+| `POST /analytics/summary` | chatbot/menu funnel counts for the voice dashboard |
 
 ## Deploy (VPS)
 1. Install Docker + Docker Compose.
 2. `cp .env.example .env` and fill in:
    - `SECRET_KEY`, `HHT_BACKEND_TOKEN` (must match the website's `HHT_BACKEND_TOKEN`),
    - `SQL_PASSWORD`,
+  - `GOOGLE_CLOUD_PROJECT`/ADC for Vertex Gemini, or `GEMINI_API_KEY` for dev chat,
+  - `HHT_VOICE_BASE_URL` for chatbot grounding, e.g. `http://voice.internal:8000`,
    - Dutchie per-store keys/ids — **copy from marketing_dashboard's `Tenant.config`**
      (`dutchie_loc_id`, `dutchie_lsp_id`, POS API keys, backoffice user pool),
    - `TUNNEL_TOKEN` from your Cloudflare tunnel (route your hostname → `web:8000`).

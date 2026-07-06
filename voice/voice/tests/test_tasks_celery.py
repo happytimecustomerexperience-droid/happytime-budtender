@@ -71,6 +71,33 @@ def test_durable_write_survives_when_queue_enabled(settings, mock_gemini):
 
 # ── (3) sync fallback when broker enqueue fails ─────────────────────────────────
 @pytest.mark.django_db
+def test_queue_path_emails_after_summary(settings, mock_gemini):
+    """With Celery enabled, post-call work runs summary before staff email."""
+    settings.HHT_USE_CELERY = True
+    settings.STAFF_ALERT_EMAIL = "staff@example.com"
+    settings.EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+    from django.core import mail
+
+    from voice import tasks
+    from voice.models import Outcome, VoiceCall
+
+    vc = VoiceCall.objects.create(
+        call_id="call-chain-summary",
+        store="yakima",
+        outcome=Outcome.ESCALATION,
+        reason="defective_return",
+        transcript="Caller needs help.",
+    )
+
+    tasks.run_post_call(vc.pk)
+
+    vc.refresh_from_db()
+    assert vc.ai_summary == "OK"
+    assert len(mail.outbox) == 1
+    assert "Summary:\nOK" in mail.outbox[0].body
+
+
+@pytest.mark.django_db
 def test_enqueue_failure_degrades_to_inline(settings, mock_gemini, monkeypatch):
     """AC-5: HHT_USE_CELERY=1 but the broker .delay raises (Redis down) → run_post_call degrades to
     inline so the summary/email work is never silently dropped."""
@@ -83,7 +110,11 @@ def test_enqueue_failure_degrades_to_inline(settings, mock_gemini, monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("redis unreachable")
 
-    monkeypatch.setattr(tasks.summarize_call, "delay", _boom)
+    class BrokenChain:
+        def delay(self):
+            _boom()
+
+    monkeypatch.setattr(tasks, "chain", lambda *a, **k: BrokenChain())
     tasks.run_post_call(vc.pk)  # must not raise
     vc.refresh_from_db()
     assert vc.ai_summary == "OK"  # inline fallback ran the summary

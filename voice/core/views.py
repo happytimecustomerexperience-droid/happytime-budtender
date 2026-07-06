@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+
 from django.db import connection
 from django.http import JsonResponse
 
 from core.services import gemini, vapi
+from voice.budtender_client import budtender
+
+logger = logging.getLogger(__name__)
 
 
 def healthz(request):
@@ -17,35 +22,47 @@ def healthz(request):
     or a configured Vapi key is unreachable.
     """
     db_ok = True
-    db_error = ""
     try:
         with connection.cursor() as cur:
             cur.execute("SELECT 1")
             cur.fetchone()
     except Exception as exc:  # noqa: BLE001
         db_ok = False
-        db_error = str(exc)
+        logger.warning("healthz DB check failed: %s", type(exc).__name__)
 
     try:
         gem = gemini.health_check()
     except Exception as exc:  # noqa: BLE001
-        gem = {"mode": "error", "ready": False, "reason": str(exc)}
+        logger.warning("healthz Gemini check failed: %s", type(exc).__name__)
+        gem = {"ready": False}
 
     try:
         vap = vapi.auth_ok()
     except Exception as exc:  # noqa: BLE001
-        vap = {"ok": False, "configured": vapi.configured(), "error": str(exc)}
+        logger.warning("healthz Vapi check failed: %s", type(exc).__name__)
+        vap = {"ok": False, "configured": vapi.configured()}
+
+    try:
+        bt = budtender()
+        bud = {"ok": bt.health(), "configured": bool(bt.base_url)}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("healthz budtender check failed: %s", type(exc).__name__)
+        bud = {"ok": False, "configured": False}
 
     # Vapi is allowed to be absent (O-4 placeholder) without flipping liveness; a
     # configured-but-unreachable Vapi key, however, is a real degradation.
     vapi_blocks = vap.get("configured", False) and not vap.get("ok", False)
-    ok = db_ok and gem.get("ready", False) and not vapi_blocks
+    budtender_blocks = bud.get("configured", False) and not bud.get("ok", False)
+    ok = db_ok and gem.get("ready", False) and not vapi_blocks and not budtender_blocks
+    safe_vapi = {"ok": bool(vap.get("ok")), "configured": bool(vap.get("configured"))}
+    safe_budtender = {"ok": bool(bud.get("ok")), "configured": bool(bud.get("configured"))}
     return JsonResponse(
         {
             "status": "ok" if ok else "degraded",
-            "db": {"ok": db_ok, "error": db_error},
-            "gemini": gem,
-            "vapi": vap,
+            "db": {"ok": db_ok},
+            "gemini": {"ready": bool(gem.get("ready"))},
+            "vapi": safe_vapi,
+            "budtender": safe_budtender,
         },
         status=200 if ok else 503,
     )

@@ -198,6 +198,35 @@ def _corpus_key(items):
     return f"faq:{gemini.active_embedding_model()}:{constants.EMBED_DIM}:{h.hexdigest()[:16]}"
 
 
+def test_corpus_vectors_cache_key_uses_resolved_embedding_model(monkeypatch):
+    from django.core.cache import cache as django_cache
+
+    from core import constants
+    from kb import semantic
+
+    active = {"model": "gemini-embedding-2"}
+
+    def active_model():
+        return active["model"]
+
+    def embed(texts, **_kwargs):
+        active["model"] = "gemini-embedding-001"
+        return [[1.0] * constants.EMBED_DIM for _ in texts]
+
+    monkeypatch.setattr(semantic.gemini, "active_embedding_model", active_model)
+    monkeypatch.setattr(semantic.gemini, "embed", embed)
+    items = [("faq1", "payment options")]
+    django_cache.clear()
+
+    semantic._corpus_vectors(items)
+    resolved_key = semantic._corpus_cache_key(items)
+    active["model"] = "gemini-embedding-2"
+    preferred_key = semantic._corpus_cache_key(items)
+
+    assert django_cache.get(resolved_key) is not None
+    assert django_cache.get(preferred_key) is None
+
+
 @pytest.mark.django_db
 def test_rank_faq_keyword_fallback_when_gemini_down(db, settings):
     """B4: with gemini.embed mocked to RAISE, rank_faq degrades to keyword match and STILL
@@ -331,7 +360,9 @@ def test_every_mapped_row_exists():
     seed.seed_all()
     assert m.FAQEntry.objects.count() == 13  # 8 core + 5 from the real site (loyalty/ordering/etc.)
     assert m.PolicyDocument.objects.filter(kind="return_policy").count() == 1
-    assert m.StoreFact.objects.filter(kind="special").count() == 5
+    assert m.StoreFact.objects.filter(kind="special").count() == len(seed.SPECIAL_ROWS)
+    for store in ("yakima", "mount-vernon", "pullman"):
+        assert m.StoreFact.objects.filter(kind="special", store=store).count() == 10
     assert m.StoreFact.objects.filter(kind="limit").count() == 5  # 4 limits + age/ID rule
     assert m.EducationDoc.objects.count() == 5
     assert m.BlogDoc.objects.count() == 3

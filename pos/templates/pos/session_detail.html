@@ -1,0 +1,76 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ v.acct_name|default:"Guest" }} · Session · Budtender POS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="{% url 'screen' %}">HAPPY&nbsp;TIME</a>
+  <nav class="topnav">
+    <a class="navlink" href="{% url 'sessions' %}">Sessions</a>
+    <a class="navlink" href="{% url 'sessions_rollups' %}">Rollups</a>
+  </nav>
+  <span class="spacer"></span>
+  <a class="link" href="{% url 'sessions' %}">← All sessions</a>
+</header>
+
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'screen' %}">Menu</a><span class="sep">›</span>
+  <a href="{% url 'sessions' %}">Sessions</a><span class="sep">›</span>
+  <span class="here">{{ v.acct_name|default:"Guest" }}</span>
+</nav>
+
+<main>
+  <div class="detail">
+    <div class="idcard">
+      <div class="who">
+        <h1>{{ v.acct_name|default:"Guest" }}
+          <span class="obadge o-{{ v.outcome }}">{{ v.get_outcome_display }}</span></h1>
+        <div class="meta-line">
+          🧑‍💼 {{ v.budtender|default:"—" }} · 🏪 {{ v.store|title }}
+          {% if v.how_started %} · via {{ v.how_started }}{% endif %}
+          {% if v.phone %} · 📞 {{ v.phone }}{% endif %}
+        </div>
+        <div class="meta-line">
+          🕑 {{ v.started_at|date:"M j, Y H:i" }}{% if v.ended_at %} → {{ v.ended_at|date:"H:i" }}{% endif %}
+          · ⏱ {{ v.duration_display }} · {{ v.event_count }} events
+          · 👁 {{ v.items_viewed }} viewed · 🛒 {{ v.items_added }} added
+          {% if v.cart_total %} · ${{ v.cart_total|floatformat:2 }}{% endif %}
+          {% if v.order_shipment_id %} · order #{{ v.order_shipment_id }}{% endif %}
+        </div>
+        <div class="actions">
+          {% if not v.ended_at %}
+          <form method="post" action="{% url 'session_close' v.id %}">{% csrf_token %}<button type="submit">Close as abandoned</button></form>
+          {% endif %}
+          <form method="post" action="{% url 'session_delete' v.id %}" onsubmit="return confirm('Delete this session and all events?')">{% csrf_token %}<button class="dangerbtn" type="submit">Delete session</button></form>
+        </div>
+      </div>
+    </div>
+
+    <section class="section card">
+      <h2>Activity timeline</h2>
+      <div class="timeline">
+        {% for row in events %}
+        <div class="tl-row">
+          <span class="tl-time">{{ row.e.at|date:"H:i:s" }}</span>
+          <span class="tl-ico">{{ row.icon }}</span>
+          <span class="tl-body">
+            <b>{{ row.label }}</b>
+            {% if row.e.product_name %} — {{ row.e.product_name }}{% endif %}
+            {% if row.e.detail %} <span class="muted">{{ row.e.detail }}</span>{% endif %}
+          </span>
+        </div>
+        {% empty %}<p class="muted">No events recorded.</p>{% endfor %}
+      </div>
+    </section>
+  </div>
+</main>
+</body>
+</html>

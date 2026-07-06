@@ -3,7 +3,11 @@
 {% block content %}
 <div class="row between">
   <h1>Call log</h1>
-  <a class="btn" href="{% url 'dash-calls' %}">Live monitor</a>
+  <div class="row">
+    <a class="btn" href="{% url 'dash-conversation-history' %}">All history</a>
+    <a class="btn" href="{% url 'dash-chat-history' %}">Chatbot history</a>
+    <a class="btn" href="{% url 'dash-calls' %}">Live monitor</a>
+  </div>
 </div>
 
 <form method="get" class="row" style="margin:12px 0">

@@ -8,7 +8,17 @@ import importlib
 
 import pytest
 
+from core import views as core_views
 from core.services import vapi
+
+
+class _FakeBudtender:
+    def __init__(self, *, ok: bool, configured: bool):
+        self._ok = ok
+        self.base_url = "http://budtender.internal" if configured else ""
+
+    def health(self):
+        return self._ok
 
 
 # ── A1: healthz ────────────────────────────────────────────────────────
@@ -20,10 +30,12 @@ def test_healthz_degrades_without_gemini(client, monkeypatch):
     resp = client.get("/healthz")
     assert resp.status_code in (200, 503)
     body = resp.json()
-    assert set(body) >= {"status", "db", "gemini", "vapi"}
-    assert body["db"]["ok"] is True
+    assert set(body) >= {"status", "db", "gemini", "vapi", "budtender"}
+    assert body["db"] == {"ok": True}
+    assert set(body["gemini"]) == {"ready"}
     # Vapi key absent → reported as not-configured, not an exception.
-    assert body["vapi"]["configured"] is False
+    assert body["vapi"] == {"ok": False, "configured": False}
+    assert set(body["budtender"]) == {"ok", "configured"}
 
 
 @pytest.mark.django_db
@@ -31,15 +43,30 @@ def test_healthz_green_when_all_ready(client, monkeypatch, mock_gemini):
     """DB up + Gemini ready (mock) + Vapi configured-and-reachable (mock) → 200 ok."""
     monkeypatch.setenv("VAPI_PRIVATE_KEY", "test-key")
     monkeypatch.setattr(vapi, "auth_ok", lambda: {"ok": True, "configured": True, "error": ""})
+    monkeypatch.setattr(core_views, "budtender", lambda: _FakeBudtender(ok=True, configured=True))
     resp = client.get("/healthz")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["gemini"]["ready"] is True
-    assert body["vapi"]["ok"] is True
+    assert body["gemini"] == {"ready": True}
+    assert body["vapi"] == {"ok": True, "configured": True}
+    assert body["budtender"] == {"ok": True, "configured": True}
 
 
 # ── vapi client: /workflow is an owner-authorized path (ADR-024 supersedes ADR-002) ──
+@pytest.mark.django_db
+def test_healthz_degrades_when_configured_budtender_is_down(client, monkeypatch, mock_gemini):
+    monkeypatch.setenv("VAPI_PRIVATE_KEY", "test-key")
+    monkeypatch.setattr(vapi, "auth_ok", lambda: {"ok": True, "configured": True, "error": ""})
+    monkeypatch.setattr(core_views, "budtender", lambda: _FakeBudtender(ok=False, configured=True))
+
+    resp = client.get("/healthz")
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["budtender"] == {"ok": False, "configured": True}
+
+
 def test_vapi_workflow_path_allowed(monkeypatch):
     """The old ADR-002 guard is gone: /workflow no longer raises a refusal. The client exposes
     workflow CRUD; here we just prove the path isn't blocked (a bad key fails on auth, not a guard)."""

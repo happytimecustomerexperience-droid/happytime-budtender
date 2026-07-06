@@ -1,0 +1,25 @@
+{# close the autocomplete dropdown once a customer is picked #}
+<div id="guests" hx-swap-oob="true" class="ac-results"></div>
+{% if error %}<span class="err">{{ error }}</span>{% endif %}
+{% if warn %}<span class="warn">{{ warn }}</span>{% endif %}
+{% if scan or acct_id %}
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <strong>{{ scan.accts_name|default:"Customer" }}</strong>
+    {% if scan.over_21 is not None %}
+      <span class="{% if scan.over_21 %}badge-ok{% else %}badge-bad{% endif %}">
+        {% if scan.over_21 %}21+ ✓{% else %}UNDER 21 ✕{% endif %}{% if scan.age %} · {{ scan.age }}{% endif %}
+      </span>
+    {% endif %}
+    {% if history %}
+      {% if history.orders %}<span class="chip">{{ history.orders }} orders</span>{% endif %}
+      {% if history.price_tier %}<span class="chip amber">{{ history.price_tier|title }}</span>{% endif %}
+      {% for c in history.top_categories %}<span class="chip">{{ c|title }}</span>{% endfor %}
+      {% for b in history.top_brands %}<span class="chip">{{ b }}</span>{% endfor %}
+    {% elif acct_id %}
+      <span class="muted">No taste profile yet</span>
+    {% endif %}
+    {% if acct_id %}<a class="viewfull" href="{% url 'customer' %}">View full profile →</a>{% endif %}
+  </div>
+{% else %}
+  <span class="muted">No customer selected.</span>
+{% endif %}

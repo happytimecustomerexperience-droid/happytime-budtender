@@ -1,0 +1,54 @@
+{% extends "pos/insights/base.html" %}
+{% block subtitle %}Products &amp; Brands · Insights{% endblock %}
+{% block content %}
+
+<div class="cols two">
+  <section class="card">
+    <h2>Categories <span class="muted">views → adds</span></h2>
+    <table class="rtable">
+      <thead><tr><th>Category</th><th class="num">Views</th><th class="num">Adds</th><th class="num">Add rate</th></tr></thead>
+      <tbody>
+      {% for r in cats %}
+        <tr><td>{{ r.name }}</td><td class="num">{{ r.views }}</td><td class="num">{{ r.adds }}</td><td class="num">{{ r.add_rate }}%</td></tr>
+      {% empty %}<tr><td colspan="4" class="muted">No category activity in this window.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Brands <span class="muted">views → adds</span></h2>
+    <table class="rtable">
+      <thead><tr><th>Brand</th><th class="num">Views</th><th class="num">Adds</th><th class="num">Add rate</th></tr></thead>
+      <tbody>
+      {% for r in brands %}
+        <tr><td>{{ r.name }}</td><td class="num">{{ r.views }}</td><td class="num">{{ r.adds }}</td><td class="num">{{ r.add_rate }}%</td></tr>
+      {% empty %}<tr><td colspan="4" class="muted">No brand activity in this window.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+
+<div class="cols two">
+  <section class="card">
+    <h2>Most added products</h2>
+    <table class="rtable">
+      <thead><tr><th>Product</th><th class="num">Adds</th></tr></thead>
+      <tbody>
+      {% for p in top_added %}<tr><td>{{ p.product_name }}</td><td class="num">{{ p.n }}</td></tr>
+      {% empty %}<tr><td colspan="2" class="muted">No adds yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Most viewed products</h2>
+    <table class="rtable">
+      <thead><tr><th>Product</th><th class="num">Views</th></tr></thead>
+      <tbody>
+      {% for p in top_viewed %}<tr><td>{{ p.product_name }}</td><td class="num">{{ p.n }}</td></tr>
+      {% empty %}<tr><td colspan="2" class="muted">No views yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,170 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ acct_name|default:"Customer" }} · Full profile</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+  <script src="{% static 'pos/htmx.min.js' %}" defer></script>
+  <script src="{% static 'pos/app.js' %}" defer></script>
+</head>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+<header class="top">
+  <a class="logo" href="{% url 'screen' %}">HAPPY&nbsp;TIME</a>
+  <span class="spacer"></span>
+  <button type="button" class="cartbtn" data-cart-open>🛒 Cart <span class="badge" id="cart-badge">{{ cart|length }}</span></button>
+  <span class="cust-chip">👤 <b>{{ acct_name|default:"Guest" }}</b></span>
+  <a class="restartbtn" href="{% url 'end' %}" title="Start a new session">↺ Restart</a>
+</header>
+
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'screen' %}">Menu</a>
+  <span class="sep">›</span>
+  <a href="{% url 'customer' %}">{{ acct_name|default:"Customer" }}</a>
+  <span class="sep">›</span>
+  <span class="here">Full profile</span>
+</nav>
+
+<main>
+  <div class="detail">
+    <div class="idcard">
+      <div class="who">
+        <h1>{{ acct_name|default:"Customer" }}</h1>
+        <div class="meta-line">
+          {% if cust and cust.over_21 is not None %}<span class="{% if cust.over_21 %}badge-ok{% else %}badge-bad{% endif %}">{% if cust.over_21 %}21+ ✓{% else %}UNDER 21 ✕{% endif %}</span>{% endif %}
+          {% if acct_phone %} 📞 {{ acct_phone }}{% endif %}
+          {% if cust.email %} · ✉ {{ cust.email }}{% endif %}
+          {% if cust.city or cust.state %} · 📍 {{ cust.city }}{% if cust.city and cust.state %}, {% endif %}{{ cust.state }}{% endif %}
+        </div>
+        <div class="actions">
+          <a class="restartbtn" href="{% url 'screen' %}" style="background:var(--amber)">🛍 Shop for {{ acct_name|default:"customer" }}</a>
+          <a class="viewfull" href="{% url 'customer' %}">← Back to preview</a>
+        </div>
+      </div>
+    </div>
+
+    {% if profile %}
+    <div class="kpis">
+      <div class="kpi-pill"><div class="v">{{ profile.orders|default:"0" }}</div><div class="k">Orders</div></div>
+      <div class="kpi-pill"><div class="v">${{ kpi_spend }}</div><div class="k">Est. spend</div></div>
+      <div class="kpi-pill"><div class="v">{{ kpi_units }}</div><div class="k">Units bought</div></div>
+      <div class="kpi-pill"><div class="v">{{ kpi_products }}</div><div class="k">Products</div></div>
+      <div class="kpi-pill"><div class="v">{{ profile.last_purchase|default:"—"|slice:":10" }}</div><div class="k">Last visit</div></div>
+      <div class="kpi-pill"><div class="v">{{ profile.price_tier|default:"—"|title }}</div><div class="k">Price tier</div></div>
+      {% if profile.novelty_score %}<div class="kpi-pill"><div class="v">{{ profile.novelty_score|floatformat:2 }}</div><div class="k">Novelty</div></div>{% endif %}
+    </div>
+    {% else %}
+    <div class="banner warn">No purchase history on file for this customer yet.</div>
+    {% endif %}
+
+    {% if bucket_mix %}
+    <div class="section card">
+      <h2>Buying mix</h2>
+      <div class="aflist">
+        {% for a in bucket_mix %}
+        <div class="afrow"><span class="nm">{{ a.name|title }}</span>
+          <div class="track"><i style="width:{{ a.pct }}%"></i></div>
+          <span class="vv">{% if a.share %}{{ a.share }}%{% endif %}</span></div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="cols two">
+      <div class="section card">
+        <h2>Categories</h2>
+        {% if fav_categories %}<div class="aflist">{% for a in fav_categories %}
+          <div class="afrow"><span class="nm">{{ a.name|title }}</span><div class="track"><i style="width:{{ a.pct }}%"></i></div><span class="vv">{% if a.share %}{{ a.share }}%{% endif %}</span></div>
+        {% endfor %}</div>{% else %}<p class="muted">—</p>{% endif %}
+      </div>
+      <div class="section card">
+        <h2>Brands</h2>
+        {% if fav_brands %}<div class="aflist">{% for a in fav_brands %}
+          <div class="afrow"><span class="nm">{{ a.name }}</span><div class="track"><i style="width:{{ a.pct }}%"></i></div><span class="vv">{% if a.share %}{{ a.share }}%{% endif %}</span></div>
+        {% endfor %}</div>{% else %}<p class="muted">—</p>{% endif %}
+      </div>
+      <div class="section card">
+        <h2>Strain types</h2>
+        {% if fav_strain_types %}<div class="aflist">{% for a in fav_strain_types %}
+          <div class="afrow"><span class="nm">{{ a.name|title }}</span><div class="track"><i style="width:{{ a.pct }}%"></i></div><span class="vv">{% if a.share %}{{ a.share }}%{% endif %}</span></div>
+        {% endfor %}</div>{% else %}<p class="muted">—</p>{% endif %}
+      </div>
+      <div class="section card">
+        <h2>Sizes</h2>
+        {% if fav_subcats %}<div class="aflist">{% for a in fav_subcats %}
+          <div class="afrow"><span class="nm">{{ a.name }}</span><div class="track"><i style="width:{{ a.pct }}%"></i></div><span class="vv">{% if a.share %}{{ a.share }}%{% endif %}</span></div>
+        {% endfor %}</div>{% else %}<p class="muted">—</p>{% endif %}
+      </div>
+    </div>
+
+    {% if fav_terpenes %}
+    <div class="section card">
+      <h2>Terpene profile</h2>
+      <div class="aflist">{% for a in fav_terpenes %}
+        <div class="afrow"><span class="nm">{{ a.name|title }}</span><div class="track"><i style="width:{{ a.pct }}%"></i></div><span class="vv">{% if a.share %}{{ a.share }}%{% endif %}</span></div>
+      {% endfor %}</div>
+    </div>
+    {% endif %}
+
+    <div class="section card">
+      <h2>Favorite strains</h2>
+      {% if fav_strains %}{% for s in fav_strains %}<span class="chip">{{ s.strain }}{% if s.type %} · {{ s.type|title }}{% endif %}{% if s.times %} ×{{ s.times }}{% endif %}</span>{% endfor %}
+      {% else %}<p class="muted">No strain history yet.</p>{% endif %}
+    </div>
+
+    <div class="section card">
+      <h2>All transactions <span class="muted">({{ history_count }} products)</span></h2>
+      {% if history %}
+      <div style="overflow-x:auto">
+        <table class="histtable">
+          <thead><tr>
+            <th>Product</th><th>Brand</th><th>Category</th><th>Strain</th>
+            <th class="num">Units</th><th class="num">Times</th><th class="num">Last bought</th>
+            <th class="num">Last price</th><th class="num">Est. spend</th>
+          </tr></thead>
+          <tbody>
+          {% for h in history %}
+            <tr>
+              <td>{% firstof h.product h.sku "—" %}</td>
+              <td>{{ h.brand }}</td>
+              <td>{{ h.category }}{% if h.subcategory %} · {{ h.subcategory }}{% endif %}</td>
+              <td>{{ h.strain }}{% if h.strain_type %} ({{ h.strain_type|title }}){% endif %}</td>
+              <td class="num">{{ h.qty|default:"—" }}</td>
+              <td class="num">{{ h.times_bought|default:"—" }}</td>
+              <td class="num">{{ h.last_bought_at|default:"—"|slice:":10" }}</td>
+              <td class="num">{% if h.last_price %}${{ h.last_price|floatformat:0 }}{% else %}—{% endif %}</td>
+              <td class="num">{% if h.spend %}${{ h.spend|floatformat:0 }}{% else %}—{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}<p class="muted">No transactions recorded yet.</p>{% endif %}
+    </div>
+
+    {% if suggestions %}
+    <section class="section">
+      <h2>Recommended next</h2>
+      <div class="rail">{% for p in suggestions %}{% include "pos/_product_card.html" %}{% endfor %}</div>
+    </section>
+    {% endif %}
+  </div>
+</main>
+
+<div id="cart-backdrop" data-cart-close></div>
+<aside id="cart-drawer" aria-label="Cart">
+  <div class="hd"><h2>Cart</h2><button type="button" class="ghost" data-cart-close>Close</button></div>
+  <div class="bd cart"><div id="cart">{% include "pos/_cart.html" %}</div></div>
+  <div class="ft">
+    <form hx-post="{% url 'cart_submit' %}" hx-target="#submit-result">
+      <button type="submit" class="submit">Submit → Ready for pickup</button>
+    </form>
+    <div id="submit-result" style="margin-top:8px"></div>
+  </div>
+</aside>
+</body>
+</html>

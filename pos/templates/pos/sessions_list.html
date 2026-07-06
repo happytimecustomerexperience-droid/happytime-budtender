@@ -1,0 +1,101 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sessions · Budtender POS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+  <script src="{% static 'pos/htmx.min.js' %}" defer></script>
+  <script src="{% static 'pos/app.js' %}" defer></script>
+</head>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+<header class="top">
+  <a class="logo" href="{% url 'screen' %}">HAPPY&nbsp;TIME</a>
+  <nav class="topnav">
+    <a class="navlink active" href="{% url 'sessions' %}">Sessions</a>
+    <a class="navlink" href="{% url 'sessions_rollups' %}">Rollups</a>
+    <a class="navlink" href="{% url 'insights_overview' %}">Insights</a>
+  </nav>
+  <span class="spacer"></span>
+  <a class="link" href="{% url 'screen' %}">← POS</a>
+  <a class="link" href="{% url 'logout' %}">Sign out</a>
+</header>
+
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'screen' %}">Menu</a><span class="sep">›</span><span class="here">Sessions</span>
+</nav>
+
+<main>
+  <div class="detail">
+    <section class="section card" id="active" hx-get="{% url 'sessions_active' %}" hx-trigger="load, every 5s">
+      <p class="muted">Loading active sessions…</p>
+    </section>
+
+    <div class="kpis">
+      <div class="kpi-pill"><div class="v">{{ metrics.visits|default:0 }}</div><div class="k">Visits</div></div>
+      <div class="kpi-pill"><div class="v">{{ metrics.active|default:0 }}</div><div class="k">Active</div></div>
+      <div class="kpi-pill"><div class="v">{{ metrics.checkout_rate|default:0 }}%</div><div class="k">Checkout rate</div></div>
+      <div class="kpi-pill"><div class="v">${{ metrics.revenue|default:0|floatformat:0 }}</div><div class="k">Revenue</div></div>
+      <div class="kpi-pill"><div class="v">{{ metrics.viewed|default:0 }}</div><div class="k">Views</div></div>
+      <div class="kpi-pill"><div class="v">{{ metrics.added|default:0 }}</div><div class="k">Adds</div></div>
+      <div class="kpi-pill"><div class="v">{{ metrics.events|default:0 }}</div><div class="k">Events</div></div>
+      <div class="kpi-pill"><div class="v">{{ metrics.abandoned|default:0 }}</div><div class="k">Abandoned</div></div>
+    </div>
+
+    <form class="filters" method="get">
+      <select name="win" aria-label="Window">
+        {% for w in windows %}<option value="{{ w }}" {% if f.win == w %}selected{% endif %}>{{ w }}</option>{% endfor %}
+      </select>
+      <select name="store" aria-label="Store">
+        <option value="">All stores</option>
+        {% for s in stores %}<option value="{{ s }}" {% if f.store == s %}selected{% endif %}>{{ s|title }}</option>{% endfor %}
+      </select>
+      <select name="budtender" aria-label="Budtender">
+        <option value="">All budtenders</option>
+        {% for b in budtenders %}<option value="{{ b }}" {% if f.budtender == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
+      </select>
+      <select name="outcome" aria-label="Outcome">
+        <option value="">Any outcome</option>
+        {% for o in outcomes %}<option value="{{ o }}" {% if f.outcome == o %}selected{% endif %}>{{ o }}</option>{% endfor %}
+      </select>
+      <button type="submit">Filter</button>
+    </form>
+
+    <section class="section">
+      <h2>Visits <span class="muted">({{ page.paginator.count }})</span></h2>
+      <div class="vtable sessions">
+        <div class="vrow vhead"><span>Customer</span><span>Budtender</span><span>Store</span><span>Outcome</span><span class="num">Items</span><span class="num">Duration</span><span class="num">When</span><span class="num">Actions</span></div>
+        {% for v in page %}
+        <div class="vrow">
+          <span class="nm"><a href="{% url 'session_detail' v.id %}">{{ v.acct_name|default:"Guest" }}</a></span>
+          <span>{{ v.budtender|default:"—" }}</span>
+          <span>{{ v.store|title }}</span>
+          <span><span class="obadge o-{{ v.outcome }}">{{ v.get_outcome_display }}</span></span>
+          <span class="num">{{ v.items_added }}</span>
+          <span class="num">{{ v.duration_display }}</span>
+          <span class="num">{{ v.started_at|date:"M j, H:i" }}</span>
+          <span class="actions-inline">
+            <a class="smallbtn" href="{% url 'session_detail' v.id %}">View</a>
+            <form method="post" action="{% url 'session_delete' v.id %}" onsubmit="return confirm('Delete this session and its events?')">{% csrf_token %}<button class="dangerbtn" type="submit">Delete</button></form>
+          </span>
+        </div>
+        {% empty %}<p class="muted">No visits in this window.</p>{% endfor %}
+      </div>
+      {% if page.paginator.num_pages > 1 %}
+      <div class="pager">
+        <a class="ghost" {% if not page.has_previous %}aria-disabled="true" style="pointer-events:none;opacity:.4"{% endif %}
+           href="?win={{ f.win|urlencode }}&store={{ f.store|urlencode }}&budtender={{ f.budtender|urlencode }}&outcome={{ f.outcome|urlencode }}&page={{ page.previous_page_number }}">← Prev</a>
+        <span class="pg">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+        <a class="ghost" {% if not page.has_next %}aria-disabled="true" style="pointer-events:none;opacity:.4"{% endif %}
+           href="?win={{ f.win|urlencode }}&store={{ f.store|urlencode }}&budtender={{ f.budtender|urlencode }}&outcome={{ f.outcome|urlencode }}&page={{ page.next_page_number }}">Next →</a>
+      </div>
+      {% endif %}
+    </section>
+  </div>
+</main>
+</body>
+</html>

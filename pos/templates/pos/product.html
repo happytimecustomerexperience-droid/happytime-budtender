@@ -1,0 +1,138 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if p %}{{ p.name }}{% else %}Product{% endif %} · Budtender POS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+  <script src="{% static 'pos/htmx.min.js' %}" defer></script>
+  <script src="{% static 'pos/app.js' %}" defer></script>
+</head>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+<header class="top">
+  <a class="logo" href="{% url 'screen' %}">HAPPY&nbsp;TIME</a>
+  <span class="spacer"></span>
+  <button type="button" class="cartbtn" data-cart-open>🛒 Cart <span class="badge" id="cart-badge">{{ cart|length }}</span></button>
+  <span class="cust-chip">👤 <b>{{ acct_name|default:"Guest" }}</b></span>
+  <a class="restartbtn" href="{% url 'end' %}" title="Start a new session">↺ Restart</a>
+</header>
+
+{% if not missing %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{% url 'screen' %}">Menu</a>
+  {% if p.cat_label %}<span class="sep">›</span>
+  <a href="{% url 'screen' %}?cat={{ p.cat_key }}">{{ p.cat_label }}</a>{% endif %}
+  <span class="sep">›</span>
+  <span class="here">{{ p.name }}</span>
+</nav>
+{% endif %}
+
+<main>
+{% if missing %}
+  <div class="banner err">Product unavailable. <a href="{% url 'screen' %}">Back to menu</a></div>
+{% else %}
+  <div class="detail">
+    <!-- HERO -->
+    <div class="dhero">
+      <div class="dimg">
+        {% if p.cat_label %}<span class="catpill c-{{ p.cat_key }}">{{ p.cat_label }}</span>{% endif %}
+        {% if p.fresh %}<span class="flame">FRESH</span>{% endif %}
+        {% if p.img %}<img src="{% static p.img %}" alt="{{ p.brand }}">
+        {% else %}<span class="brandname">{{ p.brand|default:p.name }}</span>{% endif %}
+      </div>
+      <div class="dinfo">
+        {% if p.brand %}<div class="brand">{{ p.brand }}</div>{% endif %}
+        <h1>{{ p.name }}</h1>
+        <div class="dbadges">
+          {% if p.strain_type %}<span class="chip amber">{{ p.strain_type|title }}</span>{% endif %}
+          {% if p.strain %}<span class="chip">{{ p.strain }}</span>{% endif %}
+          {% if p.subcategory %}<span class="chip">{{ p.subcategory|title }}</span>{% endif %}
+        </div>
+        <div class="dprice">
+          <span class="price">${{ p.price|floatformat:0 }}</span>
+          {% if p.price_was and p.price_was > p.price %}<span class="was">${{ p.price_was|floatformat:0 }}</span>{% endif %}
+          {% if p.thc %}<span class="thc">{{ p.thc|floatformat:0 }}% THC</span>{% endif %}
+        </div>
+        <form class="addrow" hx-post="{% url 'cart_add' %}" hx-target="#cart" style="margin-top:14px;max-width:280px">
+          <input type="hidden" name="ProductId" value="{{ p.ProductId }}">
+          <input name="Cnt" type="number" min="1" max="99" value="1" aria-label="qty">
+          <button type="submit">Add to cart</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- LAB / POTENCY -->
+    <div class="section card">
+      <h2>Lab data</h2>
+      <div class="lab">
+        <div class="labrow"><span>THC</span><div class="bar"><i style="width:{% widthratio p.thc 35 100 %}%;background:var(--amber)"></i></div><b>{{ p.thc|default:"—"|floatformat:1 }}%</b></div>
+        <div class="labrow"><span>CBD</span><div class="bar"><i style="width:{% widthratio p.cbd 25 100 %}%;background:var(--good)"></i></div><b>{{ p.cbd|default:"—"|floatformat:1 }}%</b></div>
+        {% if p.total_terpenes %}<div class="labrow"><span>Total terpenes</span><div class="bar"><i style="width:{% widthratio p.total_terpenes 5 100 %}%;background:#b388ff"></i></div><b>{{ p.total_terpenes|floatformat:1 }}%</b></div>{% endif %}
+        {% if p.potency_mg %}<div class="labrow"><span>Dose</span><span class="muted" style="flex:1"></span><b>{{ p.potency_mg|floatformat:0 }} mg</b></div>{% endif %}
+        {% if p.unit_grams %}<div class="labrow"><span>Size</span><span class="muted" style="flex:1"></span><b>{{ p.unit_grams }} g</b></div>{% endif %}
+      </div>
+    </div>
+
+    {% if strain_blurb %}
+    <div class="section card"><h2>{{ p.strain_type|title }}</h2><p>{{ strain_blurb }}</p></div>
+    {% endif %}
+
+    {% if terp %}
+    <div class="section card">
+      <h2>Dominant terpene · {{ p.terpene|title }}</h2>
+      <p><strong>{{ terp.0 }}.</strong> {{ terp.1 }}</p>
+    </div>
+    {% endif %}
+
+    {% if effects %}
+    <div class="section card">
+      <h2>Effects</h2>
+      {% for name, blurb in effects %}
+        <div class="efx"><span class="chip amber">{{ name|title }}</span> {% if blurb %}<span class="muted">{{ blurb }}</span>{% endif %}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if p.flavors %}
+    <div class="section card"><h2>Flavors</h2>{% for fl in p.flavors %}<span class="chip">{{ fl|title }}</span>{% endfor %}</div>
+    {% endif %}
+
+    <div class="section card">
+      <h2>Product</h2>
+      <div class="kpi">
+        {% if p.brand %}<div>Brand <b>{{ p.brand }}</b></div>{% endif %}
+        {% if p.vendor %}<div>Grower <b>{{ p.vendor }}</b></div>{% endif %}
+        {% if p.cat_label %}<div>Category <b>{{ p.cat_label }}</b></div>{% endif %}
+        {% if p.received_date %}<div>Received <b>{{ p.received_date|slice:":10" }}</b></div>{% endif %}
+        <div>In stock <b>{{ p.qty|floatformat:0 }}</b></div>
+      </div>
+      <p class="hint" style="margin-top:8px">Educational terpene/effect notes are general references, not medical claims.</p>
+    </div>
+
+    {% if similar %}
+    <section class="section">
+      <h2>More {{ p.cat_label }}</h2>
+      <div class="grid">{% for p in similar %}{% include "pos/_product_card.html" %}{% endfor %}</div>
+    </section>
+    {% endif %}
+  </div>
+{% endif %}
+</main>
+
+<div id="cart-backdrop" data-cart-close></div>
+<aside id="cart-drawer" aria-label="Cart">
+  <div class="hd"><h2>Cart</h2><button type="button" class="ghost" data-cart-close>Close</button></div>
+  <div class="bd cart"><div id="cart">{% include "pos/_cart.html" %}</div></div>
+  <div class="ft">
+    <form hx-post="{% url 'cart_submit' %}" hx-target="#submit-result">
+      <button type="submit" class="submit">Submit → Ready for pickup</button>
+    </form>
+    <div id="submit-result" style="margin-top:8px"></div>
+  </div>
+</aside>
+</body>
+</html>

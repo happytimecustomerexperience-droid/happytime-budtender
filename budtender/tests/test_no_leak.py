@@ -37,7 +37,10 @@ class PublicSerializerTests(TestCase):
             self.assertNotIn(word, blob, f"'{word}' leaked into public product")
 
 
-@override_settings(HHT_BACKEND_TOKEN=TOKEN)
+@override_settings(
+    HHT_BACKEND_TOKEN=TOKEN,
+    CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}},
+)
 class SearchEndpointTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -113,6 +116,55 @@ class SearchEndpointTests(TestCase):
         self.assertEqual(effect_heavy[1]["sku"], "EFFECT")
         self.assertEqual(margin_heavy[1]["sku"], "PROFIT")
 
+    def test_known_customer_taste_leads_before_unbought_high_margin_brand(self):
+        _make_product(
+            sku="PHAT", location_slug="pullman", slug="phat", name="Premium Flower",
+            brand="Phat Panda", price=35, cost=1, margin=34, quantity_on_hand=10,
+        )
+        _make_product(
+            sku="TRAIL", location_slug="pullman", slug="trail", name="Usual Hybrid",
+            brand="Trail Mix", price=30, cost=20, margin=10, quantity_on_hand=10,
+            strain_type="hybrid",
+        )
+        CustomerProfile.objects.create(
+            phone="+15095551234",
+            total_orders=4,
+            brand_affinity={"Trail Mix": 1.0},
+            category_affinity={"flower": 1.0},
+            strain_type_affinity={"hybrid": 1.0},
+            price_tier="mid",
+            novelty_score=0.0,
+            purchase_history=[{
+                "sku": "TRAIL",
+                "brand": "Trail Mix",
+                "category": "flower",
+                "strain_type": "hybrid",
+                "times_bought": 4,
+                "last_bought_at": "2026-07-01T00:00:00+00:00",
+            }],
+        )
+        payload = {
+            "slots": {"store": "pullman", "category": "flower", "price_tier": "mid"},
+            "limit": 2,
+            "ranking_weights": {},
+        }
+
+        anonymous = self.client.post(
+            "/api/v1/products/search/",
+            data=json.dumps(payload),
+            content_type="application/json",
+            **self._auth(),
+        ).json()["results"]
+        known = self.client.post(
+            "/api/v1/products/search/",
+            data=json.dumps({**payload, "phone": "+1 (509) 555-1234"}),
+            content_type="application/json",
+            **self._auth(),
+        ).json()["results"]
+
+        self.assertEqual(anonymous[0]["sku"], "PHAT")
+        self.assertEqual(known[0]["sku"], "TRAIL")
+
     def test_health_is_public(self):
         r = self.client.get("/api/v1/health/")
         self.assertEqual(r.status_code, 200)
@@ -123,12 +175,17 @@ class SearchEndpointTests(TestCase):
             category_affinity={"flower": 0.7, "edible": 0.3}, brand_affinity={"Acme": 1.0},
             bucket_mix={"core": 0.6, "profit": 0.4},
             purchase_history=[{"sku": "A", "brand": "Acme", "category": "flower",
-                               "times_bought": 4, "last_price": 30, "price_z": 0.5}],
+                               "strain_type": "hybrid", "times_bought": 4,
+                               "last_bought_at": "2026-06-01T00:00:00+00:00",
+                               "last_price": 30, "price_z": 0.5}],
         )
         # serializer is leak-safe
         p = CustomerProfile.objects.get(phone="+15095551212")
-        self.assertNotIn("margin", json.dumps(customer_detail(p)).lower())
-        self.assertNotIn("cost", json.dumps(customer_detail(p)).lower())
+        detail = customer_detail(p)
+        self.assertEqual(detail["favorite_brands"][0]["brand"], "Acme")
+        self.assertEqual(detail["purchase_history"][0]["product"], "Blue Dream")
+        self.assertNotIn("margin", json.dumps(detail).lower())
+        self.assertNotIn("cost", json.dumps(detail).lower())
 
         # list requires the token, searches by name, no leak
         self.assertEqual(self.client.post("/api/v1/customer/list", data="{}",

@@ -1,0 +1,6 @@
+<div class="cmprow">
+  <span class="cl">{{ label }}</span>
+  <span class="cval">{{ prefix }}{{ mine|default:0 }}{{ suffix }}</span>
+  <span class="cavg">team {{ prefix }}{{ avg|default:0 }}{{ suffix }}</span>
+  {% if mine >= avg %}<span class="delta up">▲ ahead</span>{% else %}<span class="delta dn">▼ below</span>{% endif %}
+</div>

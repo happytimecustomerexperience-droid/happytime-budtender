@@ -3,7 +3,7 @@
 {% block content %}
 <p class="muted"><a href="{% url 'dash-customers' %}">← Customers</a></p>
 <div class="row between">
-  <h1>{{ c.name }}</h1>
+  <h1><a href="{% url 'dash-customer-detail' c.id %}" style="color:inherit;text-decoration:none">{{ c.name }}</a></h1>
   <span>
     {% if c.has_analytics %}<span class="badge blue">analytics</span>{% endif %}
     {% if c.has_live %}<span class="badge green">live</span>{% endif %}
@@ -51,6 +51,26 @@
     </div>{% endif %}
   </div>
   <div class="card">
+    <h2>Favorite brands <span class="muted">(profile)</span></h2>
+    {% if c.favorite_brands %}
+    <table style="width:100%">
+      <thead><tr><th>Brand</th><th>Share</th></tr></thead>
+      <tbody>
+        {% for b in c.favorite_brands %}
+        <tr><td>{{ b.brand|default:"â€”" }}</td><td>{% if b.share != None %}{{ b.share|floatformat:2 }}{% else %}â€”{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% elif c.brand_affinity %}
+    <div class="row" style="flex-wrap:wrap;gap:6px">
+      {% for k, v in c.brand_affinity.items %}<span class="badge blue">{{ k }}</span>{% endfor %}
+    </div>
+    {% else %}<p class="muted">No favorite brands yet.</p>{% endif %}
+  </div>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr;gap:10px">
+  <div class="card">
     <h2>Live affinity <span class="muted">(budtender, 6h)</span></h2>
     {% if c.bucket_mix %}<div class="muted" style="font-size:12px">Bucket mix</div>
     <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:8px">
@@ -62,6 +82,19 @@
     </div>{% endif %}
     {% if not c.bucket_mix and not c.brand_affinity %}<p class="muted">No live budtender match yet (built after their next transaction sync).</p>{% endif %}
   </div>
+  <div class="card">
+    <h2>Best bought together</h2>
+    {% if pairs %}
+    <table style="width:100%">
+      <thead><tr><th>Add-on</th><th>Why</th></tr></thead>
+      <tbody>
+        {% for p in pairs %}
+        <tr><td>{{ p.title }}</td><td class="muted">{{ p.reason }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="muted">No basket pairs loaded for this customer yet.</p>{% endif %}
+  </div>
 </div>
 
 {% if c.favorites %}
@@ -72,6 +105,28 @@
     <tbody>
       {% for f in c.favorites %}
       <tr><td>{{ f.product|default:"—" }}</td><td>{{ f.brand|default:"—" }}</td><td>{{ f.category|default:"—" }}</td><td>{{ f.units|default:"—" }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if c.purchase_history %}
+<div class="card">
+  <h2>Purchase history <span class="muted">Â· recent profile rows</span></h2>
+  <table style="width:100%">
+    <thead><tr><th>Product</th><th>Brand</th><th>Category</th><th>Type</th><th>Times bought</th><th>Last bought</th><th>Last price</th></tr></thead>
+    <tbody>
+      {% for h in c.purchase_history %}
+      <tr>
+        <td>{{ h.product|default:"â€”" }}</td>
+        <td>{{ h.brand|default:"â€”" }}</td>
+        <td>{{ h.category|default:"â€”" }}</td>
+        <td>{{ h.strain_type|default:"â€”" }}</td>
+        <td>{{ h.units|default:"â€”" }}</td>
+        <td>{{ h.last_bought_at|slice:":10"|default:"â€”" }}</td>
+        <td>{% if h.last_price != None %}${{ h.last_price|floatformat:2 }}{% else %}â€”{% endif %}</td>
+      </tr>
       {% endfor %}
     </tbody>
   </table>

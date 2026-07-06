@@ -149,6 +149,35 @@ def test_resume_by_phone_graceful_miss():
     assert out["session_token"] is None
 
 
+def test_chat_message_posts_to_gemini_chat_endpoint_with_bearer():
+    fs = FakeSession(default={"ok": True, "message": {"content": "Hi"}, "source": "gemini"})
+    out = _client(fs).chat_message(
+        "What should I get?",
+        session_token="s-1",
+        location="yakima",
+        channel="chat",
+        phone="+15095551234",
+    )
+    call = fs.calls[0]
+    assert out["source"] == "gemini"
+    assert call["url"] == f"{BASE}/api/v1/chat/message"
+    assert call["headers"]["Authorization"] == f"Bearer {TOKEN}"
+    assert call["body"] == {
+        "message": "What should I get?",
+        "channel": "chat",
+        "session_token": "s-1",
+        "location": "yakima",
+        "phone": "+15095551234",
+    }
+
+
+def test_chat_message_empty_skips_request():
+    fs = FakeSession()
+    out = _client(fs).chat_message("   ")
+    assert out == {"ok": False, "message": None, "source": "empty"}
+    assert fs.calls == []
+
+
 # ── B. selection switch (margin vs taste) — request body presence of phone ──────
 def test_search_omits_phone_when_anonymous():
     fs = FakeSession(default={"results": []})

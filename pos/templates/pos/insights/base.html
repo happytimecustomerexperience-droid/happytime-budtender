@@ -1,0 +1,51 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block subtitle %}Insights{% endblock %} · Budtender POS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="{% url 'screen' %}">HAPPY&nbsp;TIME</a>
+  <nav class="topnav">
+    <a class="navlink" href="{% url 'sessions' %}">Sessions</a>
+    <a class="navlink" href="{% url 'sessions_rollups' %}">Rollups</a>
+    <a class="navlink active" href="{% url 'insights_overview' %}">Insights</a>
+  </nav>
+  <span class="spacer"></span>
+  <a class="link" href="{% url 'screen' %}">← POS</a>
+  <a class="link" href="{% url 'logout' %}">Sign out</a>
+</header>
+
+<nav class="subtabs" aria-label="Insights sections">
+  <a href="{% url 'insights_overview' %}" class="{% if tab == 'overview' %}on{% endif %}">Overview</a>
+  <a href="{% url 'insights_products' %}" class="{% if tab == 'products' %}on{% endif %}">Products &amp; Brands</a>
+  <a href="{% url 'insights_customers' %}" class="{% if tab == 'customers' %}on{% endif %}">Customers</a>
+  <a href="{% url 'insights_budtenders' %}" class="{% if tab == 'budtenders' %}on{% endif %}">Budtenders</a>
+</nav>
+
+<main>
+  <div class="detail wide">
+    {% block filters %}
+    <form class="filters dashfilters" method="get">
+      <select name="win" aria-label="Window">
+        {% for w in windows %}<option value="{{ w }}" {% if f.win == w %}selected{% endif %}>{{ w }}</option>{% endfor %}
+      </select>
+      <select name="store" aria-label="Store">
+        <option value="">All stores</option>
+        {% for s in stores %}<option value="{{ s }}" {% if f.store == s %}selected{% endif %}>{{ s|title }}</option>{% endfor %}
+      </select>
+      <button type="submit">Apply</button>
+    </form>
+    {% endblock %}
+    {% block content %}{% endblock %}
+  </div>
+</main>
+</body>
+</html>

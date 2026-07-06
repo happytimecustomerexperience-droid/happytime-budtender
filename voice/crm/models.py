@@ -135,13 +135,14 @@ class CustomerProfile(models.Model):
     budtender persona uses to personalize a live call. It is DISTINCT from the phone-hash call log:
     the live call-time personalization runs through the budtender service by phone (never stored
     here); this table is the historical CRM view staff browse. Names are POS-sourced and
-    staff-visible (the same names staff see in Dutchie); it carries NO phone number.
+    staff-visible (the same names staff see in Dutchie); it carries NO raw phone number.
 
     Imported by ``manage.py import_customer_profiles`` from the analytics ``customers.json`` +
     ``baskets.json``. Keyed by a stable ``customer_key`` (the POS customer key/name) so a re-import
     upserts in place. Leak-safe: no cost/margin column — only customer-facing spend aggregates."""
 
     customer_key = models.CharField(max_length=160, unique=True, db_index=True)
+    phone_hash = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)
     name = models.CharField(max_length=160, blank=True)
     orders = models.IntegerField(default=0)
     total_spend = models.FloatField(default=0.0)

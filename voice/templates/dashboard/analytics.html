@@ -15,6 +15,10 @@
   <div class="pill"><div class="n">{{ suggested }}</div><div class="l">Suggestions</div></div>
   <div class="pill"><div class="n">{{ escalations }}</div><div class="l">Escalations</div></div>
   <div class="pill"><div class="n">{{ vendor_callbacks }}</div><div class="l">Vendor callbacks</div></div>
+  {% if chatbot.ok %}
+    <div class="pill"><div class="n">{{ chatbot.summary.chat.opens|default:"0" }}</div><div class="l">Chat opens</div></div>
+    <div class="pill"><div class="n">{{ chatbot.summary.conversions.shop_now_clicks|default:"0" }}</div><div class="l">Shop clicks</div></div>
+  {% endif %}
 </div>
 
 <div class="grid" style="grid-template-columns:1fr 1fr">
@@ -31,6 +35,38 @@
     <table>
       <tr><th>Store</th><th>Calls</th></tr>
       {% for row in by_store %}<tr><td>{{ row.store }}</td><td>{{ row.n }}</td></tr>{% empty %}<tr><td colspan="2" class="muted">No store-tagged calls.</td></tr>{% endfor %}
+    </table>
+  </div>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr">
+  <div class="card">
+    <h2>Chatbot funnel</h2>
+    {% if chatbot.ok %}
+      <table>
+        <tr><th>Metric</th><th>Count</th></tr>
+        <tr><td>Unique visitors</td><td>{{ chatbot.summary.unique_visitors|default:"0" }}</td></tr>
+        <tr><td>Chat opens</td><td>{{ chatbot.summary.chat.opens|default:"0" }}</td></tr>
+        <tr><td>User messages</td><td>{{ chatbot.summary.chat.user_messages_sent|default:"0" }}</td></tr>
+        <tr><td>Recommendation views</td><td>{{ chatbot.summary.chat.recommendation_views|default:"0" }}</td></tr>
+        <tr><td>Shop-now clicks</td><td>{{ chatbot.summary.conversions.shop_now_clicks|default:"0" }}</td></tr>
+      </table>
+    {% else %}
+      <p class="muted">{{ chatbot.reason }}</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Channel totals</h2>
+    <table>
+      <tr><th>Channel</th><th>Primary interactions</th></tr>
+      <tr><td>Voice calls</td><td>{{ total }}</td></tr>
+      {% if chatbot.ok %}
+        <tr><td>Chat sessions opened</td><td>{{ chatbot.summary.chat.opens|default:"0" }}</td></tr>
+        <tr><td>Menu product views</td><td>{{ chatbot.summary.menu_embed.product_views|default:"0" }}</td></tr>
+      {% else %}
+        <tr><td>Chatbot</td><td class="muted">Unavailable</td></tr>
+      {% endif %}
     </table>
   </div>
 </div>

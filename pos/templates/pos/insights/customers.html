@@ -1,0 +1,90 @@
+{% extends "pos/insights/base.html" %}
+{% block subtitle %}Customers · Insights{% endblock %}
+
+{% block filters %}
+<p class="muted booknote">Across your whole customer book ({{ n_profiles }} profiles) — not window-filtered.</p>
+{% endblock %}
+
+{% block content %}
+{% if n_profiles == 0 %}
+  <section class="card empty">
+    <h2>Customer preferences</h2>
+    <p>No customer taste profiles are available. Point <code>CUSTOMER_DB_DSN</code> at the
+       happytime-budtender Postgres (read-only) to light up what your customers actually like —
+       favourite brands, categories, strains, flavours, THC bands, and persona mix.</p>
+  </section>
+{% else %}
+
+<div class="cols two">
+  <section class="card donutcard">
+    <h2>Customer mix <span class="muted">by segment</span></h2>
+    <div class="donutrow">
+      {{ seg_donut|safe }}
+      <ul class="legend">
+        {% for l in seg_legend %}<li><span class="sw" style="background:{{ l.color }}"></span>{{ l.label }} <b>{{ l.value }}</b> <em>{{ l.pct }}%</em></li>{% endfor %}
+      </ul>
+    </div>
+  </section>
+  <section class="card donutcard">
+    <h2>Price tier <span class="muted">preference</span></h2>
+    <div class="donutrow">
+      {{ tier_donut|safe }}
+      <ul class="legend">
+        {% for l in tier_legend %}<li><span class="sw" style="background:{{ l.color }}"></span>{{ l.label }} <b>{{ l.value }}</b> <em>{{ l.pct }}%</em></li>{% empty %}<li class="muted">No tier data.</li>{% endfor %}
+      </ul>
+    </div>
+  </section>
+</div>
+
+<div class="cols two">
+  <section class="card">
+    <h2>Favourite brands</h2>
+    <div class="aflist">
+      {% for r in brands %}<div class="afrow"><span class="nm">{{ r.name }}</span><span class="track"><i style="width:{{ r.pct }}%"></i></span><span class="vv">{{ r.weight }}</span></div>
+      {% empty %}<p class="muted">No brand affinity.</p>{% endfor %}
+    </div>
+  </section>
+  <section class="card">
+    <h2>Favourite categories</h2>
+    <div class="aflist">
+      {% for r in cats %}<div class="afrow"><span class="nm">{{ r.name }}</span><span class="track"><i style="width:{{ r.pct }}%"></i></span><span class="vv">{{ r.weight }}</span></div>
+      {% empty %}<p class="muted">No category affinity.</p>{% endfor %}
+    </div>
+  </section>
+</div>
+
+<div class="cols two">
+  <section class="card">
+    <h2>Favourite flavours</h2>
+    <div class="aflist">
+      {% for r in flavors %}<div class="afrow"><span class="nm">{{ r.name }}</span><span class="track"><i style="width:{{ r.pct }}%"></i></span><span class="vv">{{ r.weight }}</span></div>
+      {% empty %}<p class="muted">No flavour affinity.</p>{% endfor %}
+    </div>
+  </section>
+  <section class="card">
+    <h2>Top terpenes</h2>
+    <div class="aflist">
+      {% for r in terpenes %}<div class="afrow"><span class="nm">{{ r.name }}</span><span class="track"><i style="width:{{ r.pct }}%"></i></span><span class="vv">{{ r.weight }}</span></div>
+      {% empty %}<p class="muted">No terpene affinity.</p>{% endfor %}
+    </div>
+  </section>
+</div>
+
+<div class="cols two">
+  <section class="card">
+    <h2>Strain type</h2>
+    <div class="aflist">
+      {% for r in strain_types %}<div class="afrow"><span class="nm">{{ r.name|title }}</span><span class="track"><i style="width:{{ r.pct }}%"></i></span><span class="vv">{{ r.weight }}</span></div>
+      {% empty %}<p class="muted">No strain-type affinity.</p>{% endfor %}
+    </div>
+  </section>
+  <section class="card">
+    <h2>Preferred THC band</h2>
+    <div class="aflist">
+      {% for r in thc_bands %}<div class="afrow"><span class="nm">{{ r.name }}</span><span class="track"><i style="width:{{ r.pct }}%"></i></span><span class="vv">{{ r.n }}</span></div>
+      {% empty %}<p class="muted">No THC data.</p>{% endfor %}
+    </div>
+  </section>
+</div>
+{% endif %}
+{% endblock %}

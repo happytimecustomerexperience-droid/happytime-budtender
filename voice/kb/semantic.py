@@ -90,24 +90,28 @@ def _build_corpus(store: str | None):
     return items, row_by_id
 
 
+def _corpus_cache_key(items: list[tuple[str, str]]) -> str:
+    h = hashlib.sha256()
+    for _id, text in items:
+        h.update(f"{_id}\x1f{text}".encode())
+    return f"{_CORPUS_PREFIX}:{gemini.active_embedding_model()}:{constants.EMBED_DIM}:{h.hexdigest()[:16]}"
+
+
 def _corpus_vectors(items: list[tuple[str, str]]) -> dict[str, list[float]]:
     """items: list of (id, text) -> {id: vector}, cached + content-hashed so it
     self-invalidates whenever the corpus text (or the embedding model/dim) changes —
     that is the no-redeploy live-edit property (22-SPEC §4.2, P0 acceptance C2)."""
     if not items:
         return {}
-    h = hashlib.sha256()
-    for _id, text in items:
-        h.update(f"{_id}\x1f{text}".encode())
-    # Bind the cache entry to the embedding space so query/corpus vectors can never be
-    # compared across a different model or dimensionality.
-    key = f"{_CORPUS_PREFIX}:{gemini.active_embedding_model()}:{constants.EMBED_DIM}:{h.hexdigest()[:16]}"
+    key = _corpus_cache_key(items)
     cached = django_cache.get(key)
     if cached is not None:
         return cached
     vecs = gemini.embed([t for _, t in items], task_type="RETRIEVAL_DOCUMENT")
     out = {items[i][0]: vecs[i] for i in range(len(items))}
-    django_cache.set(key, out, _CACHE_TTL)
+    # gemini.embed may resolve gemini-embedding-2 to a fallback model. Bind the
+    # stored vectors to the resolved embedding space, not the pre-call preference.
+    django_cache.set(_corpus_cache_key(items), out, _CACHE_TTL)
     return out
 
 
@@ -193,14 +197,7 @@ def reindex() -> int:
     if enabled():
         # Drop any stale entry then re-embed → repopulate the content-hash-keyed cache.
         try:
-            h = hashlib.sha256()
-            for _id, text in items:
-                h.update(f"{_id}\x1f{text}".encode())
-            key = (
-                f"{_CORPUS_PREFIX}:{gemini.active_embedding_model()}:"
-                f"{constants.EMBED_DIM}:{h.hexdigest()[:16]}"
-            )
-            django_cache.delete(key)
+            django_cache.delete(_corpus_cache_key(items))
             _corpus_vectors(items)
         except Exception:  # noqa: BLE001 — reindex must not crash on a transient embed error
             logger.warning("reindex embedding failed; corpus count still returned", exc_info=True)

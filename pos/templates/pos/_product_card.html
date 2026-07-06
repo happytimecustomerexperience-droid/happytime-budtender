@@ -1,0 +1,26 @@
+{% load static %}
+<div class="pcard">
+  <a class="plink" href="{% url 'product' p.ProductId %}">
+    <div class="img">
+      {% if p.cat_label %}<span class="catpill c-{{ p.cat_key }}">{{ p.cat_label }}</span>{% endif %}
+      {% if p.fresh %}<span class="flame">FRESH</span>{% endif %}
+      {% if p.img %}<img src="{% static p.img %}" loading="lazy" alt="{{ p.brand }}">
+      {% else %}<span class="brandname">{{ p.brand|default:p.name }}</span>{% endif %}
+    </div>
+    <div class="body">
+      {% if p.brand %}<div class="brand">{{ p.brand }}</div>{% endif %}
+      <div class="name">{{ p.name }}</div>
+      {% if p.why %}<div class="why">{{ p.why }}{% if p.confidence %} <span class="conf conf-{{ p.confidence }}">{{ p.confidence }} match</span>{% endif %}</div>{% endif %}
+      <div class="meta">
+      <span class="price">${{ p.price|floatformat:0 }}</span>
+      {% if p.price_was and p.price_was > p.price %}<span class="was">${{ p.price_was|floatformat:0 }}</span>{% endif %}
+      {% if p.thc %}<span class="thc">{{ p.thc|floatformat:0 }}% THC</span>{% endif %}
+      </div>
+    </div>
+  </a>
+  <form class="addrow" hx-post="{% url 'cart_add' %}" hx-target="#cart">
+    <input type="hidden" name="ProductId" value="{{ p.ProductId }}">
+    <input name="Cnt" type="number" min="1" max="99" value="1" aria-label="qty">
+    <button type="submit">Add</button>
+  </form>
+</div>

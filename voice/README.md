@@ -25,8 +25,9 @@ Vapi Squad "Happy Time Voice"
   `swedish-bot` chassis; `core/services/gemini.py` lifted verbatim (Vertex-preferred).
 - **Data plane:** product suggestions call the separate **`happytime-budtender`** microservice over HTTP
   (Bearer); cost/margin can never be spoken (leak-guard + allowlist).
-- **KB:** `kb/` models (FAQ / policy / store-facts / weights-types taxonomy / education / blog) with Gemini
-  768-dim embeddings + cosine retrieval and a deterministic keyword fallback; mirrored to Vapi Files.
+- **KB:** `kb/` models (FAQ / policy / store-facts / weights-types taxonomy / education / blog) with
+  `gemini-embedding-2` 768-dim embeddings + cosine retrieval and a deterministic keyword fallback;
+  mirrored to Vapi Files.
 - **Deploy:** Vapi assistants/tools/squad are provisioned **as code** (`provision_vapi`, idempotent,
   zero-drift). Web + webhook served by gunicorn behind Caddy (`docker-compose.prod.yaml`).
 
@@ -64,16 +65,18 @@ in the dashboard, then **Publish to Vapi** to PATCH the live assistants/squad.
 `.env` placeholders the owner supplies — see [`docs/plans/03-CONVENTIONS.md`](docs/plans/03-CONVENTIONS.md) §3:
 
 - `VAPI_PRIVATE_KEY`, `VAPI_WEBHOOK_SECRET`, `VAPI_PHONE_NUMBER_ID`, `PUBLIC_BASE_URL` (HTTPS base Vapi calls back to).
-- `HHT_BUDTENDER_BASE_URL` + `HHT_BACKEND_TOKEN` (must match the budtender service).
-- `GOOGLE_CLOUD_PROJECT` / `GOOGLE_APPLICATION_CREDENTIALS` (Vertex) or `GEMINI_API_KEY`.
+- For multiple inbound Vapi numbers, set `VAPI_PHONE_NUMBER_STORE_MAP='{"pn_...":"yakima","pn_...":"mount-vernon","pn_...":"pullman"}'`.
+- `HHT_BUDTENDER_BASE_URL` + `HHT_BACKEND_TOKEN` (must match the budtender service; the same token
+  gates `POST /api/voice/kb/search` for the website chatbot's grounded RAG lookup).
+- `GOOGLE_CLOUD_PROJECT` / `GOOGLE_APPLICATION_CREDENTIALS` (Vertex) or `GEMINI_API_KEY`;
+  override the embedding model with `GEMINI_EMBED_MODEL` only if Google deprecates the default.
 - Transfer numbers (`HHT_TRANSFER_NUMBER_*`) are pre-filled with the published store lines — confirm.
 - **Dutchie POS keys live in the `happytime-budtender` service**, not here.
-- **Budtender-side TODOs:** the voice repo codes against the contract in
-  [`docs/plans/21-SPEC-budtender-contract.md`](docs/plans/21-SPEC-budtender-contract.md); any endpoints
-  marked "budtender-side TODO" must be added in that repo before live suggestions work.
+- `/healthz` reports sanitized dependency booleans for DB, Gemini, Vapi, and the internal budtender
+  service (`ok` / `configured` only; no URLs, tokens, or exception strings).
 - **Brand assets DEFERRED:** real hex/fonts/logo per [`brand/CAPTURE.md`](brand/CAPTURE.md) (blocked by the
   site's Vercel checkpoint — needs a manual browser capture).
-- **Mt Vernon hours** are seeded `confirmed=False` (the `/contact` vs `/mount-vernon` pages disagree).
+- Store hours and June specials are seeded as confirmed KB facts; run `seed_kb` after monthly specials change.
 
 ## Status
 

@@ -78,6 +78,42 @@ def test_import_customer_profiles(tmp_path):
 
 
 # ── dashboard browse — reads budtender LIVE, falls back to the local snapshot (P7) ──
+@pytest.mark.django_db
+def test_import_customer_profiles_dedupes_same_phone(tmp_path, settings):
+    from django.core.management import call_command
+
+    from crm.models import CustomerProfile
+
+    settings.PHONE_HASH_PEPPER = "test-pepper"
+    src = tmp_path / "customers.json"
+    src.write_text(json.dumps({
+        "customerProfiles": {
+            "Jane A": {"Phone": "509-555-1212", "Orders": 1, "TotalSpend": 100, "AOV": 100,
+                       "FirstOrder": "2026-01-01", "LastOrder": "2026-01-01",
+                       "TopCategories": [{"category": "Flower", "share": 100}]},
+            "Jane B": {"CellPhone": "+1 (509) 555-1212", "Orders": 2, "TotalSpend": 200, "AOV": 100,
+                       "FirstOrder": "2026-02-01", "LastOrder": "2026-03-01",
+                       "TopCategories": [{"category": "Edibles", "share": 50}]},
+        },
+        "customerRichDetail": {
+            "Jane A": {"topSkus": [{"Product Name": "Blue Dream", "Brand": "Acme", "Units": 1}]},
+            "Jane B": {"topSkus": [{"Product Name": "Blue Dream", "Brand": "Acme", "Units": 2},
+                                   {"Product Name": "Gummies", "Brand": "Wyld", "Units": 4}]},
+        },
+    }), encoding="utf-8")
+
+    call_command("import_customer_profiles", "--customers", str(src))
+
+    assert CustomerProfile.objects.count() == 1
+    profile = CustomerProfile.objects.get()
+    assert profile.phone_hash
+    assert profile.customer_key.startswith("phone:")
+    assert profile.orders == 3
+    assert profile.total_spend == 300
+    assert profile.favorites[0]["product"] == "Gummies"
+    assert any(f["product"] == "Blue Dream" and f["units"] == 3 for f in profile.favorites)
+
+
 class _FakeBT:
     """A stand-in budtender client returning live profiles (or empty to force the fallback)."""
 
@@ -98,6 +134,10 @@ class _FakeBT:
         return {"id": 7, "name": name or "Live Larry", "total_orders": 9, "price_tier": "top",
                 "novelty_score": 0.4, "top_categories": [{"category": "flower", "share": 0.6}],
                 "favorites": [{"product": "Blue Dream 3.5g", "brand": "Acme", "category": "flower", "units": 5}],
+                "favorite_brands": [{"brand": "Acme", "share": 1.0}],
+                "purchase_history": [{"product": "Blue Dream 3.5g", "brand": "Acme", "category": "flower",
+                                      "strain_type": "hybrid", "units": 5,
+                                      "last_bought_at": "2026-06-01T00:00:00", "last_price": 32.0}],
                 "category_affinity": {"flower": 0.6}, "brand_affinity": {"Acme": 1.0},
                 "bucket_mix": {"core": 0.7}, "top_brand": "Acme", "purchase_count": 3}
 
@@ -106,8 +146,12 @@ class _FakeBT:
 def test_list_analytics_primary_detail_merges_live(client, django_user_model, monkeypatch):
     """Roster = analytics snapshot (rich RFM); detail MERGES analytics + budtender live by name."""
     from crm.models import CustomerProfile
+    from dashboard import views as dashboard_views
     from voice import budtender_client
     monkeypatch.setattr(budtender_client, "budtender", lambda: _FakeBT(ok=True))
+    monkeypatch.setattr(dashboard_views, "_baskets_index", lambda: {
+        "Blue Dream 3.5g": [{"with": "OG Pre-roll", "lift": 3.1}],
+    })
 
     staff = django_user_model.objects.create_user("st", password="x", is_staff=True, is_superuser=True)
     client.force_login(staff)
@@ -125,6 +169,9 @@ def test_list_analytics_primary_detail_merges_live(client, django_user_model, mo
     assert resp.status_code == 200
     assert b"Loyalist" in resp.content       # analytics RFM segment
     assert b"Blue Dream" in resp.content      # live favorite (preferred over the analytics one)
+    assert b"Favorite brands" in resp.content
+    assert b"Purchase history" in resp.content
+    assert b"OG Pre-roll" in resp.content
     assert b"flower" in resp.content          # live affinity merged in
     assert b"Personalized feed" in resp.content
 

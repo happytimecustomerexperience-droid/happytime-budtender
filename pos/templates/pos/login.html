@@ -1,0 +1,27 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Budtender POS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+</head>
+<body>
+<header class="top"><span class="logo">HAPPY&nbsp;TIME</span><span class="muted" style="margin-left:8px">Budtender POS</span></header>
+<div class="auth">
+  <div class="card">
+    <h2>Sign in</h2>
+    {% if form.errors %}<p class="err">Wrong username or password.</p>{% endif %}
+    <form method="post" action="{% url 'login' %}">
+      {% csrf_token %}
+      <label for="id_username">Username</label>{{ form.username }}
+      <label for="id_password">Password</label>{{ form.password }}
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>

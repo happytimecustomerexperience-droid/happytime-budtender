@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 
-from celery import shared_task
+from celery import chain, shared_task
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -104,8 +104,7 @@ def run_post_call(voice_call_id: int) -> None:
     broker outage)."""
     if _use_celery():
         try:
-            summarize_call.delay(voice_call_id)
-            dispatch_alerts.delay(voice_call_id)
+            chain(summarize_call.si(voice_call_id), dispatch_alerts.si(voice_call_id)).delay()
             return
         except Exception:  # noqa: BLE001 — broker down → degrade to inline, never drop the work
             logger.warning(

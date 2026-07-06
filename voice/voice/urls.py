@@ -6,8 +6,9 @@ webhook by name via ``TOOL_REGISTRY`` (P1+ add NO routes here — they add tool 
 
 from django.urls import path
 
-from voice import webhooks
+from voice import api, webhooks
 
 urlpatterns = [
     path("vapi", webhooks.vapi_webhook, name="vapi_webhook"),
+    path("kb/search", api.kb_search, name="voice_kb_search"),
 ]

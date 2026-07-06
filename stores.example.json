@@ -1,0 +1,14 @@
+{
+  "_comment": "Local-dev fallback only. PROD uses .env (DUTCHIE_STORES + STORE_*). Copy to stores.json (gitignored) and fill YOUR values — never commit real ids/keys.",
+  "yakima": {
+    "base_url": "https://ash.backoffice.dutchie.com",
+    "pos_base_url": "https://ash.pos.dutchie.com",
+    "org_id": "REPLACE_ME",
+    "lsp_id": "REPLACE_ME",
+    "loc_id": "REPLACE_ME",
+    "register_id": "REPLACE_ME",
+    "username": "REPLACE_ME",
+    "password": "REPLACE_ME_or_enc:v1:...",
+    "api_key": "REPLACE_ME"
+  }
+}

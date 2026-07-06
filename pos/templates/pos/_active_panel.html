@@ -1,0 +1,20 @@
+<div class="active-head"><span class="livedot"></span> Active now <span class="muted">({{ active|length }})</span></div>
+{% if active %}
+<div class="vtable active">
+  <div class="vrow vhead"><span>Customer</span><span>Budtender</span><span>Store</span><span class="num">Items</span><span class="num">Elapsed</span><span>Last action</span><span class="num">Actions</span></div>
+  {% for v in active %}
+  <div class="vrow">
+    <span class="nm"><a href="{% url 'session_detail' v.id %}">{{ v.acct_name|default:"Guest" }}</a></span>
+    <span>{{ v.budtender|default:"-" }}</span>
+    <span>{{ v.store|title }}</span>
+    <span class="num">{{ v.items_added }}</span>
+    <span class="num">{{ v.duration_display }}</span>
+    <span class="muted">{{ v.last_kind|default:"-" }}</span>
+    <span class="actions-inline">
+      <a class="smallbtn" href="{% url 'session_detail' v.id %}">View</a>
+      <form method="post" action="{% url 'session_close' v.id %}">{% csrf_token %}<button class="smallbtn" type="submit">Close</button></form>
+    </span>
+  </div>
+  {% endfor %}
+</div>
+{% else %}<p class="muted">No active sessions right now.</p>{% endif %}

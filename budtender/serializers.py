@@ -102,15 +102,29 @@ def customer_detail(profile) -> dict:
         for h in favs
     ]
     brands = sorted((profile.brand_affinity or {}).items(), key=lambda kv: kv[1], reverse=True)
+    history = [
+        {
+            "product": name_by_sku.get(h.get("sku")) or h.get("sku") or h.get("product_id") or "",
+            "brand": h.get("brand", ""),
+            "category": h.get("category", ""),
+            "strain_type": h.get("strain_type", ""),
+            "units": int(h.get("times_bought", 0) or 0),
+            "last_bought_at": h.get("last_bought_at") or "",
+            "last_price": h.get("last_price"),
+        }
+        for h in sorted(hist, key=lambda h: str(h.get("last_bought_at") or ""), reverse=True)[:25]
+    ]
     return {
         **customer_row(profile),
         "brand_affinity": profile.brand_affinity or {},
+        "favorite_brands": [{"brand": b, "share": round(float(w), 3)} for b, w in brands[:10]],
         "category_affinity": profile.category_affinity or {},
         "strain_type_affinity": profile.strain_type_affinity or {},
         "subcategory_affinity": profile.subcategory_affinity or {},
         "bucket_mix": profile.bucket_mix or {},
         "top_brand": brands[0][0] if brands else "",
         "favorites": favorites,
+        "purchase_history": history,
         "purchase_count": len(hist),
         "thc_min": profile.thc_min,
         "thc_max": profile.thc_max,

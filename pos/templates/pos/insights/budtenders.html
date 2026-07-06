@@ -1,0 +1,39 @@
+{% extends "pos/insights/base.html" %}
+{% block subtitle %}Budtenders · Insights{% endblock %}
+{% block content %}
+
+<div class="kpis">
+  <div class="kpi-pill"><div class="v">{{ team.checkouts|default:0 }}</div><div class="k">Sales</div></div>
+  <div class="kpi-pill"><div class="v">{{ team.checkout_rate|default:0 }}%</div><div class="k">Team checkout rate</div></div>
+  <div class="kpi-pill"><div class="v">${{ team.avg_basket|default:0|floatformat:0 }}</div><div class="k">Team avg basket</div></div>
+  <div class="kpi-pill"><div class="v">{{ team.attach_rate|default:0 }}%</div><div class="k">Team attach rate</div></div>
+</div>
+
+<section class="card">
+  <h2>Budtender leaderboard <span class="muted">by revenue</span></h2>
+  <div class="scroll">
+  <table class="rtable lead">
+    <thead><tr>
+      <th>#</th><th>Budtender</th><th class="num">Visits</th><th class="num">Sales</th>
+      <th class="num">Checkout%</th><th class="num">Attach%</th><th class="num">Avg basket</th>
+      <th class="num">Items</th><th class="num">Revenue</th>
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr class="{% if forloop.first %}top1{% endif %}">
+        <td class="rank">{{ forloop.counter }}</td>
+        <td class="nm">{{ r.budtender }}</td>
+        <td class="num">{{ r.visits }}</td>
+        <td class="num">{{ r.checkouts }}</td>
+        <td class="num">{{ r.checkout_rate }}%</td>
+        <td class="num">{{ r.attach_rate }}%</td>
+        <td class="num">${{ r.avg_basket|floatformat:0 }}</td>
+        <td class="num">{{ r.items|default:0 }}</td>
+        <td class="num rev">${{ r.revenue|floatformat:0 }}</td>
+      </tr>
+    {% empty %}<tr><td colspan="9" class="muted">No budtender activity in this window.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endblock %}

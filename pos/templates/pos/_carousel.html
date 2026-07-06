@@ -1,0 +1,13 @@
+{% load static %}
+<section class="section carousel">
+  <div class="crl-head">
+    <h2>{{ g.label }} <span class="muted">for {{ acct_name|default:"you" }}</span></h2>
+    <div class="crl-nav">
+      <button type="button" class="crl-arrow" data-rail-prev aria-label="Previous">‹</button>
+      <button type="button" class="crl-arrow" data-rail-next aria-label="Next">›</button>
+    </div>
+  </div>
+  <div class="rail crl-rail">
+    {% for p in g.items %}{% include "pos/_product_card.html" %}{% endfor %}
+  </div>
+</section>

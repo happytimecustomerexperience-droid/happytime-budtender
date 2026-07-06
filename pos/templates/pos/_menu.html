@@ -1,0 +1,88 @@
+{% load static %}
+{% if error %}<div class="banner err">{{ error }}</div>{% else %}
+
+{% if persona %}
+<div class="persona-bar">
+  <span class="seg seg-{{ persona.segment|lower }}">{{ persona.segment }}</span>
+  {% if persona.line %}<span class="pline">{{ persona.line }}</span>{% endif %}
+</div>
+{% endif %}
+
+{% if cart_pairs %}
+<section class="section">
+  <h2>🛒 Round out the cart</h2>
+  <div class="rail">{% for p in cart_pairs %}{% include "pos/_product_card.html" %}{% endfor %}</div>
+</section>
+{% endif %}
+
+{% if carousels %}
+  {% for g in carousels %}{% include "pos/_carousel.html" %}{% endfor %}
+{% elif has_customer and suggestions %}
+<section class="section">
+  <h2>For {{ acct_name|default:"this customer" }} — next best</h2>
+  <div class="rail">{% for p in suggestions %}{% include "pos/_product_card.html" %}{% endfor %}</div>
+</section>
+{% endif %}
+
+<section class="section">
+  <div class="tabs">
+    <button type="button" class="tab {% if not f.cat %}active{% endif %}"
+            hx-get="{% url 'menu' %}?sort={{ f.sort }}" hx-target="#menu">All</button>
+    {% for c in cats %}
+    <button type="button" class="tab {% if f.cat == c.key %}active{% endif %}"
+            hx-get="{% url 'menu' %}?cat={{ c.key }}&sort={{ f.sort }}" hx-target="#menu">
+      <span class="cdot c-{{ c.key }}"></span>{{ c.label }}<span class="n">{{ c.count }}</span>
+    </button>
+    {% endfor %}
+  </div>
+
+  <form class="filters" hx-get="{% url 'menu' %}" hx-target="#menu"
+        hx-trigger="change, keyup changed delay:400ms from:input[name=q]">
+    <input type="hidden" name="cat" value="{{ f.cat }}">
+    <input type="hidden" name="f" value="1">  {# sentinel: form submitted -> respect the DOH checkbox state #}
+    <input class="search" name="q" value="{{ f.q }}" placeholder="Search products…" autocomplete="off">
+    <select name="sort" aria-label="Sort">
+      <option value="foryou" {% if f.sort == 'foryou' %}selected{% endif %}>{% if has_customer %}For You{% else %}Recommended{% endif %}</option>
+      <option value="price_asc" {% if f.sort == 'price_asc' %}selected{% endif %}>Price ↑</option>
+      <option value="price_desc" {% if f.sort == 'price_desc' %}selected{% endif %}>Price ↓</option>
+      <option value="thc_desc" {% if f.sort == 'thc_desc' %}selected{% endif %}>THC ↓</option>
+      <option value="popular" {% if f.sort == 'popular' %}selected{% endif %}>Popular</option>
+    </select>
+    <select name="brand" aria-label="Brand">
+      <option value="">All brands</option>
+      {% for b in facets.brands %}<option value="{{ b }}" {% if f.brand == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
+    </select>
+    {% if facets.strain_types %}
+    <select name="strain_type" aria-label="Type">
+      <option value="">Any type</option>
+      {% for s in facets.strain_types %}<option value="{{ s }}" {% if f.strain_type == s %}selected{% endif %}>{{ s|title }}</option>{% endfor %}
+    </select>{% endif %}
+    <select name="thc_min" aria-label="THC">
+      <option value="">Any THC</option>
+      <option value="20" {% if f.thc_min == 20 %}selected{% endif %}>20%+</option>
+      <option value="25" {% if f.thc_min == 25 %}selected{% endif %}>25%+</option>
+      <option value="30" {% if f.thc_min == 30 %}selected{% endif %}>30%+</option>
+    </select>
+    {% if facets.has_doh %}
+    <label class="doh-toggle"><input type="checkbox" name="doh_only" value="1" {% if f.doh_only %}checked{% endif %}><span class="dot"></span> DOH</label>
+    {% endif %}
+  </form>
+
+  <p class="count">{{ total }} product{{ total|pluralize }}{% if has_customer and f.sort == 'foryou' %} · sorted for {{ acct_name }}{% endif %} · in stock</p>
+
+  <div class="grid">
+    {% for p in products %}{% include "pos/_product_card.html" %}{% empty %}
+    <p class="muted">No products match these filters.</p>{% endfor %}
+  </div>
+
+  {% if pages > 1 %}
+  <div class="pager">
+    <button type="button" class="ghost" {% if not has_prev %}disabled{% endif %}
+            hx-get="{% url 'menu' %}" hx-target="#menu" hx-include=".filters" hx-vals='{"page": {{ page|add:"-1" }}}'>← Prev</button>
+    <span class="pg">Page {{ page }} of {{ pages }}</span>
+    <button type="button" class="ghost" {% if not has_next %}disabled{% endif %}
+            hx-get="{% url 'menu' %}" hx-target="#menu" hx-include=".filters" hx-vals='{"page": {{ page|add:"1" }}}'>Next →</button>
+  </div>
+  {% endif %}
+</section>
+{% endif %}

@@ -5,61 +5,17 @@ overriding a clearly on-profile pick.
 """
 from __future__ import annotations
 
-import math
 import re
 
+# The scoring brain lives in engine.py (shared verbatim with the in-store POS).
+# ranking.py keeps the ORM query, slot/size/DOH filtering, the facet helpers and
+# the owner ordering; it delegates the per-item demand score + persuasive reason
+# to the engine so the formula can never drift between website and POS again.
+from .engine import (MIN_STOCK, _recent_affinity, _request_weights,
+                     from_product, profile_dict, score_one)
+from .engine import why as _engine_why
+from .engine import W_ANON, W_KNOWN  # noqa: F401 — re-exported for views._clean_ranking_weights
 from .models import CustomerProfile, Product
-
-# Anonymous: margin-first. Logged-in: taste leads, margin still matters. The two
-# weight sets are blended by whether we have a customer profile.
-W_ANON = {"margin": 0.55, "affinity": 0.0, "effect": 0.18, "category": 0.05, "bucket": 0.12, "quality": 0.0, "budget": 0.10}
-W_KNOWN = {"margin": 0.22, "affinity": 0.34, "effect": 0.10, "category": 0.04, "bucket": 0.12, "quality": 0.14, "budget": 0.04}
-
-
-def _request_weights(config: dict | None, profile: CustomerProfile | None) -> dict[str, float]:
-    base = W_KNOWN if profile else W_ANON
-    if not isinstance(config, dict):
-        return base
-    raw = config.get("w_known" if profile else "w_anon")
-    if not isinstance(raw, dict):
-        return base
-
-    weights = dict(base)
-    for key in base:
-        try:
-            value = float(raw[key])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if math.isfinite(value) and value >= 0:
-            weights[key] = value
-
-    if not profile:
-        try:
-            emphasis = float(config.get("margin_emphasis", 1.0))
-        except (TypeError, ValueError):
-            emphasis = 1.0
-        if math.isfinite(emphasis) and emphasis >= 0:
-            weights["margin"] *= emphasis
-
-    total = sum(weights.values())
-    if total <= 0 or not math.isfinite(total):
-        return base
-    return {key: value / total for key, value in weights.items()}
-
-# Profit nudge by bucket (balanced — never overrides taste/budget gates).
-BUCKET_NUDGE = {"profit": 1.0, "core": 0.4, "traffic": 0.0}
-_TIER_CENTER = {"value": -0.6, "mid": 0.0, "top": 0.6}
-
-# Minimum on-hand units to suggest. Owner policy: NEVER offer anything with fewer
-# than 5 units on the SALES FLOOR — avoids near-sold-out picks. (quantity_on_hand
-# here is the sales-floor quantity; back-stock / quarantine never count.)
-MIN_STOCK = 5
-
-EFFECT_HINTS = {
-    "relaxed": {"indica", "myrcene", "linalool", "kush"},
-    "uplifted": {"sativa", "limonene", "pinene", "haze"},
-    "middle": {"hybrid"},
-}
 
 CATEGORY_BY_SLOTKEY = {
     "flower": "flower",
@@ -253,72 +209,6 @@ def _size_match(p: Product, size: str | None) -> bool:
         return True
     hay = (p.name or "").lower()
     return any(t in hay for t in toks)
-
-
-def _effect_score(p: Product, desired: str | None) -> float:
-    if not desired:
-        return 0.0
-    hints = EFFECT_HINTS.get(desired, set())
-    hay = f"{p.strain} {p.strain_type} {p.dominant_terpene} {p.name}".lower()
-    return 1.0 if any(h in hay for h in hints) else 0.0
-
-
-def _affinity_score(p: Product, profile: CustomerProfile | None) -> float:
-    if not profile:
-        return 0.0
-    s = 0.0
-    # Brand + strain_type are the strongest "feels like mine" signals.
-    s += 1.6 * float(profile.brand_affinity.get(p.brand, 0)) if p.brand else 0
-    s += 1.0 * float(profile.strain_type_affinity.get(p.strain_type, 0)) if p.strain_type else 0
-    s += 0.6 * float(profile.category_affinity.get(p.category, 0)) if p.category else 0
-    s += 0.6 * float((profile.subcategory_affinity or {}).get(p.subcategory, 0)) if p.subcategory else 0
-    if p.dominant_terpene:
-        s += 0.4 * float(profile.terpene_affinity.get(p.dominant_terpene, 0))
-    return min(s, 1.0)
-
-
-def _quality_fit(p: Product, profile: CustomerProfile | None) -> float:
-    """1.0 when the product sits at the customer's usual quality tier, fading
-    with distance (uses the peer-relative price_z from classification)."""
-    if not profile or not profile.price_tier:
-        return 0.0
-    center = _TIER_CENTER.get(profile.price_tier, 0.0)
-    return 1.0 - min(abs(float(p.price_z or 0) - center) / 2.0, 1.0)
-
-
-def _novelty_bias(p: Product, profile: CustomerProfile | None) -> float:
-    """Habitual buyers (low novelty) get a boost for brands they already buy;
-    explorers (high novelty) get a boost for brands they have NOT bought (same
-    taste envelope, something new). Returns roughly -0.3..+0.3."""
-    if not profile or not p.brand:
-        return 0.0
-    known = float(profile.brand_affinity.get(p.brand, 0)) > 0
-    nov = float(profile.novelty_score or 0)
-    if known:
-        return 0.3 * (1.0 - nov)      # reward familiar for habitual
-    return 0.3 * nov                  # reward new brands for explorers
-
-
-def _recent_affinity(profile: CustomerProfile | None, top: int = 3) -> tuple[set, set]:
-    """Brand/category from the customer's MOST RECENT purchases — so picks track
-    what they're buying lately (RFM recency), not just lifetime favorites."""
-    if not profile or not profile.purchase_history:
-        return set(), set()
-    items = [h for h in profile.purchase_history if h.get("last_bought_at")]
-    items.sort(key=lambda h: str(h.get("last_bought_at")), reverse=True)
-    recent = items[:top]
-    return ({h.get("brand") for h in recent if h.get("brand")},
-            {h.get("category") for h in recent if h.get("category")})
-
-
-def _recency_boost(p: Product, recent_brands: set, recent_cats: set) -> float:
-    """Small additive nudge toward the customer's most-recent brand/category."""
-    b = 0.0
-    if p.brand and p.brand in recent_brands:
-        b += 0.10
-    if p.category and p.category in recent_cats:
-        b += 0.05
-    return b
 
 
 # ── Granular product subtypes (rosin, gummies, lollipops, …) ─────────────────
@@ -586,35 +476,23 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
     mid = min(hi, 1_000_000) if premium_intent else (lo + min(hi, 200)) / 2
 
     # Taste leads when we know the customer; margin-first when anonymous. Price-
-    # sensitive customers (value tier) make traffic-drivers acceptable.
+    # sensitive customers (value tier) make traffic-drivers acceptable. The score
+    # is the shared engine's — computed on a plain feature dict so the website and
+    # the in-store POS rank on the exact same formula (see engine.score_one).
     W = _request_weights(ranking_weights, profile)
     price_sensitive = bool(profile and profile.price_tier == "value")
-    recent_brands, recent_cats = _recent_affinity(profile)
+    pf = profile_dict(profile)
+    recent_brands, recent_cats = _recent_affinity(pf)
+    ctx = {
+        "W": W, "m_lo": m_lo, "span": span, "mid": mid, "desired": desired,
+        "category": category, "price_sensitive": price_sensitive,
+        "recent_brands": recent_brands, "recent_cats": recent_cats,
+    }
 
     scored = []
     for p in candidates:
-        margin_norm = (float(p.margin) - m_lo) / span
-        budget_fit = 1 - min(abs(float(p.price) - mid) / (mid or 1), 1)
-        nudge = BUCKET_NUDGE.get(p.bucket, 0.4)
-        if p.bucket == "traffic" and price_sensitive:
-            nudge = 0.6  # cheap loss-leaders are fine for bargain hunters
-        if profile and profile.bucket_mix:
-            # Blend the business profit-nudge with the customer's OWN core/traffic/
-            # profit mix, so picks match the KIND of products they actually buy.
-            nudge = 0.6 * nudge + 0.4 * float(profile.bucket_mix.get(p.bucket, 0.0))
-        score = (
-            W["margin"] * margin_norm
-            + W["affinity"] * _affinity_score(p, profile)
-            + W["effect"] * _effect_score(p, desired)
-            + W["category"] * (1.0 if category and p.category == category else 0.0)
-            + W["bucket"] * nudge
-            + W["quality"] * _quality_fit(p, profile)
-            + W["budget"] * budget_fit
-            + _novelty_bias(p, profile)
-            + _recency_boost(p, recent_brands, recent_cats)
-        )
-        why = _why(p, desired, profile)
-        scored.append((score, p, why))
+        score = score_one(from_product(p), pf, ctx)
+        scored.append((score, p, _why(p, desired, profile)))
 
     # ---- Premium intent: highest price of this category+weight wins. ----
     # The customer asked for the top end (top tier / "$100 & up"), so we order
@@ -679,6 +557,25 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
         return 0.6 ** brand_count.get(b, 0) if b else 1.0
 
     # #1 — highest gross-margin $ in the matching set.
+    if profile:
+        # ponytail: known shoppers use the existing blended score; add explicit
+        # familiar/new quotas only if score+variety underperforms in conversion data.
+        while len(picks) < limit:
+            rest = [t for t in scored if t[1].sku not in used_skus]
+            if not rest:
+                break
+            _take(max(rest, key=lambda t: t[0] * _variety(t)))
+
+        if len(picks) < limit and nearby:
+            for p in nearby:
+                if len(picks) >= limit:
+                    break
+                if p.sku in used_skus:
+                    continue
+                _take((0.0, p, _why(p, desired, profile)))
+
+        return [(p, why) for _, p, why in picks[:limit]]
+
     _take(max(scored, key=lambda t: float(t[1].margin)))
     # #2 — highest sales velocity among the rest. With no transactions yet all
     # velocity is 0, so this tie-breaks to the top demand score (slot never wasted).
@@ -707,56 +604,6 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
 
 
 def _why(p: Product, desired: str | None, profile: CustomerProfile | None) -> str:
-    """A short, PERSUASIVE reason to pick THIS one — built only from real product
-    signals (never a receipt, never a fake claim). Ordered strongest-converting
-    first: a personal hook, a live deal, the effect they asked for, real potency,
-    and genuine scarcity. We surface the two strongest and always return a nudge."""
-    bits: list[str] = []
-
-    # 1. Personal hook — the strongest converter when we know their taste.
-    if profile and p.brand and float(profile.brand_affinity.get(p.brand, 0)) >= 0.25:
-        bits.append(f"your go-to {p.brand}")
-    elif profile and p.strain_type and float(profile.strain_type_affinity.get(p.strain_type, 0)) >= 0.4:
-        bits.append(f"right in your {p.strain_type.lower()} lane")
-    elif profile and p.subcategory and float((profile.subcategory_affinity or {}).get(p.subcategory, 0)) >= 0.4:
-        bits.append(f"your usual {p.subcategory}")
-    elif profile and profile.price_tier and _quality_fit(p, profile) >= 0.7:
-        bits.append("exactly your usual quality")
-
-    # 2. Live deal — a real markdown is a powerful nudge.
-    try:
-        if p.price_was and float(p.price_was) - float(p.price) >= 1:
-            save = float(p.price_was) - float(p.price)
-            bits.append(f"on sale — save ${save:.0f}")
-    except (TypeError, ValueError):
-        pass
-
-    # 3. The effect they actually asked for.
-    if desired and _effect_score(p, desired):
-        bits.append(f"dialed in for {desired}")
-
-    # 4. Real potency (only when genuinely high).
-    try:
-        if p.thc_percent and float(p.thc_percent) >= 25:
-            bits.append(f"hits hard at {float(p.thc_percent):.0f}% THC")
-    except (TypeError, ValueError):
-        pass
-
-    # 5. Genuine scarcity — urgency, only when stock is truly low.
-    try:
-        if p.quantity_on_hand is not None and 0 < int(p.quantity_on_hand) <= 5:
-            bits.append("almost gone")
-    except (TypeError, ValueError):
-        pass
-
-    # 6. Flavor / strain fallback so there's always a reason to lean in.
-    if len(bits) < 2 and p.dominant_terpene:
-        bits.append(f"{p.dominant_terpene.lower()}-forward")
-    elif len(bits) < 2 and p.strain:
-        bits.append(p.strain)
-
-    picked = [b for b in bits if b][:2]
-    if not picked:
-        return f"a standout {p.brand} pick" if p.brand else "a standout pick"
-    s = " · ".join(picked)
-    return s[0].upper() + s[1:]
+    """Persuasive reason for THIS pick — delegated to the shared engine so the
+    website and the in-store POS speak the same language."""
+    return _engine_why(from_product(p), desired, profile_dict(profile))

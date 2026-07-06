@@ -34,6 +34,9 @@ class FakeGemini:
     def generate(self, contents, *, model, system_instruction=None, **kw):
         self.calls.append({"model": model, "contents": contents, "kw": kw})
         text = "OK"
+        marker = "CURRENT SYSTEM PROMPT:\n<<<\n"
+        if marker in contents:
+            text = contents.split(marker, 1)[1].split("\n>>>", 1)[0] + "\nOK"
         return gemini_mod.GeminiResponse(
             text=text,
             model=model,
