@@ -20,6 +20,7 @@ dependencies = [
     "curl_cffi>=0.7",       # Chrome-TLS impersonation for the Dutchie register client
     "cryptography>=42",     # Fernet at-rest encryption for Dutchie store secrets
     "Pillow>=10",           # upload magic-byte / decompression-bomb guard (id-scan)
+    "zxing-cpp>=2",         # LOCAL PDF417 barcode decode for id-scan (no cloud OCR)
 ]
 
 [dependency-groups]
