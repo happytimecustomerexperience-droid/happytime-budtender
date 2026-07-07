@@ -14,3 +14,5 @@ staticfiles/
 # Must never reach the VPS (no inbound ports in prod; the Cloudflare tunnel is the
 # only ingress). Kept on each dev machine, never committed.
 docker-compose.override.yml
+test.out
+*.out
