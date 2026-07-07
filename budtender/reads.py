@@ -153,9 +153,11 @@ def load_customer_history(acct_id=None, phone=None, name=None):
     }
 
 
-def load_all_profiles(limit: int = 5000, ttl: int = 300) -> list:
-    """All customer taste profiles for AGGREGATE manager analytics, or [] on
-    error. Bounded, cached, best-effort — never raises."""
+def load_all_profiles(limit: int = 250_000, ttl: int = 300) -> list:
+    """All customer taste profiles for AGGREGATE manager analytics, or [] on error.
+    Streams the FULL customer base (was capped at 5000) with .iterator so the whole
+    book is aggregated, not a 5000-row sample; `limit` is only a memory safety valve.
+    Cached (admin-only, infrequent), best-effort — never raises."""
     key = f"allprof:{int(limit)}"
     try:
         hit = cache.get(key, _MISS)
@@ -167,20 +169,24 @@ def load_all_profiles(limit: int = 5000, ttl: int = 300) -> list:
         rows = (CustomerProfile.objects.order_by(F("total_orders").desc(nulls_last=True))
                 .values("total_orders", "last_purchase_at", "price_tier", "novelty_score",
                         "brand_affinity", "category_affinity", "strain_type_affinity",
-                        "terpene_affinity", "flavor_affinity", "thc_min", "thc_max")[:int(limit)])
-        out = [{
-            "orders": int(r["total_orders"] or 0),
-            "last_purchase": r["last_purchase_at"].isoformat()[:10] if r["last_purchase_at"] else None,
-            "price_tier": r["price_tier"] or "",
-            "novelty_score": r["novelty_score"],
-            "brand_affinity": r["brand_affinity"] or {},
-            "category_affinity": r["category_affinity"] or {},
-            "strain_type_affinity": r["strain_type_affinity"] or {},
-            "terpene_affinity": r["terpene_affinity"] or {},
-            "flavor_affinity": r["flavor_affinity"] or {},
-            "thc_min": r["thc_min"],
-            "thc_max": r["thc_max"],
-        } for r in rows]
+                        "terpene_affinity", "flavor_affinity", "thc_min", "thc_max"))
+        out = []
+        for r in rows.iterator(chunk_size=2000):
+            out.append({
+                "orders": int(r["total_orders"] or 0),
+                "last_purchase": r["last_purchase_at"].isoformat()[:10] if r["last_purchase_at"] else None,
+                "price_tier": r["price_tier"] or "",
+                "novelty_score": r["novelty_score"],
+                "brand_affinity": r["brand_affinity"] or {},
+                "category_affinity": r["category_affinity"] or {},
+                "strain_type_affinity": r["strain_type_affinity"] or {},
+                "terpene_affinity": r["terpene_affinity"] or {},
+                "flavor_affinity": r["flavor_affinity"] or {},
+                "thc_min": r["thc_min"],
+                "thc_max": r["thc_max"],
+            })
+            if len(out) >= limit:   # ponytail: hard ceiling so a pathological DB can't OOM
+                break
     except Exception:
         logger.debug("load_all_profiles failed", exc_info=True)
         return []

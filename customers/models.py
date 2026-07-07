@@ -1,8 +1,15 @@
 """Local cache of scanned/looked-up guests + an immutable Dutchie WRITE audit,
 plus per-visit activity tracking (ShopVisit / ShopEvent)."""
 
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
+
+
+def _dur_display(seconds: int) -> str:
+    """Short m/s duration string, e.g. '3m 41s' or '12s'."""
+    seconds = max(0, int(seconds))
+    return f"{seconds // 60}m {seconds % 60}s" if seconds >= 60 else f"{seconds}s"
 
 
 class Customer(models.Model):
@@ -40,6 +47,56 @@ class Customer(models.Model):
         return f"{name} ({self.dutchie_acct_id})"
 
 
+class StaffSession(models.Model):
+    """One staff shift — sign-in to sign-out. Every ShopVisit + Dutchie write made during
+    the shift links back here, so 'who worked when, on which register, and what they sold'
+    is one query. Times render Pacific (project TIME_ZONE)."""
+
+    ROLES = [("budtender", "budtender"), ("door", "door"), ("admin", "admin")]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="shifts")
+    username = models.CharField(max_length=150, blank=True)
+    role = models.CharField(max_length=12, choices=ROLES, default="budtender")
+    store = models.CharField(max_length=120, blank=True)
+    register_id = models.CharField(max_length=40, blank=True)
+    register_name = models.CharField(max_length=120, blank=True)
+    login_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    logout_at = models.DateTimeField(null=True, blank=True)
+    ip = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-login_at"]
+        indexes = [models.Index(fields=["username", "login_at"]), models.Index(fields=["store", "login_at"])]
+
+    @property
+    def is_open(self):
+        return self.logout_at is None
+
+    @property
+    def duration_seconds(self):
+        return int(((self.logout_at or timezone.now()) - self.login_at).total_seconds())
+
+    @property
+    def duration_display(self):
+        return _dur_display(self.duration_seconds)
+
+    @property
+    def visit_count(self):
+        return self.visits.count()
+
+    @property
+    def checkout_count(self):
+        return self.visits.filter(outcome="checked_out").count()
+
+    @property
+    def revenue(self):
+        from django.db.models import Sum
+        return self.visits.filter(outcome="checked_out").aggregate(s=Sum("cart_total"))["s"] or 0
+
+    def __str__(self):
+        return f"{self.username} {self.role} @ {self.store} ({self.login_at:%Y-%m-%d %H:%M})"
+
+
 class DutchieWriteAudit(models.Model):
     """Immutable log of every Dutchie WRITE (the cart flow moves real inventory)."""
 
@@ -50,6 +107,8 @@ class DutchieWriteAudit(models.Model):
     summary = models.CharField(max_length=500)  # NO PII, no raw creds
     ok = models.BooleanField()
     username = models.CharField(max_length=150, blank=True)
+    staff_session = models.ForeignKey("StaffSession", null=True, blank=True,
+                                      on_delete=models.SET_NULL, related_name="writes")
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
@@ -64,21 +123,29 @@ class ShopVisit(models.Model):
     identified, ended at checkout (checked_out) or restart/new-customer (abandoned)."""
 
     OUTCOMES = [("open", "open"), ("checked_out", "checked out"), ("abandoned", "abandoned")]
+    STATUSES = [("queued", "queued"), ("claimed", "claimed")]  # queue lifecycle (orthogonal to outcome)
 
     store = models.CharField(max_length=120)
     budtender = models.CharField(max_length=150, blank=True)
+    claimed_by = models.CharField(max_length=150, blank=True)
     acct_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     acct_name = models.CharField(max_length=255, blank=True)
     phone = models.CharField(max_length=40, blank=True)
-    how_started = models.CharField(max_length=20, blank=True)  # scan/lookup/guest/phone/name/created
-    started_at = models.DateTimeField(auto_now_add=True, db_index=True)
-    ended_at = models.DateTimeField(null=True, blank=True)
+    how_started = models.CharField(max_length=20, blank=True)  # scan/lookup/guest/phone/name/created/door
+    # Queue lifecycle: door-scanned customers start "queued" (no budtender); a budtender
+    # "claims" them. Existing direct-shop visits default "claimed" so nothing regresses.
+    status = models.CharField(max_length=10, choices=STATUSES, default="claimed", db_index=True)
+    started_at = models.DateTimeField(auto_now_add=True, db_index=True)   # queue/scan time
+    claimed_at = models.DateTimeField(null=True, blank=True)              # budtender pickup time
+    ended_at = models.DateTimeField(null=True, blank=True)                # checkout/abandon time
     outcome = models.CharField(max_length=16, choices=OUTCOMES, default="open", db_index=True)
     event_count = models.PositiveIntegerField(default=0)
     items_viewed = models.PositiveIntegerField(default=0)
     items_added = models.PositiveIntegerField(default=0)
     cart_total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     order_shipment_id = models.BigIntegerField(null=True, blank=True)
+    staff_session = models.ForeignKey("StaffSession", null=True, blank=True,
+                                      on_delete=models.SET_NULL, related_name="visits")
 
     class Meta:
         ordering = ["-started_at"]
@@ -86,6 +153,7 @@ class ShopVisit(models.Model):
             models.Index(fields=["store", "started_at"]),
             models.Index(fields=["budtender"]),
             models.Index(fields=["outcome"]),
+            models.Index(fields=["store", "status", "ended_at"]),  # live queue query
         ]
 
     @property
@@ -98,8 +166,28 @@ class ShopVisit(models.Model):
 
     @property
     def duration_display(self):
-        s = self.duration_seconds
-        return f"{s // 60}m {s % 60}s" if s >= 60 else f"{s}s"
+        return _dur_display(self.duration_seconds)
+
+    @property
+    def wait_seconds(self):
+        """Scan → budtender-claim. Live (now − started) while still queued; final once claimed."""
+        end = self.claimed_at or (timezone.now() if self.status == "queued" and self.ended_at is None else None)
+        return int((end - self.started_at).total_seconds()) if end else None
+
+    @property
+    def wait_display(self):
+        w = self.wait_seconds
+        return _dur_display(w) if w is not None else "—"
+
+    @property
+    def service_seconds(self):
+        """Claim → checkout (or now if still shopping)."""
+        base = self.claimed_at or self.started_at
+        return int(((self.ended_at or timezone.now()) - base).total_seconds())
+
+    @property
+    def service_display(self):
+        return _dur_display(self.service_seconds)
 
     def __str__(self):
         return f"{self.acct_name or 'Guest'} @ {self.store} ({self.outcome})"

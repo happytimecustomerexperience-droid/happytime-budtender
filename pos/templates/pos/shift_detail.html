@@ -1,0 +1,42 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shift · Budtender POS</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="{% url 'screen' %}">HAPPY&nbsp;TIME</a>
+  <span class="muted" style="margin-left:8px">Shift · {{ s.username }}</span>
+  <span class="spacer"></span>
+  <a class="link" href="{% url 'shifts' %}">← All shifts</a>
+  <a class="link" href="{% url 'logout' %}">Sign out</a>
+</header>
+<main style="padding:16px">
+  <div class="card">
+    <h2 style="font-size:14px">{{ s.username }} · {{ s.role }} · {{ s.store|title }} · reg {{ s.register_name|default:s.register_id }}</h2>
+    <p class="muted">{{ s.login_at|date:"M j, Y g:i A" }} →
+      {% if s.logout_at %}{{ s.logout_at|date:"g:i A" }}{% else %}<span class="badge-ok">on now</span>{% endif %}
+      · {{ s.duration_display }} · {{ s.visit_count }} customers · {{ s.checkout_count }} sales · ${{ s.revenue|floatformat:0 }}
+    </p>
+    <div class="vtable shiftvisits" style="margin-top:12px">
+      <div class="vrow vhead"><span>Customer</span><span>Status</span><span class="num">Wait</span><span class="num">Service</span><span>Outcome</span><span class="num">Total</span></div>
+      {% for v in visits %}
+      <div class="vrow">
+        <span class="nm">{{ v.acct_name|default:"Guest" }}</span>
+        <span>{{ v.status }}</span>
+        <span class="num">{{ v.wait_display }}</span>
+        <span class="num">{{ v.service_display }}</span>
+        <span>{{ v.outcome }}</span>
+        <span class="num">${{ v.cart_total|floatformat:0 }}</span>
+      </div>
+      {% empty %}<p class="muted">No customers this shift.</p>{% endfor %}
+    </div>
+  </div>
+</main>
+</body>
+</html>

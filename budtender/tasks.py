@@ -268,16 +268,22 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
                 by_phone[phone].append({
                     "product_id": pid,
                     "sku": prod.sku if prod else pid,
+                    "product_name": prod.name if prod else "",
                     "brand": prod.brand if prod else "",
-                    "category": prod.category if prod else "",
-                    "subcategory": prod.subcategory if prod else "",
                     "strain": prod.strain if prod else "",
                     "strain_type": prod.strain_type if prod else "",
+                    "category": prod.category if prod else "",
+                    "subcategory": prod.subcategory if prod else "",
                     "bucket": prod.bucket if prod else "",
                     "dominant_terpene": prod.dominant_terpene if prod else "",
+                    "effects": prod.effects if prod else [],
+                    "flavors": prod.flavors if prod else [],
+                    "thc_percent": prod.thc_percent if prod else None,
+                    "unit_weight": prod.unit_weight if prod else None,
+                    "potency_mg": prod.potency_mg if prod else None,
                     "price_z": float(prod.price_z) if prod else 0.0,
                     "qty": qty,
-                    "unit_price": float(it.get("unitPrice") or 0),
+                    "last_price": float(it.get("unitPrice") or 0),
                     "bought_at": bought_at,
                 })
     for phone, lines in by_phone.items():
@@ -566,17 +572,39 @@ def _fold_history(phone: str, lines: list[dict], name: str | None = None) -> Non
         if not k:
             continue
         entry = agg.get(k) or {
-            "product_id": ln.get("product_id", ""), "sku": ln.get("sku", ""),
-            "brand": ln.get("brand", ""), "category": ln.get("category", ""),
-            "subcategory": ln.get("subcategory", ""), "strain": ln.get("strain", ""),
-            "strain_type": ln.get("strain_type", ""), "bucket": ln.get("bucket", ""),
-            "price_z": ln.get("price_z", 0.0), "times_bought": 0, "last_bought_at": None,
+            "product_id": ln.get("product_id", ""),
+            "sku": ln.get("sku", ""),
+            "product_name": ln.get("product_name", ""),
+            "brand": ln.get("brand", ""),
+            "category": ln.get("category", ""),
+            "subcategory": ln.get("subcategory", ""),
+            "strain": ln.get("strain", ""),
+            "strain_type": ln.get("strain_type", ""),
+            "dominant_terpene": ln.get("dominant_terpene", ""),
+            "effects": ln.get("effects") or [],
+            "flavors": ln.get("flavors") or [],
+            "thc_percent": ln.get("thc_percent"),
+            "unit_weight": ln.get("unit_weight"),
+            "potency_mg": ln.get("potency_mg"),
+            "bucket": ln.get("bucket", ""),
+            "price_z": ln.get("price_z", 0.0),
+            "times_bought": 0,
+            "qty": 0.0,
+            "first_bought_at": None,
+            "last_bought_at": None,
         }
         entry["times_bought"] = int(entry.get("times_bought", 0)) + 1
+        entry["qty"] = float(entry.get("qty") or 0) + float(ln.get("qty") or 0)
         entry["last_bought_at"] = ln["bought_at"]
-        entry["last_price"] = ln.get("unit_price", entry.get("last_price"))
+        entry["last_price"] = ln.get("last_price", entry.get("last_price"))
+        if not entry.get("first_bought_at") or ln["bought_at"] < entry["first_bought_at"]:
+            entry["first_bought_at"] = ln["bought_at"]
         # refresh joined attributes if we now resolved the product
-        for f in ("brand", "category", "subcategory", "strain", "strain_type", "bucket", "price_z"):
+        for f in (
+            "product_name", "brand", "category", "subcategory", "strain",
+            "strain_type", "dominant_terpene", "effects", "flavors",
+            "thc_percent", "unit_weight", "potency_mg", "bucket", "price_z",
+        ):
             if ln.get(f):
                 entry[f] = ln[f]
         agg[k] = entry

@@ -158,6 +158,9 @@ def query(items, profile, f):
     out = [p for p in items if p.get("qty", 0) > 0]   # always in-stock only
     if f.get("cat"):
         out = [p for p in out if p["cat_key"] == f["cat"]]
+    if f.get("subcat"):
+        subcat = str(f["subcat"]).strip().lower()
+        out = [p for p in out if str(p.get("subcategory", "")).strip().lower() == subcat]
     if q:
         out = [p for p in out if q in
                f"{p['name']} {p['brand']} {p['strain']} {p['raw_category']}".lower()]

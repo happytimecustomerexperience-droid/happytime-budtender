@@ -89,6 +89,12 @@ header.top a.logo:hover{color:var(--ember)}
   padding:11px 8px;border-bottom:1px solid var(--line);color:var(--cream)}
 .vtable.sessions .vrow{grid-template-columns:1.4fr 1fr .9fr 1fr .7fr .8fr .9fr 1.1fr}
 .vtable.active .vrow{grid-template-columns:1.4fr 1fr .9fr .7fr .8fr 1.1fr 1.1fr}
+.vtable.queue .vrow{grid-template-columns:1.6fr 1fr .8fr .8fr}
+.vtable.shifts .vrow{grid-template-columns:1fr .7fr .8fr 1fr 1.1fr 1.1fr .6fr .6fr .6fr .8fr}
+.vtable.shiftvisits .vrow{grid-template-columns:1.4fr .8fr .7fr .8fr .9fr .8fr}
+.queuewrap{padding:10px 16px;border-bottom:1px solid var(--line);background:var(--fog)}
+.roletoggle{display:flex;gap:12px;margin:2px 0 8px}
+.roletoggle label{display:inline-flex;align-items:center;gap:6px;font-weight:600;cursor:pointer}
 .vrow.vhead{color:var(--sage);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
 .vrow:hover{background:var(--fog)}
 .vrow .nm{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -368,3 +374,33 @@ th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
 .cmprow .delta.dn{background:rgba(255,138,0,.16);color:var(--ember)}
 .card.empty p{color:var(--cream);line-height:1.55}
 .card.empty code{background:var(--fog);padding:2px 6px;border-radius:6px;color:var(--amber)}
+
+/* ===== mobile / tablet POS hardening ===== */
+@media (max-width: 900px) {
+  .top{padding:8px 10px;gap:10px}
+  .top .logo{font-size:22px}
+  .restartbtn,.cartbtn,.cust-chip{min-height:44px}
+  .customerbar{padding:10px;gap:8px}
+  .customerbar form{width:100%}
+  .customerbar form.grow{flex:1 1 100%}
+  .filters .search,.filters select,.filters .doh-toggle{min-height:52px}
+  .grid{gap:12px}
+  .tab{padding:10px 14px}
+  .crumbs{padding:12px 10px}
+  main{padding:12px 10px 34px}
+}
+
+/* on-device scanner widget */
+.idscan{margin-top:8px;display:flex;flex-direction:column;gap:8px}
+.idscan__video{width:100%;aspect-ratio:4/3;background:#000;border:1px solid var(--line);border-radius:10px;object-fit:cover}
+.idscan__actions{display:flex;gap:8px;flex-wrap:wrap}
+.idscan__hint{font-size:12px;color:var(--sage)}
+.idscan__toggle{width:100%}
+
+/* profile drilldown pills */
+.pref-pills{display:flex;flex-wrap:wrap;gap:8px}
+.pref-pills .pilllink{display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:var(--ink);border:1px solid var(--line);font-size:14px;min-height:40px}
+.pref-pills .pilllink .nmnum{opacity:.85;font-weight:700;font-size:12px}
+.pref-pills .pilllink.active{background:var(--amber);color:#1a130a;border-color:var(--amber)}
+.pref-pills.sub{margin-top:8px}
+.sub-h{margin:12px 0 6px;color:var(--sage);font-size:14px}

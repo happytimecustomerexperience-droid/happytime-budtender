@@ -1,0 +1,42 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shifts · Budtender POS</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'pos/app.css' %}">
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="{% url 'screen' %}">HAPPY&nbsp;TIME</a>
+  <span class="muted" style="margin-left:8px">Staff shifts</span>
+  <span class="spacer"></span>
+  <a class="link" href="{% url 'sessions' %}">Sessions</a>
+  <a class="link" href="{% url 'logout' %}">Sign out</a>
+</header>
+<main style="padding:16px">
+  <div class="card">
+    <div class="active-head">Shifts <span class="muted">({{ shifts|length }})</span></div>
+    <div class="vtable shifts">
+      <div class="vrow vhead"><span>Who</span><span>Role</span><span>Location</span><span>Register</span><span>Login (PST)</span><span>Logout (PST)</span><span class="num">Dur</span><span class="num">Cust</span><span class="num">Sales</span><span class="num">Revenue</span></div>
+      {% for s in shifts %}
+      <div class="vrow">
+        <span class="nm"><a href="{% url 'shift_detail' s.id %}">{{ s.username }}</a></span>
+        <span>{{ s.role }}</span>
+        <span>{{ s.store|title }}</span>
+        <span>{{ s.register_name|default:s.register_id }}</span>
+        <span>{{ s.login_at|date:"M j, g:i A" }}</span>
+        <span>{% if s.logout_at %}{{ s.logout_at|date:"M j, g:i A" }}{% else %}<span class="badge-ok">on now</span>{% endif %}</span>
+        <span class="num">{{ s.duration_display }}</span>
+        <span class="num">{{ s.visit_count }}</span>
+        <span class="num">{{ s.checkout_count }}</span>
+        <span class="num">${{ s.revenue|floatformat:0 }}</span>
+      </div>
+      {% empty %}<p class="muted">No shifts yet.</p>{% endfor %}
+    </div>
+  </div>
+</main>
+</body>
+</html>

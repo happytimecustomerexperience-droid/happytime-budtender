@@ -56,10 +56,10 @@ def test_begin_renders(auth, monkeypatch):
     assert r.status_code == 200 and b"Begin a new session" in r.content
 
 
-def test_screen_requires_session(auth, monkeypatch):
+def test_screen_is_hub_without_customer(auth, monkeypatch):
     _use_store(monkeypatch)
     r = auth.get(reverse("screen"), SERVER_NAME="localhost")
-    assert r.status_code == 302 and r.url == reverse("begin")  # no customer -> start gate
+    assert r.status_code == 200  # screen is the budtender hub (queue + scan/lookup), no redirect
 
 
 def test_screen_ok_with_session(auth, monkeypatch):

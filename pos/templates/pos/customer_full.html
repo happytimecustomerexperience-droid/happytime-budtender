@@ -74,6 +74,39 @@
     </div>
     {% endif %}
 
+    {% if pref_tree %}
+    <div class="section card">
+      <h2>Category preferences</h2>
+      <div class="pref-pills">
+        {% for g in pref_tree %}
+          <a class="pilllink {% if selected_cat and selected_cat == g.category|lower or not selected_cat and forloop.first %}active{% endif %}"
+             href="{% url 'customer_full' %}?cat={{ g.category|lower|urlencode }}"
+             data-pill="category">
+            {{ g.category }} <span class="nmnum">{{ g.items|floatformat:0 }}</span>
+          </a>
+        {% empty %}
+          <p class="muted">No category history yet.</p>
+        {% endfor %}
+      </div>
+
+      {% if selected_cat %}
+        {% for g in pref_tree %}
+          {% if g.category|lower == selected_cat %}
+            <h3 class="sub-h">Subcategories for {{ g.category }}</h3>
+            <div class="pref-pills sub">
+              {% for s in g.subcats %}
+                <a class="pilllink {% if selected_subcat and selected_subcat == s.subcategory|lower %}active{% endif %}"
+                   href="{% url 'customer_full' %}?cat={{ g.category|lower|urlencode }}&subcat={{ s.subcategory|lower|urlencode }}">
+                  {{ s.subcategory }} <span class="nmnum">{{ s.items|floatformat:0 }}</span>
+                </a>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+    </div>
+    {% endif %}
+
     <div class="cols two">
       <div class="section card">
         <h2>Categories</h2>
@@ -117,17 +150,27 @@
     </div>
 
     <div class="section card">
-      <h2>All transactions <span class="muted">({{ history_count }} products)</span></h2>
+      <h2>
+        {% if selected_cat %}
+          {{ selected_cat_label|default:"Selected category" }} {% if selected_subcat %}· {{ selected_subcat_label }}{% endif %}
+        {% else %}
+          All transactions
+        {% endif %}
+        <span class="muted">({{ history_count }} products)</span>
+      </h2>
+      {% if not selected_cat %}
+        <p class="muted">Choose a category to drill into the table below.</p>
+      {% endif %}
       {% if history %}
       <div style="overflow-x:auto">
         <table class="histtable">
           <thead><tr>
             <th>Product</th><th>Brand</th><th>Category</th><th>Strain</th>
             <th class="num">Units</th><th class="num">Times</th><th class="num">Last bought</th>
-            <th class="num">Last price</th><th class="num">Est. spend</th>
+            <th class="num">Last price</th><th class="num">Est. spend</th><th>Match</th><th>Open</th>
           </tr></thead>
           <tbody>
-          {% for h in history %}
+          {% for h in pref_rows %}
             <tr>
               <td>{% firstof h.product h.sku "—" %}</td>
               <td>{{ h.brand }}</td>
@@ -138,8 +181,21 @@
               <td class="num">{{ h.last_bought_at|default:"—"|slice:":10" }}</td>
               <td class="num">{% if h.last_price %}${{ h.last_price|floatformat:0 }}{% else %}—{% endif %}</td>
               <td class="num">{% if h.spend %}${{ h.spend|floatformat:0 }}{% else %}—{% endif %}</td>
+              <td>{% if h.in_stock %}In stock{% else %}Unavailable{% endif %}</td>
+              <td>
+                {% if h.product_id %}
+                  <a href="{% url 'product' h.product_id %}">Open item</a>
+                {% else %}
+                  <a href="{% url 'menu' %}?cat={{ selected_cat }}&subcat={{ selected_subcat }}&q={{ h.product|urlencode }}">Search menu</a>
+                {% endif %}
+              </td>
             </tr>
           {% endfor %}
+          {% if selected_cat and not pref_rows %}
+            <tr><td colspan="10" class="muted">No transactions for that filter.</td></tr>
+          {% elif not selected_cat %}
+            <tr><td colspan="10" class="muted">Choose a category above to load focused history.</td></tr>
+          {% endif %}
           </tbody>
         </table>
       </div>

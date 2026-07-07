@@ -11,29 +11,51 @@
   <link rel="stylesheet" href="{% static 'pos/app.css' %}">
   <script src="{% static 'pos/htmx.min.js' %}" defer></script>
   <script src="{% static 'pos/app.js' %}" defer></script>
+  <script src="{% static 'pos/idscan.js' %}" defer></script>
 </head>
 <body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
 <header class="top">
   <a class="logo" href="{% url 'screen' %}">HAPPY&nbsp;TIME</a>
-  <select name="store" id="store" hx-get="{% url 'menu' %}" hx-target="#menu" hx-trigger="change">
-    {% for s in stores %}<option value="{{ s }}" {% if s == active %}selected{% endif %}>{{ s|title }}</option>{% endfor %}
-  </select>
-  <span class="spacer"></span>
-  <button type="button" class="cartbtn" data-cart-open>🛒 Cart <span class="badge" id="cart-badge">{{ cart|length }}</span></button>
-  {% if acct_id %}
-    <a class="cust-chip" href="{% url 'customer' %}">👤 <b>{{ acct_name|default:"Guest" }}</b></a>
+  {% if role == "admin" %}
+    <select name="store" id="store" hx-get="{% url 'menu' %}" hx-target="#menu" hx-trigger="change">
+      {% for s in stores %}<option value="{{ s }}" {% if s == active %}selected{% endif %}>{{ s|title }}</option>{% endfor %}
+    </select>
   {% else %}
-    <span class="cust-chip">👤 <b>{{ acct_name|default:"Guest" }}</b></span>
+    <span class="muted" style="margin-left:8px">{{ active|title }}</span>
   {% endif %}
-  <a class="restartbtn" href="{% url 'end' %}" title="Start a new session">↺ Restart</a>
-  <a class="link" href="{% url 'my_stats' %}">My stats</a>
+  <span class="spacer"></span>
+  {% if role != "door" %}
+    <button type="button" class="cartbtn" data-cart-open>🛒 Cart <span class="badge" id="cart-badge">{{ cart|length }}</span></button>
+    {% if acct_id %}
+      <a class="cust-chip" href="{% url 'customer' %}">👤 <b>{{ acct_name|default:"Guest" }}</b></a>
+    {% else %}
+      <span class="cust-chip">👤 <b>{{ acct_name|default:"Guest" }}</b></span>
+    {% endif %}
+    <a class="restartbtn" href="{% url 'end' %}" title="Start a new session">↺ Restart</a>
+    <a class="link" href="{% url 'my_stats' %}">My stats</a>
+  {% endif %}
   {% if request.user.is_staff %}<a class="link" href="{% url 'sessions' %}">Sessions</a><a class="link" href="{% url 'insights_overview' %}">Insights</a>{% endif %}
+  {% if request.user.is_superuser %}<a class="link" href="{% url 'shifts' %}">Shifts</a>{% endif %}
   <a class="link" href="{% url 'logout' %}">Sign out</a>
 </header>
+
+{% if role != "door" %}
+<div id="queue" class="queuewrap" hx-get="{% url 'queue_panel' %}" hx-trigger="load, every 5s">
+  {% include "pos/_queue_panel.html" %}
+</div>
 
 <div class="customerbar">
   <form hx-post="{% url 'scan' %}" hx-target="#profile" hx-encoding="multipart/form-data">
     <input type="file" name="images" accept="image/*" capture="environment" multiple aria-label="Scan ID">
+    <button type="button" class="ghost idscan__toggle" data-target="screen-idscan">Scan barcode on device</button>
+    <div id="screen-idscan" class="idscan" hidden>
+      <video class="idscan__video" autoplay playsinline muted></video>
+      <p id="screen-idscan-status" class="muted" style="margin-top:8px"></p>
+      <div class="idscan__actions">
+        <button type="button" class="ghost idscan__close" data-target="screen-idscan">Close scanner</button>
+      </div>
+    </div>
+    <input type="hidden" id="id_payload" name="id_payload" value="">
     <button type="submit" class="ghost">Scan ID</button>
   </form>
   <form hx-post="{% url 'lookup' %}" hx-target="#guests"
@@ -41,9 +63,11 @@
     <input class="grow" name="phone" placeholder="Search customer by phone…" inputmode="tel" autocomplete="off">
     <button type="submit">Find</button>
   </form>
+  <button type="button" class="ghost" hx-post="{% url 'guest_start' %}" hx-target="#profile">Guest</button>
   <div id="guests" class="ac-results"></div>
-  <div id="profile">{% if not acct_id %}<span class="muted">No customer selected — scan or search, or continue as guest.</span>{% endif %}</div>
+  <div id="profile">{% if not acct_id %}<span class="muted">No customer selected — claim from the queue, scan, search, or continue as guest.</span>{% endif %}</div>
 </div>
+{% endif %}
 
 <main>
   <div id="menu" hx-get="{% url 'menu' %}{% if initial_cat %}?cat={{ initial_cat }}{% endif %}" hx-trigger="load, customerChanged from:body">
@@ -51,6 +75,7 @@
   </div>
 </main>
 
+{% if role != "door" %}
 <!-- cart drawer -->
 <div id="cart-backdrop" data-cart-close></div>
 <aside id="cart-drawer" aria-label="Cart">
@@ -63,5 +88,6 @@
     <div id="submit-result" style="margin-top:8px"></div>
   </div>
 </aside>
+{% endif %}
 </body>
 </html>

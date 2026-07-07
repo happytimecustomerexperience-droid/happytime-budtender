@@ -47,7 +47,7 @@ services:
     # applied when its tables already exist (existing prod/dev DBs) instead of
     # trying to recreate them, so the analytics tables are stored durably and
     # deterministically. No runtime makemigrations (that was ephemeral/fragile).
-    command: sh -c "python manage.py migrate --noinput --fake-initial && python manage.py collectstatic --noinput"
+    command: sh -c "python manage.py migrate --noinput --fake-initial"
     env_file:
       - .env
       - .env.dutchie
@@ -95,7 +95,9 @@ services:
   # The POS's Dutchie register keys come from .env / .env.dutchie / stores.json.
   pos-web:
     build: .
-    command: sh -c "exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers ${POS_GUNICORN_WORKERS:-3} --worker-class gthread --threads 4 --timeout 60 --keep-alive 5"
+    # collectstatic into THIS container at boot (staticfiles/ is dockerignored + the one-shot
+    # migrate container's copy is discarded), so WhiteNoise actually serves the POS CSS/JS.
+    command: sh -c "python manage.py collectstatic --noinput || true; exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers ${POS_GUNICORN_WORKERS:-3} --worker-class gthread --threads 4 --timeout 60 --keep-alive 5"
     env_file:
       - .env
       - .env.dutchie

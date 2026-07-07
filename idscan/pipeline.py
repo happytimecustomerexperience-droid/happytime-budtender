@@ -180,6 +180,16 @@ def _finalize(fields: dict, source_text: str) -> dict:
     }
 
 
+def run_id_scan_payload(payload: str | None) -> dict:
+    """Parse a raw ID payload provided by a client-side scan."""
+    if not payload or not isinstance(payload, str):
+        return {"error": "No payload provided"}
+    fields = parse_aamva(payload.strip())
+    if fields and (fields.get("first_name") or fields.get("last_name")):
+        return _finalize(fields, source_text=payload.strip())
+    return {"error": "Couldn't parse ID payload"}
+
+
 # ---------- Public entry point ----------
 
 def run_id_scan(image_bytes_list: list[bytes]) -> dict:

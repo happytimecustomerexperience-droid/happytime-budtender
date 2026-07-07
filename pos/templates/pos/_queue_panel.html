@@ -1,0 +1,14 @@
+<div class="active-head"><span class="livedot"></span> Queue <span class="muted">({{ queue|length }})</span></div>
+{% if queue %}
+<div class="vtable queue">
+  <div class="vrow vhead"><span>Customer</span><span>Phone</span><span class="num">Waiting</span><span class="num">Claim</span></div>
+  {% for q in queue %}
+  <div class="vrow">
+    <span class="nm">{{ q.acct_name|default:"Guest" }}</span>
+    <span>{{ q.phone|default:"—" }}</span>
+    <span class="num">{{ q.wait_display }}</span>
+    <span class="num"><form hx-post="{% url 'claim' q.id %}" hx-target="#profile"><button class="smallbtn" type="submit">Claim</button></form></span>
+  </div>
+  {% endfor %}
+</div>
+{% else %}<p class="muted" style="padding:2px 0">Queue is empty.</p>{% endif %}

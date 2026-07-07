@@ -1,0 +1,13 @@
+{% if error %}
+  <p class="err">{{ error }}</p>
+{% elif under21 %}
+  <div style="background:rgba(255,122,92,.14);border:1px solid var(--bad);border-radius:10px;padding:14px">
+    <div class="bebas" style="font-size:24px;color:var(--bad)">⛔ UNDER 21 — DO NOT ADMIT</div>
+    {% if name %}<p class="muted" style="margin:6px 0 0">{{ name }}</p>{% endif %}
+  </div>
+{% elif queued %}
+  <p class="badge-ok" style="font-size:14px">✅ Added to queue — <strong>{{ name }}</strong>{% if phone %} · {{ phone }}{% endif %}</p>
+  <div hx-swap-oob="afterbegin:#door-shift-list">
+    <div class="vrow"><span class="nm">{{ name }}</span><span>{{ phone|default:"—" }}</span><span class="muted num">{{ queued.started_at|date:"g:i A" }}</span></div>
+  </div>
+{% endif %}

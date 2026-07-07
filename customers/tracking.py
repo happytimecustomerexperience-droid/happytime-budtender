@@ -77,9 +77,13 @@ def start_visit(request, *, acct_id, name="", phone="", how="lookup", store="", 
             request.session.pop(k, None)
         request.session["_seen"] = []
         store = store or request.session.get("store") or ""
+        # A budtender-initiated visit is claimed on the spot (no queue wait), so stamp
+        # claimed_at = now → wait_seconds ≈ 0; door-queued visits are created elsewhere.
         v = ShopVisit.objects.create(
-            store=str(store), budtender=_username(request), acct_id=acct,
-            acct_name=name or "", phone=phone or "", how_started=how or "")
+            store=str(store), budtender=_username(request), claimed_by=_username(request),
+            acct_id=acct, acct_name=name or "", phone=phone or "", how_started=how or "",
+            status="claimed", claimed_at=timezone.now(),
+            staff_session_id=request.session.get("staff_session_id"))
         request.session[_VISIT] = v.id
         _log(v, request, "visit_start", detail=how, meta=meta)
         # Fire the secondary "how did this visit start" event from ONE place so every
@@ -116,7 +120,7 @@ def track(request, kind, *, product=None, detail="", dedupe_key=None, brand="", 
     lacks them, so cart_add passes the full product's brand/category)."""
     try:
         v = _open_visit(request)
-        if v is None and kind != "login":
+        if v is None and kind not in ("login", "logout"):   # shift events stand alone
             return
         if dedupe_key is not None:
             seen = request.session.get("_seen") or []

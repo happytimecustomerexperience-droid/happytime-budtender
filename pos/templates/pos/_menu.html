@@ -36,9 +36,10 @@
     {% endfor %}
   </div>
 
-  <form class="filters" hx-get="{% url 'menu' %}" hx-target="#menu"
+    <form class="filters" hx-get="{% url 'menu' %}" hx-target="#menu"
         hx-trigger="change, keyup changed delay:400ms from:input[name=q]">
     <input type="hidden" name="cat" value="{{ f.cat }}">
+    <input type="hidden" name="subcat" value="{{ f.subcat }}">
     <input type="hidden" name="f" value="1">  {# sentinel: form submitted -> respect the DOH checkbox state #}
     <input class="search" name="q" value="{{ f.q }}" placeholder="Search products…" autocomplete="off">
     <select name="sort" aria-label="Sort">

@@ -1,4 +1,4 @@
-"""Budtender screen views — scan/lookup/profile/inventory/cart/submit + auth.
+﻿"""Budtender screen views â€” scan/lookup/profile/inventory/cart/submit + auth.
 
 Function views, server-rendered + HTMX partials. Write paths are @login_required.
 Dutchie calls are wrapped so missing creds/endpoints degrade to a visible error, never
@@ -7,6 +7,7 @@ a 500. Cart lives in the session. Public-ish endpoints are throttled. Lists pagi
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 from collections import Counter
@@ -15,6 +16,7 @@ from django.contrib.auth import login as auth_login
 from django.contrib.auth import logout as auth_logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import AuthenticationForm
+from django.core.cache import cache
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db.models import Count, Max, OuterRef, Q, Subquery, Sum
@@ -26,7 +28,7 @@ from django.views.decorators.http import require_http_methods
 from pos_core.ratelimit import rate_limit
 from customers import tracking
 from customers.intelligence import load_customer_history, load_profile_full_cached
-from customers.models import Customer, ShopEvent, ShopVisit
+from customers.models import Customer, ShopEvent, ShopVisit, StaffSession
 from customers.services import record_write, upsert_customer
 from dutchie.pos_register_client import PosRegisterClient
 from dutchie.stores import load_stores
@@ -39,7 +41,7 @@ MAX_LIST = 40  # cap any rendered list (pagination ceiling)
 MENU_PAGE = 24  # products per menu page (paginated)
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def _stores():
     try:
         return load_stores()
@@ -55,20 +57,104 @@ def _active_store(request):
     lock = os.environ.get("BUDTENDER_LOCK_STORE", "").strip()
     if lock and lock in stores:
         request.session["store"] = lock
-        return stores[lock]
+        return _with_register(request, stores[lock])
     name = request.POST.get("store") or request.GET.get("store") or request.session.get("store")
     if name and name in stores:
         request.session["store"] = name
-        return stores[name]
+        return _with_register(request, stores[name])
     if stores:
         first = next(iter(stores))
         request.session["store"] = first
-        return stores[first]
+        return _with_register(request, stores[first])
     return None
+
+
+def _with_register(request, store):
+    """Override the store's default register with the one the operator picked at login
+    (session `register_id`) — so a checkout writes to their chosen terminal. Returns a
+    copy (never mutates the cached Store)."""
+    rid = request.session.get("register_id")
+    try:
+        if rid and str(rid).isdigit() and int(rid) != int(getattr(store, "register_id", 0) or 0):
+            return dataclasses.replace(store, register_id=int(rid))
+    except (TypeError, ValueError):
+        pass
+    return store
 
 
 def _client(store):
     return PosRegisterClient(store)
+
+
+# ── roles + shift ─────────────────────────────────────────────────────────────
+def _role(request):
+    return request.session.get("role") or "budtender"
+
+
+def _is_door(request):
+    return _role(request) == "door"
+
+
+def _require_not_door(request):
+    """Door staff can browse but never touch the cart / checkout / claim."""
+    if _is_door(request):
+        raise PermissionDenied("door role cannot check out")
+
+
+def _client_ip(request):
+    fwd = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    return (fwd.split(",")[0].strip() if fwd else request.META.get("REMOTE_ADDR")) or None
+
+
+def _current_shift(request):
+    sid = request.session.get("staff_session_id")
+    if not sid:
+        return None
+    try:
+        return StaffSession.objects.filter(id=sid, logout_at__isnull=True).first()
+    except Exception:
+        return None
+
+
+def _all_registers():
+    """Live Dutchie registers per store, flattened + cached (login page reads this)."""
+    key = "pos:registers:v1"
+    hit = cache.get(key)
+    if hit is not None:
+        return hit
+    out = []
+    for name, store in _stores().items():
+        try:
+            for r in PosRegisterClient(store).get_registers():
+                out.append({"store": name, "id": r.get("id"),
+                            "name": r.get("TerminalName") or f"Register {r.get('id')}",
+                            "room": r.get("RoomNo") or ""})
+        except Exception as exc:
+            logger.warning("get_registers(%s) failed: %s", name, exc)
+    cache.set(key, out, 3600)
+    return out
+
+
+def _register_name(store, register_id):
+    for r in _all_registers():
+        if r["store"] == store and str(r["id"]) == str(register_id):
+            return r["name"]
+    return ""
+
+
+def _login_pickers():
+    return {"stores": list(_stores().keys()), "registers": _all_registers()}
+
+
+def _set_session_customer(request, acct_id, name, phone):
+    """The session-customer state that scan/profile/claim all set (single source)."""
+    request.session["acct_id"] = acct_id
+    request.session["acct_name"] = name or ""
+    request.session["acct_phone"] = phone or ""
+    request.session.setdefault("cart", [])
+    allowed = request.session.get("guests") or {}
+    allowed[str(acct_id)] = {"name": name or "", "phone": phone or ""}
+    request.session["guests"] = allowed
 
 
 def _parse_guests(raw) -> list[dict]:
@@ -92,26 +178,54 @@ def _parse_guests(raw) -> list[dict]:
     return out
 
 
-# ── auth (budtender-facing login, mobile) ────────────────────────────────────
+# â”€â”€ auth (budtender-facing login, mobile) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @rate_limit("login", limit=10, window=300)
 def login_view(request):
     if request.method == "POST":
         form = AuthenticationForm(request, data=request.POST)
         if form.is_valid():
             auth_login(request, form.get_user())
+            role = request.POST.get("role")
+            role = role if role in ("budtender", "door") else "budtender"
+            if request.user.is_superuser:
+                role = "admin"                # privilege is server-side, never the client's word
+            stores = _stores()
+            store = request.POST.get("location") or ""
+            if store not in stores:
+                store = next(iter(stores), "")
+            register_id = str(request.POST.get("register") or "")
+            request.session["role"] = role
+            request.session["store"] = store
+            request.session["register_id"] = register_id
+            try:
+                ss = StaffSession.objects.create(
+                    user=request.user, username=request.user.username, role=role,
+                    store=store, register_id=register_id,
+                    register_name=_register_name(store, register_id), ip=_client_ip(request))
+                request.session["staff_session_id"] = ss.id
+            except Exception as exc:
+                logger.warning("StaffSession create failed: %s", exc)
             tracking.track(request, "login")
-            return redirect("screen")
+            return redirect("door" if role == "door" else "screen")
     else:
         form = AuthenticationForm(request)
-    return render(request, "pos/login.html", {"form": form})
+    return render(request, "pos/login.html", {"form": form, **_login_pickers()})
 
 
 def logout_view(request):
+    ss = _current_shift(request)
+    if ss is not None:
+        try:
+            ss.logout_at = timezone.now()
+            ss.save(update_fields=["logout_at"])
+        except Exception as exc:
+            logger.warning("StaffSession close failed: %s", exc)
+    tracking.track(request, "logout")   # standalone shift event (allowed with no open visit)
     auth_logout(request)
     return redirect("login")
 
 
-# ── begin session (start gate: scan ID + phone -> 21 check -> find/create) ─────
+# â”€â”€ begin session (start gate: scan ID + phone -> 21 check -> find/create) â”€â”€â”€â”€â”€
 @login_required
 def begin(request):
     return render(request, "pos/begin.html", {
@@ -162,17 +276,32 @@ def _resolve_or_create(client, scan, phone):
     return None, None, "none"
 
 
+def _run_scan(request):
+    """Run ID scan via posted payload first, then fallback to uploaded images."""
+    if request.POST.get("id_payload"):
+        from idscan.pipeline import run_id_scan_payload
+        return run_id_scan_payload(request.POST["id_payload"])
+    from pos_core.uploads import collect_id_images
+    files = request.FILES.getlist("images")
+    if not files:
+        return None
+    try:
+        images = collect_id_images(files)
+    except Exception:
+        raise
+    from idscan.pipeline import run_id_scan
+    return run_id_scan(images)
+
+
 @login_required
 @rate_limit("start", limit=30, window=60)
 @require_http_methods(["POST"])
 def start(request):
-    from pos_core.uploads import collect_id_images
-
     store = _active_store(request)
     phone = "".join(c for c in (request.POST.get("phone") or "") if c.isdigit())
     ctx = {"stores": list(_stores().keys()), "active": request.session.get("store"), "phone": phone}
 
-    # "Continue as guest" — quick anonymous Dutchie guest, no profile needed.
+    # "Continue as guest" â€” quick anonymous Dutchie guest, no profile needed.
     if request.POST.get("guest"):
         if not store:
             ctx["error"] = "no store configured"
@@ -181,28 +310,20 @@ def start(request):
             gid = _client(store).create_guest(first_name="Guest", last_name="", dob="", phone="")
         except Exception as exc:
             logger.warning("guest start failed: %s", exc)
-            ctx["error"] = "Could not start a guest session — try again."
+            ctx["error"] = "Could not start a guest session â€” try again."
             return render(request, "pos/begin.html", ctx)
         if not gid:
             ctx["error"] = "could not start a guest session"
             return render(request, "pos/begin.html", ctx)
         return _start_session(request, gid, "Guest", "", how="guest")
 
-    scan = {}
-    files = request.FILES.getlist("images")
-    if files:
-        try:
-            images = collect_id_images(files)
-        except Exception as exc:
-            ctx["error"] = f"upload rejected: {exc}"
-            return render(request, "pos/begin.html", ctx)
-        from idscan.pipeline import run_id_scan
-        scan = run_id_scan(images)
+    scan = _run_scan(request) or {}
+    if scan:
         if scan.get("error"):
             ctx["error"] = f"scan failed: {scan['error']}"
             return render(request, "pos/begin.html", ctx)
         ctx["scan"] = scan
-        if scan.get("over_21") is False:    # HARD age flag — do not start a session
+        if scan.get("over_21") is False:
             ctx["under21"] = True
             return render(request, "pos/begin.html", ctx)
     if not store:
@@ -217,25 +338,25 @@ def start(request):
         acct_id, name, how = _resolve_or_create(_client(store), scan, phone)
     except Exception as exc:
         logger.warning("start lookup failed: %s", exc)
-        ctx["error"] = "Lookup failed — try again."
+        ctx["error"] = "Lookup failed â€” try again."
         return render(request, "pos/begin.html", ctx)
-    if not acct_id:
-        # No match + nothing to create from → offer Create-profile (scan) or Guest.
-        ctx["no_account"] = True
-        return render(request, "pos/begin.html", ctx)
-
     if scan:
         upsert_customer({**scan, "phone": phone}, dutchie_acct_id=acct_id)
+    if not acct_id:
+        # Persist structured scan data even when Dutchie account is not found.
+        ctx["no_account"] = True
+        return render(request, "pos/begin.html", ctx)
     how = "scan" if scan else how
     return _start_session(request, acct_id, name, phone, how=how,
                           scan_over21=scan.get("over_21") if scan else None)
 
 
-# ── POS screen (requires an active session) ────────────────────────────────────
+# â”€â”€ POS screen (requires an active session) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @login_required
 def screen(request):
-    if not request.session.get("acct_id"):
-        return redirect("begin")
+    # The screen is the hub: budtenders land here to see the QUEUE + claim / scan / lookup.
+    # The menu only personalizes once a customer is selected (acct_id). Door browses read-only.
+    role = _role(request)
     return render(request, "pos/screen.html", {
         "stores": list(_stores().keys()),
         "active": request.session.get("store"),
@@ -243,6 +364,8 @@ def screen(request):
         "acct_id": request.session.get("acct_id"),
         "acct_name": request.session.get("acct_name"),
         "initial_cat": request.GET.get("cat", ""),
+        "role": role,
+        "queue": list(_store_queue(request.session.get("store") or "")) if role != "door" else [],
     })
 
 
@@ -250,23 +373,24 @@ def screen(request):
 @rate_limit("scan", limit=20, window=60)
 @require_http_methods(["POST"])
 def scan(request):
-    from pos_core.uploads import collect_id_images
-
     store = _active_store(request)
     ctx = {"store": store}
     try:
-        images = collect_id_images(request.FILES.getlist("images"))
+        scan_result = _run_scan(request)
     except Exception as exc:
         tracking.track(request, "scan_failed", detail=f"upload: {exc}"[:120])
         ctx["error"] = f"upload rejected: {exc}"
         return render(request, "pos/_profile.html", ctx)
-
-    from idscan.pipeline import run_id_scan
-
-    scan_result = run_id_scan(images)
+    scan_result = scan_result or {}
     if scan_result.get("error"):
         tracking.track(request, "scan_failed", detail=str(scan_result["error"])[:120])
         ctx["error"] = f"scan failed: {scan_result['error']}"
+        return render(request, "pos/_profile.html", ctx)
+    if scan_result.get("over_21") is False:
+        tracking.track(request, "scan_failed", detail="under21")
+        ctx["warn"] = "UNDER 21 â€” cannot create a POS session."
+        ctx["scan"] = scan_result
+        ctx["acct_id"] = None
         return render(request, "pos/_profile.html", ctx)
 
     acct_id = None
@@ -319,7 +443,7 @@ def lookup(request):
     except Exception as exc:
         logger.warning("lookup failed: %s", exc)
         tracking.track(request, "lookup_failed", detail=str(exc)[:120])
-        ctx["error"] = "Lookup failed — try again."
+        ctx["error"] = "Lookup failed â€” try again."
         return render(request, "pos/_guests.html", ctx)
     ctx["guests"] = guests
     tracking.track(request, "customer_search", detail=q[:120], results=len(guests))
@@ -337,9 +461,9 @@ def lookup(request):
 @rate_limit("profile", limit=40, window=60)
 @require_http_methods(["POST"])
 def profile(request):
-    """POST-only (was a state-mutating GET — CSRF retarget). The customer's phone/
+    """POST-only (was a state-mutating GET â€” CSRF retarget). The customer's phone/
     name are taken from the SESSION allow-map populated by a prior lookup/scan, never
-    from the request — so this can't be used to pull arbitrary customers' PII (IDOR)."""
+    from the request â€” so this can't be used to pull arbitrary customers' PII (IDOR)."""
     acct = request.POST.get("acct")
     allowed = (request.session.get("guests") or {}).get(str(acct))
     if not allowed:
@@ -360,7 +484,148 @@ def profile(request):
     return resp
 
 
-# ── customer profile (2 pages: preview + full transaction history) ─────────────
+# -- door role: scan people into the shared per-store queue --------------------
+@login_required
+def door(request):
+    """Door landing - scan an ID / enter a phone to add the person to the live queue.
+    No cart, no checkout (role-gated). Location is locked to the shift's store."""
+    return render(request, "pos/door.html", {
+        "store": request.session.get("store"), "role": _role(request),
+    })
+
+
+@login_required
+@rate_limit("start", limit=60, window=60)
+@require_http_methods(["POST"])
+def door_scan(request):
+    """Add a scanned/looked-up customer to the queue (status=queued, no budtender, no
+    Dutchie write - the budtender resolves + checks in on claim). Returns a confirmation."""
+    from pos_core.uploads import collect_id_images
+
+    store_name = request.session.get("store") or ""
+    phone = "".join(c for c in (request.POST.get("phone") or "") if c.isdigit())
+    name = (request.POST.get("name") or "").strip()
+    ctx = {}
+    scan = {}
+    files = request.FILES.getlist("images")
+    if files:
+        try:
+            images = collect_id_images(files)
+        except Exception as exc:
+            ctx["error"] = f"upload rejected: {exc}"
+            return render(request, "pos/_door_result.html", ctx)
+        from idscan.pipeline import run_id_scan
+        scan = run_id_scan(images)
+        if scan.get("error"):
+            ctx["error"] = f"scan failed: {scan['error']}"
+            return render(request, "pos/_door_result.html", ctx)
+        if scan.get("over_21") is False:                     # HARD age flag - do not queue
+            return render(request, "pos/_door_result.html",
+                          {"under21": True, "name": scan.get("accts_name")})
+        name = name or (scan.get("accts_name") or "").strip()
+        phone = phone or "".join(c for c in (scan.get("phone") or "") if c.isdigit())
+        upsert_customer(scan, dutchie_acct_id=None)
+    if not (name or phone):
+        ctx["error"] = "Scan an ID or enter a phone/name to add to the queue."
+        return render(request, "pos/_door_result.html", ctx)
+    v = ShopVisit.objects.create(
+        store=str(store_name), status="queued", how_started="door",
+        acct_name=name or "Guest", phone=phone or "",
+        staff_session_id=request.session.get("staff_session_id"))
+    ShopEvent.objects.create(visit=v, kind="queued", budtender=request.user.username,
+                             detail=(name or phone)[:200])
+    ctx.update({"queued": v, "name": name or "Guest", "phone": phone})
+    return render(request, "pos/_door_result.html", ctx)
+
+
+# -- budtender role: the live queue + claim ------------------------------------
+def _store_queue(store_name):
+    return (ShopVisit.objects.filter(store=store_name, status="queued", ended_at__isnull=True)
+            .order_by("started_at"))
+
+
+@login_required
+@rate_limit("sessions", limit=600, window=60)
+@require_http_methods(["GET"])
+def queue_panel(request):
+    """Live per-store queue partial - polled every 5s by the budtender screen."""
+    _require_not_door(request)
+    return render(request, "pos/_queue_panel.html",
+                  {"queue": list(_store_queue(request.session.get("store") or ""))})
+
+
+@login_required
+@rate_limit("start", limit=60, window=60)
+@require_http_methods(["POST"])
+def claim(request, visit_id):
+    """Claim a queued customer: mark claimed (records the wait), resolve the Dutchie
+    guest so the budtender can shop/checkout, and adopt this visit as the session's open
+    visit - dropping into the existing shop flow via `customerChanged`."""
+    _require_not_door(request)
+    store = _active_store(request)
+    v = ShopVisit.objects.filter(pk=visit_id, status="queued", ended_at__isnull=True).first()
+    if v is None:
+        return render(request, "pos/_profile.html", {"error": "That customer was already taken."})
+    acct_id = v.acct_id
+    if store and not acct_id:                               # door only captured identity - resolve now
+        try:
+            q = v.phone or v.acct_name or ""
+            guests = _parse_guests(_client(store).guest_search(q)) if len(q) >= 3 else []
+            if guests:
+                acct_id = guests[0]["acct_id"]
+        except Exception as exc:
+            logger.warning("claim guest lookup failed: %s", exc)
+    if not acct_id and store:                               # no match -> shop as a guest so checkout works
+        try:
+            acct_id = _client(store).create_guest(
+                first_name=(v.acct_name or "Guest").split(" ")[0], last_name="", dob="", phone=v.phone or "")
+        except Exception as exc:
+            logger.warning("claim guest create failed: %s", exc)
+    v.status = "claimed"
+    v.claimed_at = timezone.now()
+    v.budtender = v.claimed_by = request.user.username
+    v.acct_id = acct_id or v.acct_id
+    v.staff_session_id = request.session.get("staff_session_id") or v.staff_session_id
+    v.save(update_fields=["status", "claimed_at", "budtender", "claimed_by", "acct_id", "staff_session"])
+    _set_session_customer(request, v.acct_id, v.acct_name, v.phone)
+    request.session["visit_id"] = v.id                     # adopt as the open visit
+    upsert_customer({"accts_name": v.acct_name, "phone": v.phone},
+                    dutchie_acct_id=int(v.acct_id) if str(v.acct_id or "").isdigit() else None)
+    ShopEvent.objects.create(visit=v, kind="claimed", budtender=request.user.username,
+                             acct_id=v.acct_id, detail=v.wait_display)
+    resp = render(request, "pos/_profile.html", {
+        "acct_id": v.acct_id, "scan": {"accts_name": v.acct_name, "phone": v.phone},
+        "history": load_customer_history(acct_id=v.acct_id, phone=v.phone, name=v.acct_name),
+    })
+    resp["HX-Trigger"] = "customerChanged"
+    return resp
+
+
+@login_required
+@rate_limit("start", limit=30, window=60)
+@require_http_methods(["POST"])
+def guest_start(request):
+    """Continue-as-guest from the budtender screen (mirrors the begin-gate guest path)."""
+    _require_not_door(request)
+    store = _active_store(request)
+    if not store:
+        return render(request, "pos/_profile.html", {"error": "no store configured"})
+    try:
+        gid = _client(store).create_guest(first_name="Guest", last_name="", dob="", phone="")
+    except Exception as exc:
+        logger.warning("guest start failed: %s", exc)
+        gid = None
+    if not gid:
+        return render(request, "pos/_profile.html", {"error": "Could not start a guest session."})
+    _set_session_customer(request, gid, "Guest", "")
+    tracking.start_visit(request, acct_id=gid, name="Guest", phone="", how="guest")
+    resp = render(request, "pos/_profile.html",
+                  {"acct_id": gid, "scan": {"accts_name": "Guest", "phone": ""}})
+    resp["HX-Trigger"] = "customerChanged"
+    return resp
+
+
+# -- customer profile (2 pages: preview + full transaction history) ------------
 def _affw(v):
     try:
         return float(v)
@@ -397,6 +662,50 @@ def _fav_strains(hist, n=8):
     return sorted(agg.values(), key=lambda a: a["times"], reverse=True)[:n]
 
 
+def _category_pref_tree(hist):
+    """Build ordered category/subcategory buckets from purchase history rows."""
+    tree = {}
+    for h in hist:
+        if not isinstance(h, dict):
+            continue
+        cat = (h.get("category") or "other").strip() or "other"
+        sub = (h.get("subcategory") or "").strip() or "unclassified"
+        entry = tree.setdefault(cat, {"items": 0, "subcats": {}})
+        entry["items"] += _affw(h.get("times_bought")) or 0
+        sub_entry = entry["subcats"].setdefault(sub, {"items": 0, "rows": []})
+        sub_entry["items"] += _affw(h.get("times_bought")) or 0
+        sub_entry["rows"].append(h)
+    rows = sorted(({"category": c, "items": v["items"], "subcats": v["subcats"]}
+                   for c, v in tree.items()), key=lambda x: x["items"], reverse=True)
+    for row in rows:
+        row["subcats"] = sorted(
+            ({"subcategory": s, "items": vals["items"], "rows": vals["rows"]} for s, vals in row["subcats"].items()),
+            key=lambda x: x["items"], reverse=True,
+        )
+    return rows
+
+
+def _find_product_in_inventory(inv, row):
+    """Try to resolve a purchas history row into current inventory for direct open-linking."""
+    if not row:
+        return None
+    pid = row.get("product_id") or row.get("product_id") or row.get("sku")
+    if pid:
+        for p in inv:
+            if str(p.get("product_id")) == str(pid):
+                return p
+    name = (row.get("product") or "").strip().lower()
+    brand = (row.get("brand") or "").strip().lower()
+    for p in inv:
+        if name and name == (p.get("name") or "").strip().lower():
+            if not brand or brand == (p.get("brand") or "").strip().lower():
+                return p
+        if brand and brand == (p.get("brand") or "").strip().lower() and (hsku := row.get("sku")):
+            if str(p.get("product_id")) == str(hsku):
+                return p
+    return None
+
+
 def _customer_ctx(request, full):
     acct_id = request.session.get("acct_id")
     phone = request.session.get("acct_phone") or ""
@@ -416,7 +725,7 @@ def _customer_ctx(request, full):
             logger.warning("customer inv load failed: %s", exc)
     # purchase_history comes from an uncontrolled remote DB; keep only dict rows so a
     # stray null/string element degrades instead of 500-ing (same guard as ranking/suggest).
-    # COPY each row — `profile` is now cached/shared, so the full-page `h["spend"]=` below
+    # COPY each row â€” `profile` is now cached/shared, so the full-page `h["spend"]=` below
     # must not mutate the cached object.
     hist = [dict(h) for h in ((profile or {}).get("purchase_history") or []) if isinstance(h, dict)]
     ranked = catalog.query(inv, profile, {"sort": "foryou"}) if inv else []   # rank ONCE
@@ -440,6 +749,52 @@ def _customer_ctx(request, full):
         "history_count": len(hist),
     }
     if full:
+        sel_cat = (request.GET.get("cat") or "").strip().lower()
+        sel_sub = (request.GET.get("subcat") or "").strip().lower()
+        pref_tree = _category_pref_tree(hist)
+        selected_nodes = []
+        table_rows = []
+        selected_cat_label = ""
+        selected_sub_label = ""
+        for node in pref_tree:
+            cat_key = str(node["category"]).strip().lower()
+            for sub_node in node["subcats"]:
+                if sub_node["rows"]:
+                    for r in sub_node["rows"]:
+                        if not isinstance(r, dict):
+                            continue
+                        r["spend"] = round(_affw(r.get("last_price")) * _affw(r.get("qty")), 2)
+                        inv_row = _find_product_in_inventory(inv, r)
+                        if inv_row:
+                            r["in_stock"] = inv_row.get("qty", 0) > 0
+                            r["product_id"] = inv_row.get("product_id")
+                        else:
+                            r["in_stock"] = False
+                if (not sel_cat or cat_key == sel_cat) and (not sel_sub or sel_sub == str(sub_node["subcategory"]).strip().lower()):
+                    selected_nodes.append((node["category"], sub_node))
+            if (not sel_cat or cat_key == sel_cat) and sel_cat:
+                selected_cat_label = node["category"]
+        if sel_cat:
+            for _cat, _sub in selected_nodes:
+                selected_sub_label = _sub["subcategory"]
+                if not sel_sub or str(_sub["subcategory"]).strip().lower() == sel_sub:
+                    table_rows.extend(_sub["rows"])
+            table_rows = sorted([r for r in table_rows if isinstance(r, dict)],
+                               key=lambda h: str(h.get("last_bought_at") or ""), reverse=True)
+        elif pref_tree:
+            selected_cat_label = pref_tree[0]["category"]
+            selected_sub_label = pref_tree[0]["subcats"][0]["subcategory"] if pref_tree[0]["subcats"] else ""
+            table_rows = sorted([r for r in pref_tree[0]["subcats"][0]["rows"] if isinstance(r, dict)],
+                               key=lambda h: str(h.get("last_bought_at") or ""), reverse=True)
+        ctx.update({
+            "pref_tree": pref_tree,
+            "selected_cat": sel_cat,
+            "selected_subcat": sel_sub,
+            "selected_cat_label": selected_cat_label,
+            "selected_subcat_label": selected_sub_label,
+            "pref_rows": table_rows,
+            "history": sorted(hist, key=lambda h: str(h.get("last_bought_at") or ""), reverse=True),
+        })
         for h in hist:
             h["spend"] = round(_affw(h.get("last_price")) * _affw(h.get("qty")), 2)
         ctx["history"] = sorted(hist, key=lambda h: str(h.get("last_bought_at") or ""), reverse=True)
@@ -478,6 +833,7 @@ def _filters(request):
 
     return {
         "q": g.get("q", ""), "cat": g.get("cat", ""), "brand": g.get("brand", ""),
+        "subcat": g.get("subcat", ""),
         "strain_type": g.get("strain_type", ""), "effect": g.get("effect", ""),
         "sort": g.get("sort", "foryou"),
         "price_min": _int("price_min"), "price_max": _int("price_max"),
@@ -496,7 +852,7 @@ def menu(request):
         ctx["error"] = "no store configured"
         return render(request, "pos/_menu.html", ctx)
     phone = request.session.get("acct_phone") or ""
-    # Cached persisted taste (fast — no DB hit per filter change) blended with THIS visit's
+    # Cached persisted taste (fast â€” no DB hit per filter change) blended with THIS visit's
     # live behavior, so every customer (new / guest / DB-down) gets a personalized feed.
     profile = load_profile_full_cached(phone) if phone else None
     eff = ranking.blend_session_taste(profile, request.session.get("taste"))
@@ -505,7 +861,7 @@ def menu(request):
         items = catalog.get_inventory(store.name)
     except Exception as exc:
         logger.warning("menu load failed: %s", exc)
-        ctx["error"] = "Menu unavailable — refresh in a moment."
+        ctx["error"] = "Menu unavailable â€” refresh in a moment."
         return render(request, "pos/_menu.html", ctx)
     facets = catalog.facets(items)
     # DOH defaults ON (owner rule) when the catalog has DOH products and the user
@@ -519,7 +875,7 @@ def menu(request):
     page = min(f["page"], pages)
     start_i = (page - 1) * MENU_PAGE
     # Personalized "home": per-category carousels + cart-aware pairs, only on the default
-    # (unfiltered) view — once they tab/search, just show the filtered grid.
+    # (unfiltered) view â€” once they tab/search, just show the filtered grid.
     default_view = not f.get("cat") and not f.get("q")
     carousels = _carousels(results, eff, n_cats=5, per=15) if (eff and default_view) else []
     cart = request.session.get("cart", [])
@@ -531,7 +887,7 @@ def menu(request):
         cats=catalog.categories(items), facets=facets, f=f,
         has_customer=bool(eff), acct_name=request.session.get("acct_name"),
         # The For-You strip is a fallback shown ONLY when there are no carousels (see
-        # _menu.html) — don't run the 3-pass suggest scan on filtered/keystroke views.
+        # _menu.html) â€” don't run the 3-pass suggest scan on filtered/keystroke views.
         suggestions=catalog.suggestions(store.name, eff, 6) if (eff and default_view and not carousels) else [],
         carousels=carousels, cart_pairs=cart_pairs,
         persona=persona.summarize(profile),
@@ -541,7 +897,7 @@ def menu(request):
 
 
 def _carousels(ranked, profile, n_cats=5, per=15):
-    """Per-category rails built by GROUPING the already-ranked feed (one rank, no re-query) —
+    """Per-category rails built by GROUPING the already-ranked feed (one rank, no re-query) â€”
     categories ordered by the customer's affinity, top-`per` of each."""
     if not ranked or not profile:
         return []
@@ -564,7 +920,7 @@ def _carousels(ranked, profile, n_cats=5, per=15):
 
 
 def _cart_anchor(store, cart):
-    """The priciest line in the cart — the cross-sell anchor (resolved to a full product)."""
+    """The priciest line in the cart â€” the cross-sell anchor (resolved to a full product)."""
     if not (store and cart):
         return None
     top = max(cart, key=lambda it: float(it.get("UnitPrice") or 0))
@@ -601,7 +957,7 @@ def _track_browse(request, f, total, suggestions):
 @rate_limit("product", limit=240, window=60)
 @require_http_methods(["GET"])
 def product(request, product_id):
-    """Full product detail page — lab data, terpene + effect explanations (Dutchie/
+    """Full product detail page - lab data, terpene + effect explanations (Dutchie/
     happytimeweed style). Reads the trusted cached inventory row by ProductId."""
     if not request.session.get("acct_id"):
         return redirect("begin")
@@ -635,6 +991,7 @@ def cart_add(request):
     """SECURITY: the price/serial/batch are NEVER taken from the client. We re-resolve
     the line from the server's cached inventory by ProductId; only quantity is trusted
     from the request. (Audit finding: client-trusted cart line -> live register write.)"""
+    _require_not_door(request)
     store = _active_store(request)
     cart = request.session.get("cart", [])
     try:
@@ -644,13 +1001,13 @@ def cart_add(request):
     p = catalog.find_item(store.name, product_id=request.POST.get("ProductId")) if store else None
     if not p:
         ctx = _cart_ctx(cart)
-        ctx["add_error"] = "Item unavailable — refresh the menu."
+        ctx["add_error"] = "Item unavailable â€” refresh the menu."
         return render(request, "pos/_cart.html", ctx)
     item = {k: p.get(k) for k in _TRUSTED_ITEM_KEYS}
     item["Discount"] = 0.0
     # Live price-check at add: the browse cache can be ~8 min stale, so confirm the
     # current price + auto-discount + availability straight from Dutchie for THIS serial.
-    # Best-effort — any failure falls back to the cached price so a hiccup never blocks a
+    # Best-effort â€” any failure falls back to the cached price so a hiccup never blocks a
     # sale. (The authoritative discounts still apply at submit via RunAutoDiscount=True.)
     serial = p.get("SerialNo")
     if store and serial:
@@ -672,7 +1029,7 @@ def cart_add(request):
     item["Cnt"] = cnt
     cart.append(item)
     request.session["cart"] = cart
-    # `item` is the trimmed trusted cart line (no brand/category) — pass them from the full
+    # `item` is the trimmed trusted cart line (no brand/category) â€” pass them from the full
     # product `p`, and flag when this add came from a suggestion the customer was just shown.
     tracking.track(request, "item_add", product=item, price=item.get("UnitPrice"),
                    discount=item.get("Discount"), qty=cnt,
@@ -690,6 +1047,7 @@ def _cart_ctx(cart):
 @login_required
 @require_http_methods(["POST"])
 def cart_remove(request):
+    _require_not_door(request)
     idx = int(request.POST.get("idx", -1))
     cart = request.session.get("cart", [])
     if 0 <= idx < len(cart):
@@ -701,9 +1059,11 @@ def cart_remove(request):
 @login_required
 @require_http_methods(["POST"])
 def cart_submit(request):
+    _require_not_door(request)
     store = _active_store(request)
     cart = request.session.get("cart", [])
     acct_id = request.session.get("acct_id")
+    shift_id = request.session.get("staff_session_id")
     ctx = {"store": store}
     if not (store and acct_id and cart):
         ctx["error"] = "need a store, a selected customer (AcctId), and at least one item"
@@ -713,13 +1073,13 @@ def cart_submit(request):
         record_write(store.name, "submit", ok=True, acct_id=int(acct_id),
                      shipment_id=result["shipment_id"],
                      summary=f"{len(cart)} items -> Ready for pickup",
-                     username=getattr(request.user, "username", ""))
+                     username=getattr(request.user, "username", ""), staff_session_id=shift_id)
         total = _cart_ctx(cart)["cart_total"]
         tracking.track(request, "checkout", detail=f"{len(cart)} items",
                        shipment_id=result["shipment_id"], total=total)
         tracking.end_visit(request, "checked_out", shipment_id=result["shipment_id"],
                            cart_total=total)
-        # Checkout done → clear the session and bounce to the start page for the
+        # Checkout done â†’ clear the session and bounce to the start page for the
         # next customer (HX-Redirect makes htmx do a full client-side navigation).
         for k in ("acct_id", "acct_name", "acct_phone", "cart"):
             request.session.pop(k, None)
@@ -730,28 +1090,29 @@ def cart_submit(request):
     except Exception as exc:
         record_write(store.name, "submit", ok=False,
                      acct_id=int(acct_id) if str(acct_id).isdigit() else None,
-                     summary=str(exc)[:200], username=getattr(request.user, "username", ""))
+                     summary=str(exc)[:200], username=getattr(request.user, "username", ""),
+                     staff_session_id=shift_id)
         logger.warning("cart submit failed: %s", exc)
         tracking.track(request, "checkout_failed", detail=str(exc)[:120])
-        ctx["error"] = "Submit failed — please try again."
+        ctx["error"] = "Submit failed â€” please try again."
     return render(request, "pos/_submit_result.html", ctx)
 
 
-# ── session-activity dashboard (operator-facing, read-only) ───────────────────
+# â”€â”€ session-activity dashboard (operator-facing, read-only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _DATE_WINDOWS = {"today": 1, "7d": 7, "30d": 30, "all": None}
 
 _EVENT_META = {
-    "login": ("🔑", "Logged in"), "visit_start": ("🟢", "Visit started"),
-    "id_scan": ("🪪", "ID scanned"), "customer_search": ("🔍", "Customer search"),
-    "customer_selected": ("👤", "Customer selected"), "profile_view": ("📇", "Viewed profile"),
-    "profile_full_view": ("📋", "Viewed full profile"), "menu_browse": ("🧭", "Browsed menu"),
-    "search": ("🔎", "Searched"), "category": ("🗂️", "Category"),
-    "product_view": ("👁️", "Viewed product"), "suggestions_shown": ("✨", "Suggestions shown"),
-    "item_add": ("➕", "Added to cart"), "item_remove": ("➖", "Removed from cart"),
-    "checkout": ("✅", "Checked out"), "abandon": ("🚪", "Abandoned"),
-    "scan_failed": ("⚠️", "Scan failed"), "lookup_failed": ("⚠️", "Lookup failed"),
-    "checkout_failed": ("❌", "Checkout failed"),
-    "admin_close": ("🔒", "Admin closed"), "admin_delete": ("🗑️", "Admin deleted"),
+    "login": ("ðŸ”‘", "Logged in"), "visit_start": ("ðŸŸ¢", "Visit started"),
+    "id_scan": ("ðŸªª", "ID scanned"), "customer_search": ("ðŸ”", "Customer search"),
+    "customer_selected": ("ðŸ‘¤", "Customer selected"), "profile_view": ("ðŸ“‡", "Viewed profile"),
+    "profile_full_view": ("ðŸ“‹", "Viewed full profile"), "menu_browse": ("ðŸ§­", "Browsed menu"),
+    "search": ("ðŸ”Ž", "Searched"), "category": ("ðŸ—‚ï¸", "Category"),
+    "product_view": ("ðŸ‘ï¸", "Viewed product"), "suggestions_shown": ("âœ¨", "Suggestions shown"),
+    "item_add": ("âž•", "Added to cart"), "item_remove": ("âž–", "Removed from cart"),
+    "checkout": ("âœ…", "Checked out"), "abandon": ("ðŸšª", "Abandoned"),
+    "scan_failed": ("âš ï¸", "Scan failed"), "lookup_failed": ("âš ï¸", "Lookup failed"),
+    "checkout_failed": ("âŒ", "Checkout failed"),
+    "admin_close": ("ðŸ”’", "Admin closed"), "admin_delete": ("ðŸ—‘ï¸", "Admin deleted"),
 }
 
 
@@ -777,16 +1138,41 @@ def _visit_filters(request):
 
 
 def _active_visits():
-    # Annotate the last event kind in ONE bounded subquery — never `.events.last` in the
+    # Annotate the last event kind in ONE bounded subquery â€” never `.events.last` in the
     # template (that clones the qs per row = N+1, and this panel polls every 5s).
     last_kind = ShopEvent.objects.filter(visit=OuterRef("pk")).order_by("-at").values("kind")[:1]
-    return (ShopVisit.objects.filter(ended_at__isnull=True)
+    return (ShopVisit.objects.filter(ended_at__isnull=True).exclude(status="queued")
             .annotate(last_kind=Subquery(last_kind)).order_by("-started_at"))
 
 
 def _require_sessions_admin(request):
     if not request.user.is_staff:
         raise PermissionDenied
+
+
+def _require_admin(request):
+    if not request.user.is_superuser:
+        raise PermissionDenied
+
+
+@login_required
+@rate_limit("sessions", limit=120, window=60)
+@require_http_methods(["GET"])
+def shifts(request):
+    """Admin: staff shift log - who worked when (Pacific), on which register, and what
+    each shift sold. TIME_ZONE renders Pacific; the |date filter is enough."""
+    _require_admin(request)
+    rows = StaffSession.objects.select_related("user").order_by("-login_at")[:200]
+    return render(request, "pos/shifts_list.html", {"shifts": rows})
+
+
+@login_required
+@rate_limit("sessions", limit=120, window=60)
+@require_http_methods(["GET"])
+def shift_detail(request, shift_id):
+    _require_admin(request)
+    s = get_object_or_404(StaffSession, pk=shift_id)
+    return render(request, "pos/shift_detail.html", {"s": s, "visits": s.visits.order_by("-started_at")})
 
 
 def _session_metrics(qs):
@@ -837,7 +1223,7 @@ def sessions(request):
 @rate_limit("sessions", limit=600, window=60)
 @require_http_methods(["GET"])
 def sessions_active(request):
-    """Live partial — polled by the dashboard every few seconds."""
+    """Live partial â€” polled by the dashboard every few seconds."""
     _require_sessions_admin(request)
     return render(request, "pos/_active_panel.html", {"active": _active_visits()})
 
@@ -848,8 +1234,8 @@ def sessions_active(request):
 def session_detail(request, visit_id):
     _require_sessions_admin(request)
     v = get_object_or_404(ShopVisit, pk=visit_id)
-    events = [{"e": e, "icon": _EVENT_META.get(e.kind, ("•", e.kind))[0],
-               "label": _EVENT_META.get(e.kind, ("•", e.kind))[1]} for e in v.events.all()]
+    events = [{"e": e, "icon": _EVENT_META.get(e.kind, ("â€¢", e.kind))[0],
+               "label": _EVENT_META.get(e.kind, ("â€¢", e.kind))[1]} for e in v.events.all()]
     return render(request, "pos/session_detail.html", {"v": v, "events": events})
 
 
@@ -900,7 +1286,7 @@ def sessions_rollups(request):
         bought=Count("id", filter=Q(outcome="checked_out")),
     ).order_by("-visits")[:30])
     # Bound the heavy event GROUP BY even when the window is "all" (the event table only
-    # grows — retention is indefinite). Cap the scan at <=365d regardless of window.
+    # grows â€” retention is indefinite). Cap the scan at <=365d regardless of window.
     floor = timezone.now() - timezone.timedelta(days=_DATE_WINDOWS[f["win"]] or 365)
     ev = ShopEvent.objects.filter(visit__in=qs, at__gte=floor)
     top_lookup = list(ev.filter(kind="product_view").exclude(product_name="")
@@ -908,7 +1294,7 @@ def sessions_rollups(request):
     top_search = list(ev.filter(kind="search").exclude(detail="")
                       .values("detail").annotate(n=Count("id")).order_by("-n")[:20])
     by_event = list(ev.values("kind").annotate(n=Count("id")).order_by("-n")[:12])
-    # Top suggested: ids live in each suggestions_shown event's meta list — tally in Python
+    # Top suggested: ids live in each suggestions_shown event's meta list â€” tally in Python
     # over a bounded slice, resolving names from the looked-up/added events we already have.
     names = {str(r["product_id"]): r["product_name"] for r in top_lookup}
     counter = Counter()

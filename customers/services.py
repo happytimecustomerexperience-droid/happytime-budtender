@@ -75,11 +75,13 @@ def upsert_customer(scan: dict, dutchie_acct_id=None) -> Customer:
     return obj
 
 
-def record_write(store, action, ok, acct_id=None, shipment_id=None, summary="", username="") -> DutchieWriteAudit:
+def record_write(store, action, ok, acct_id=None, shipment_id=None, summary="", username="",
+                 staff_session_id=None) -> DutchieWriteAudit:
     """Append an immutable Dutchie-write audit row.
 
     `summary` must be PII-free; we truncate to 500 and strip obvious DOB-like
-    tokens (YYYY-MM-DD / MM/DD/YYYY) defensively.
+    tokens (YYYY-MM-DD / MM/DD/YYYY) defensively. `staff_session_id` links the write
+    to the operator's shift so a shift's sales are one query.
     """
     summary = _scrub(summary)[:500]
     return DutchieWriteAudit.objects.create(
@@ -90,6 +92,7 @@ def record_write(store, action, ok, acct_id=None, shipment_id=None, summary="", 
         summary=summary,
         ok=bool(ok),
         username=(username or "")[:150],
+        staff_session_id=staff_session_id,
     )
 
 
