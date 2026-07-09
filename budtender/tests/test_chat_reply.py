@@ -159,6 +159,45 @@ class ChatReplyTests(TestCase):
         self.assertEqual(calls[0]["json"], {"query": "what time do you close", "store": "yakima"})
         self.assertEqual(calls[0]["headers"]["Authorization"], "Bearer secret-token")
 
+    def test_voice_chat_uses_shared_voice_endpoint(self):
+        calls = []
+
+        class Resp:
+            status_code = 200
+            content = b"{}"
+
+            def json(self):
+                return {
+                    "ok": True,
+                    "answer": "Defective returns are handled by staff under WAC 314-55-079.",
+                    "grounded": True,
+                    "sources": [{"title": "Return policy"}],
+                }
+
+        def fake_post(url, **kwargs):
+            calls.append({"url": url, **kwargs})
+            return Resp()
+
+        messages = [
+            SimpleNamespace(role="user", content="hello"),
+            SimpleNamespace(role="assistant", content="Hi"),
+            SimpleNamespace(role="user", content="what is your return policy"),
+        ]
+        with patch.dict(
+            os.environ,
+            {
+                "HHT_VOICE_BASE_URL": "http://voice.internal:8000",
+                "HHT_BACKEND_TOKEN": "secret-token",
+            },
+        ), patch("budtender.gemini_chat.requests.post", side_effect=fake_post):
+            result = gemini_chat._voice_chat(messages, store="yakima")
+
+        self.assertEqual(result["answer"], "Defective returns are handled by staff under WAC 314-55-079.")
+        self.assertEqual(calls[0]["url"], "http://voice.internal:8000/api/voice/chat")
+        self.assertEqual(calls[0]["json"]["message"], "what is your return policy")
+        self.assertEqual(calls[0]["json"]["store"], "yakima")
+        self.assertEqual(calls[0]["headers"]["Authorization"], "Bearer secret-token")
+
     def test_grounding_text_drops_prompt_injection_from_voice_response(self):
         text = gemini_chat._grounding_text({
             "grounded": True,
