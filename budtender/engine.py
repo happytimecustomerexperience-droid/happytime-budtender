@@ -141,6 +141,23 @@ def _aff(pf: dict | None, key: str, val) -> float:
     return _f((pf.get(key) or {}).get(val))
 
 
+def _cat_alias(value) -> str:
+    raw = str(value or "").strip().lower()
+    return _CANON_CAT.get(raw, raw)
+
+
+def _category_aff(pf: dict | None, *values) -> float:
+    if not pf:
+        return 0.0
+    wanted = {_cat_alias(v) for v in values if v}
+    if not wanted:
+        return 0.0
+    return max(
+        (_f(score) for key, score in (pf.get("category_affinity") or {}).items() if _cat_alias(key) in wanted),
+        default=0.0,
+    )
+
+
 # ── Signals ──────────────────────────────────────────────────────────────────
 def _flavor_aff(feat: dict, pf: dict | None) -> float:
     """Best match of the product's flavors against the customer's flavor_affinity."""
@@ -158,8 +175,7 @@ def _affinity_score(feat: dict, pf: dict | None) -> float:
     s = 0.0
     s += 1.6 * _aff(pf, "brand_affinity", feat.get("brand"))
     s += 1.0 * _aff(pf, "strain_type_affinity", feat.get("strain_type"))
-    s += 0.6 * max(_aff(pf, "category_affinity", feat.get("category")),
-                   _aff(pf, "category_affinity", feat.get("cat_key")))
+    s += 0.6 * _category_aff(pf, feat.get("category"), feat.get("cat_key"))
     s += 0.6 * _aff(pf, "subcategory_affinity", feat.get("subcategory"))
     s += 0.4 * _aff(pf, "terpene_affinity", feat.get("terpene"))
     s += 0.4 * _flavor_aff(feat, pf)
@@ -224,7 +240,7 @@ def _recency_boost(feat: dict, recent_brands: set, recent_cats: set) -> float:
     b = 0.0
     if feat.get("brand") and feat.get("brand") in recent_brands:
         b += 0.10
-    if feat.get("category") and feat.get("category") in recent_cats:
+    if _cat_alias(feat.get("category")) in {_cat_alias(c) for c in recent_cats}:
         b += 0.05
     return b
 
@@ -263,6 +279,7 @@ def why(feat: dict, desired: str | None, pf: dict | None) -> str:
     bits: list[str] = []
     brand = feat.get("brand")
     st = feat.get("strain_type") or ""
+    name = feat.get("name") or feat.get("strain") or "this pick"
 
     if pf and brand and _aff(pf, "brand_affinity", brand) >= 0.25:
         bits.append(f"your go-to {brand}")
@@ -297,8 +314,10 @@ def why(feat: dict, desired: str | None, pf: dict | None) -> str:
 
     picked = [b for b in bits if b][:2]
     if not picked:
-        return f"a standout {brand} pick" if brand else "a standout pick"
+        return f"a standout {brand} pick · {name}" if brand else f"a standout pick · {name}"
     s = " · ".join(picked)
+    if name and name not in s:
+        s = f"{s} · {name}"
     return s[0].upper() + s[1:]
 
 
@@ -312,6 +331,7 @@ _CANON_CAT = {
     "flower": "flower",
     "pre-rolls": "pre-rolls", "preroll": "pre-rolls", "pre-roll": "pre-rolls",
     "vapes": "vapes", "vape-cartridges": "vapes", "vape-cartridge": "vapes",
+    "vaporizer": "vapes",
     "vape": "vapes", "cartridge": "vapes", "disposable-vapes": "vapes", "disposables": "vapes",
     "concentrate": "concentrate", "concentrates": "concentrate",
     "edibles": "edibles", "edible": "edibles",
@@ -416,20 +436,20 @@ def _reason_text(reason_code, anchor: dict | None, pair: dict | None, pf) -> str
     """A compelling, human sentence built only from real signals + ATTRIBUTES.
     `anchor`/`pair` are feat dicts (ORM-derived or a live POS dict)."""
     acat = ((anchor.get("category") if anchor else None) or "this").replace("-", " ").rstrip("s")
-    pcat = ((pair.get("category") if pair else None) or "add-on").replace("-", " ").rstrip("s")
+    pname = (pair.get("name") if pair else None) or "this pick"
     if reason_code == "staff_pick":
-        return f"Our budtenders hand-pick this {pcat} to go with your {acat}."
+        return f"Our budtenders picked this one for your {acat} · {pname}."
     if reason_code == "bought_2plus_times":
-        return f"You grab this one a lot — perfect to restock alongside your {acat}."
+        return f"You grab this one a lot — easy restock territory · {pname}."
     if reason_code == "bought_before_not_recent":
-        return f"You've loved this before — it's been a minute, and it pairs great with your {acat}."
+        return f"You’ve liked this before — nice to bring it back around · {pname}."
     if reason_code == "popular_pair":
-        return f"Folks who grab a {acat} almost always toss in a {pcat} like this — an easy add-on."
+        return f"People who grab your {acat} often add this next · {pname}."
     if reason_code == "your_brand" and pair and pair.get("brand"):
-        return f"It's {pair.get('brand')} — right in your wheelhouse — and a different way to enjoy the night."
+        return f"It’s {pair.get('brand')} — right in your wheelhouse · {pname}."
     if reason_code == "your_lane":
-        return f"Matches your taste and complements the {acat} you just picked."
-    return f"Round out your {acat} with this {pcat} — a quick, cheap add-on."
+        return f"Right with the {acat} you just picked · {pname}."
+    return f"Round out your {acat} with this one · {pname}."
 
 
 def _pair_rank(anchor_feat, cand_feats, pf, *, location=None, n=1):

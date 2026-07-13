@@ -214,6 +214,24 @@ class BudtenderClient:
         return out
 
     # ── staff customer browse (P7) — the dashboard reads the LIVE, auto-recomputed profiles ──
+    def phone_cart_upsert(self, payload: dict) -> dict:
+        """``POST /phone-cart/upsert``. Stages cart intent only; never submits Dutchie."""
+        empty = {"ok": False, "error": "budtender_unavailable"}
+        out = self._post("/phone-cart/upsert", payload or {}, empty=empty)
+        return out if isinstance(out, dict) else dict(empty)
+
+    def phone_cart_release(self, payload: dict) -> dict:
+        """``POST /phone-cart/release``. Marks a draft released at hangup."""
+        empty = {"ok": False, "error": "budtender_unavailable"}
+        out = self._post("/phone-cart/release", payload or {}, empty=empty)
+        return out if isinstance(out, dict) else dict(empty)
+
+    def phone_cart_claim(self, payload: dict) -> dict:
+        """``POST /phone-cart/claim`` for server-side POS handoff tests/admin flows."""
+        empty = {"ok": False, "error": "budtender_unavailable"}
+        out = self._post("/phone-cart/claim", payload or {}, empty=empty)
+        return out if isinstance(out, dict) else dict(empty)
+
     def list_customers(self, *, q: str = "", limit: int = 25, offset: int = 0) -> dict:
         """``POST /customer/list`` — the staff roster for the dashboard Customers page. Returns
         ``{ok, total, count, offset, limit, customers:[…leak-safe rows…]}``; graceful-empty (budtender

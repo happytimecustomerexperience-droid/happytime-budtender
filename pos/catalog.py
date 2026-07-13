@@ -46,6 +46,7 @@ def _normalize(row, enr):
     pid = str(row.get("ProductId") or "")
     e = enr.get(pid) or enr.get(str(row.get("ProductNo") or "")) or {}
     cat_raw = row.get("ProductCategory") or row.get("MasterCategory") or ""
+    received = row.get("ReceivedDate") or row.get("receivedDate") or row.get("received_date")
     d = {
         "product_id": pid,
         "name": row.get("ProductDescription") or row.get("ProductDesc") or "",
@@ -56,9 +57,10 @@ def _normalize(row, enr):
         "cbd": row.get("CBDContent"),
         "total_terpenes": row.get("TotalTerpenesContent"),
         "price": _f(row.get("UnitPrice")),
+        # Sales-floor availability only; zero and negative rows stay out of the menu.
         "qty": _f(row.get("TotalAvailable")),
         "image": row.get("ProductImageURL") or "",
-        "received_date": row.get("ReceivedDate"),
+        "received_date": received,
         "vendor": (row.get("Vendor") or "").strip(),
         "unit_grams": row.get("UnitGrams") or row.get("UnitWeight"),
         # enrichment (sparse-safe)
@@ -71,6 +73,7 @@ def _normalize(row, enr):
         # cart fields (exact keys the Add form posts)
         "ProductId": row.get("ProductId"), "BatchId": row.get("BatchId"),
         "SerialNo": row.get("SerialNo"),
+        "package_id": str(row.get("packageId") or row.get("PackageId") or row.get("SerialNo") or row.get("BatchId") or row.get("ProductId") or ""),
         "UnitPrice": _f(row.get("UnitPrice")),
         "RecUnitPrice": _f(row.get("RecUnitPrice") or row.get("UnitPrice")),
         "ProductDesc": row.get("ProductDescription") or row.get("ProductDesc") or "",
@@ -134,6 +137,7 @@ _SORTS = {
     "price_asc": lambda items, prof: sorted(items, key=lambda p: p["price"]),
     "price_desc": lambda items, prof: sorted(items, key=lambda p: p["price"], reverse=True),
     "thc_desc": lambda items, prof: sorted(items, key=lambda p: _f(p["thc"]), reverse=True),
+    "thc_high": lambda items, prof: sorted(items, key=lambda p: _f(p["thc"]), reverse=True),
     "popular": lambda items, prof: sorted(items, key=lambda p: p["velocity"], reverse=True),
 }
 
@@ -166,6 +170,9 @@ def query(items, profile, f):
                f"{p['name']} {p['brand']} {p['strain']} {p['raw_category']}".lower()]
     if f.get("brand"):
         out = [p for p in out if p["brand"] == f["brand"]]
+    brand_q = (f.get("brand_q") or "").strip().lower()
+    if brand_q:
+        out = [p for p in out if brand_q in (p.get("brand") or "").lower()]
     if f.get("strain_type"):
         out = [p for p in out if p["strain_type"] == f["strain_type"]]
     if f.get("effect"):
@@ -185,7 +192,7 @@ def query(items, profile, f):
     return ranking.rank(out, profile)  # "foryou" (margin-first when profile None)
 
 
-def suggestions(store_key, profile, limit=8):
+def suggestions(store_key, profile, limit=8, *, exclude_skus=None, mode="default"):
     if not profile:
         return []
-    return suggest.suggest(get_inventory(store_key), profile, limit=limit)
+    return suggest.suggest(get_inventory(store_key), profile, limit=limit, exclude_skus=exclude_skus, mode=mode)

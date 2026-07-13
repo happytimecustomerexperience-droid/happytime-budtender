@@ -57,6 +57,10 @@ def _row_title(row) -> str:
     return str(row)[:120]
 
 
+def _row_url(row) -> str:
+    return str(getattr(row, "source_url", "") or "")[:500]
+
+
 def _row_answer(row) -> str:
     """The grounded answer text from a KB row — the spoken value lives in the row, not the LLM."""
     # FAQEntry has a curated ``answer``; everything else speaks its ``chunk_text``.
@@ -90,7 +94,13 @@ def _grounded(query: str, store: str | None) -> dict | None:
         logger.warning("refusing suspicious KB row %s", getattr(top_row, "pk", ""))
         return None
     sources = [
-        {"kind": _source_kind(row), "id": row.pk, "title": _row_title(row)} for row, _ in ranked
+        {
+            "kind": _source_kind(row),
+            "id": row.pk,
+            "title": _row_title(row),
+            "source_url": _row_url(row),
+        }
+        for row, _ in ranked
     ]
     return {
         "answer": answer,

@@ -18,10 +18,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
-                     CustomerProfile, Feedback, Product, SuggestedProduct)
+                     CustomerProfile, Feedback, PhoneCartDraft, Product,
+                     SuggestedProduct)
 from .pairing import pair_for
 from . import facets
 from .gemini_chat import GeminiChatUnavailable, generate_chat_reply
+from .intents import classify_intent, conversation_breakdown, intent_breakdown
 from .ranking import MIN_STOCK, W_ANON, W_KNOWN, rank_products
 from .serializers import (customer_detail, customer_row, profile_summary,
                           public_message, public_product)
@@ -97,6 +99,98 @@ def _safe_list(value, *, limit: int, item_limit: int) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item or "")[:item_limit] for item in value[:limit]]
+
+
+def _safe_qty(value, default: int = 1) -> int:
+    return _bounded_int(value, default=default, lo=1, hi=99)
+
+
+def _safe_audit_entry(value) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    out = _safe_props(value)
+    return out if isinstance(out, dict) else {}
+
+
+def _phone_last4(raw: str) -> str:
+    digits = re.sub(r"\D+", "", str(raw or ""))
+    return digits[-4:] if len(digits) >= 4 else ""
+
+
+def _draft_lookup(data: dict):
+    token = str(data.get("draft_token") or "").strip()[:64]
+    call_id = str(data.get("call_id") or "").strip()[:80]
+    session_token = str(data.get("session_token") or "").strip()[:80]
+    qs = PhoneCartDraft.objects.all()
+    if token:
+        return qs.filter(draft_token=token).first()
+    if call_id:
+        return qs.filter(call_id=call_id).order_by("-updated_at").first()
+    if session_token:
+        return qs.filter(session_token=session_token).order_by("-updated_at").first()
+    return None
+
+
+def _product_line(product: Product, qty: int) -> dict:
+    unit = float(product.price or 0)
+    was = float(product.price_was) if product.price_was else None
+    discount_each = max((was or unit) - unit, 0)
+    return {
+        "sku": product.sku,
+        "product_id": product.product_id or "",
+        "name": product.name,
+        "brand": product.brand or "",
+        "category": product.category or "",
+        "quantity": qty,
+        "unit_price": unit,
+        "price_was": was,
+        "discount_each": round(discount_each, 2),
+        "line_total": round(unit * qty, 2),
+        "stock_on_hand": product.quantity_on_hand,
+        "quote_source": "budtender_product",
+    }
+
+
+def _recompute_quote(lines: list[dict]) -> dict:
+    subtotal = 0.0
+    discount = 0.0
+    for line in lines:
+        qty = _safe_qty(line.get("quantity"), default=1)
+        unit = float(line.get("unit_price") or 0)
+        was = line.get("price_was")
+        was = float(was) if was not in (None, "") else None
+        subtotal += (was or unit) * qty
+        discount += max((was or unit) - unit, 0) * qty
+        line["quantity"] = qty
+        line["line_total"] = round(unit * qty, 2)
+    total = max(subtotal - discount, 0)
+    return {
+        "subtotal": round(subtotal, 2),
+        "discounts": round(discount, 2),
+        "total": round(total, 2),
+        "currency": "USD",
+        "source": "current_public_product_price",
+        "generated_at": timezone.now().isoformat(),
+        "final_total_note": "POS/register revalidates availability, discounts, taxes, and final total.",
+    }
+
+
+def _serialize_draft(draft: PhoneCartDraft) -> dict:
+    return {
+        "draft_token": draft.draft_token,
+        "call_id": draft.call_id,
+        "session_token": draft.session_token,
+        "store": draft.location_slug,
+        "phone_last4": draft.phone_last4,
+        "pickup_name": draft.pickup_name,
+        "status": draft.status,
+        "lines": draft.lines or [],
+        "quote": draft.quote or {},
+        "released_at": draft.released_at.isoformat() if draft.released_at else "",
+        "claimed_at": draft.claimed_at.isoformat() if draft.claimed_at else "",
+        "expires_at": draft.expires_at.isoformat() if draft.expires_at else "",
+        "updated_at": draft.updated_at.isoformat() if draft.updated_at else "",
+    }
 
 
 def _safe_prop_value(value):
@@ -211,6 +305,16 @@ class ProductBySkuView(APIView):
 RESUME_WINDOW = timedelta(days=30)
 
 
+def _promote_intent(current: str, new: str) -> bool:
+    """Should `new` become the conversation's sticky primary_intent? Escalation
+    dominates and sticks; otherwise the first real (non-greeting) intent wins."""
+    if current == "conflict_resolution":
+        return False
+    if new == "conflict_resolution":
+        return True
+    return not current or current == "greeting_other"
+
+
 def _profile_for_phone(phone: str) -> CustomerProfile | None:
     if not phone:
         return None
@@ -273,13 +377,19 @@ class ChatReplyView(APIView):
         user_msg = ChatMessage.objects.create(
             session=session, role="user", content=_redact_phoneish(raw_message)[:4000]
         )
+        # Classify the turn (deterministic; works even when the voice brain is down)
+        # and record it. Escalation is sticky and dominates the conversation intent.
+        intent = classify_intent(raw_message)
+        if _promote_intent(session.primary_intent, intent):
+            session.primary_intent = intent
+            session.save(update_fields=["primary_intent"])
         AnalyticsEvent.objects.create(
             session_token=session.session_token,
             phone_hash=_hash_phone(phone),
             location_slug=session.location_slug,
             channel=session.channel,
             event_type="chat_message",
-            props={"role": "user", "message_id": user_msg.id},
+            props={"role": "user", "message_id": user_msg.id, "intent": intent},
         )
 
         history = list(session.messages.order_by("ts", "id"))
@@ -304,6 +414,7 @@ class ChatReplyView(APIView):
             "ok": True,
             "session_token": session.session_token,
             "source": source,
+            "intent": intent,
             "message": public_message(assistant_msg),
         })
 
@@ -671,6 +782,13 @@ class AnalyticsSummaryView(APIView):
                 "reopen_rate": round(reopens / total_opens, 3) if total_opens else None,
                 "avg_results_view_seconds": results_avg_s,
             },
+            # What visitors are actually talking about — per classified turn and
+            # per conversation (sticky primary_intent). Powers the "topics" view.
+            "conversations": {
+                "by_turn_intent": intent_breakdown(ev("chat_message")),
+                "by_conversation_intent": conversation_breakdown(
+                    ChatSession.objects.filter(last_active_at__gte=since)),
+            },
             "menu_embed": {
                 "product_views": ev("dutchie_product_view").count(),
                 "add_to_cart": ev("dutchie_add_to_cart").count(),
@@ -797,6 +915,121 @@ class PersistView(APIView):
                     ],
                 )
         return Response({"ok": True}, status=202)
+
+
+class PhoneCartUpsertView(APIView):
+    """Stage/update a phone-cart draft. Voice may call this; it never writes Dutchie."""
+
+    def post(self, request):
+        data = request.data or {}
+        location = _safe_location(data.get("location") or data.get("store"))
+        action = str(data.get("action") or "quote").strip()
+        allowed = {"add_item", "remove_item", "set_quantity", "quote"}
+        if action not in allowed:
+            return Response({"ok": False, "error": "unknown_action"}, status=400)
+
+        draft = _draft_lookup(data)
+        if draft is None:
+            call_id = str(data.get("call_id") or "").strip()[:80]
+            session_token = str(data.get("session_token") or "").strip()[:80]
+            if not (call_id or session_token):
+                return Response({"ok": False, "error": "call_id_or_session_token_required"}, status=400)
+            raw_phone = _normalize_phone(data.get("phone", "")) if data.get("phone") else ""
+            draft = PhoneCartDraft.objects.create(
+                call_id=call_id,
+                session_token=session_token,
+                location_slug=location,
+                phone_hash=_hash_phone(raw_phone),
+                phone_last4=_phone_last4(raw_phone),
+                pickup_name=str(data.get("pickup_name") or "").strip()[:120],
+                expires_at=timezone.now() + timedelta(hours=12),
+            )
+        elif location and draft.location_slug != location:
+            return Response({"ok": False, "error": "store_mismatch"}, status=400)
+        if draft.status == PhoneCartDraft.Status.CLAIMED:
+            return Response({"ok": False, "error": "draft_already_claimed"}, status=409)
+        if draft.status in {PhoneCartDraft.Status.CANCELLED, PhoneCartDraft.Status.EXPIRED}:
+            return Response({"ok": False, "error": f"draft_{draft.status}"}, status=409)
+
+        lines = [line for line in (draft.lines or []) if isinstance(line, dict)]
+        sku = str(data.get("sku") or (data.get("line") or {}).get("sku") or "").strip()[:64]
+        qty = _safe_qty(data.get("quantity") or (data.get("line") or {}).get("quantity"), default=1)
+
+        if action in {"add_item", "set_quantity", "remove_item"} and not sku:
+            return Response({"ok": False, "error": "sku_required"}, status=400)
+
+        if action == "remove_item":
+            lines = [line for line in lines if str(line.get("sku")) != sku]
+        elif action in {"add_item", "set_quantity"}:
+            product = (
+                Product.objects
+                .filter(location_slug=draft.location_slug, sku=sku, availability=True,
+                        quantity_on_hand__gte=MIN_STOCK)
+                .first()
+            )
+            if not product:
+                return Response({"ok": False, "error": "not_in_stock", "sku": sku}, status=409)
+            fresh = _product_line(product, qty)
+            found = False
+            for i, line in enumerate(lines):
+                if str(line.get("sku")) == sku:
+                    if action == "add_item":
+                        fresh["quantity"] = min(_safe_qty(line.get("quantity"), default=1) + qty, 99)
+                        fresh["line_total"] = round(float(fresh["unit_price"]) * fresh["quantity"], 2)
+                    lines[i] = fresh
+                    found = True
+                    break
+            if not found:
+                lines.append(fresh)
+
+        draft.lines = lines
+        draft.quote = _recompute_quote(lines)
+        audit = draft.audit or []
+        audit.append({
+            "at": timezone.now().isoformat(),
+            "action": action,
+            "sku": sku,
+            "quantity": qty,
+            **_safe_audit_entry(data.get("audit")),
+        })
+        draft.audit = audit[-100:]
+        draft.save(update_fields=["lines", "quote", "status", "audit", "updated_at"])
+        return Response({"ok": True, "draft": _serialize_draft(draft)})
+
+
+class PhoneCartReleaseView(APIView):
+    """Release a staged draft at hangup. This is not a reservation or checkout."""
+
+    def post(self, request):
+        draft = _draft_lookup(request.data or {})
+        if not draft:
+            return Response({"ok": False, "error": "not_found"}, status=404)
+        if draft.status != PhoneCartDraft.Status.CLAIMED:
+            draft.status = PhoneCartDraft.Status.RELEASED
+            draft.released_at = timezone.now()
+            audit = draft.audit or []
+            audit.append({"at": timezone.now().isoformat(), "action": "release"})
+            draft.audit = audit[-100:]
+            draft.save(update_fields=["status", "released_at", "audit", "updated_at"])
+        return Response({"ok": True, "draft": _serialize_draft(draft)})
+
+
+class PhoneCartClaimView(APIView):
+    """POS website claims a released draft after scan/lookup. No Dutchie write happens here."""
+
+    def post(self, request):
+        draft = _draft_lookup(request.data or {})
+        if not draft:
+            return Response({"ok": False, "error": "not_found"}, status=404)
+        if draft.status not in {PhoneCartDraft.Status.RELEASED, PhoneCartDraft.Status.OPEN}:
+            return Response({"ok": False, "error": f"cannot_claim_{draft.status}"}, status=409)
+        draft.status = PhoneCartDraft.Status.CLAIMED
+        draft.claimed_at = timezone.now()
+        audit = draft.audit or []
+        audit.append({"at": timezone.now().isoformat(), "action": "claim_api"})
+        draft.audit = audit[-100:]
+        draft.save(update_fields=["status", "claimed_at", "audit", "updated_at"])
+        return Response({"ok": True, "draft": _serialize_draft(draft)})
 
 
 class TrackView(APIView):

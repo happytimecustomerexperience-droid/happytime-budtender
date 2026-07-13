@@ -5,8 +5,9 @@ This is the hard guarantee behind the proxy + allowlist serializer design.
 import json
 
 from django.test import Client, TestCase, override_settings
+from django.utils import timezone
 
-from budtender.models import CustomerProfile, Product
+from budtender.models import CustomerProfile, Product, SyncState
 from budtender.serializers import (PUBLIC_PRODUCT_FIELDS, customer_detail,
                                    public_product)
 
@@ -46,6 +47,11 @@ class SearchEndpointTests(TestCase):
         self.client = Client()
         _make_product(sku="A", price=25, cost=10, margin=15)
         _make_product(sku="B", slug="og-kush", name="OG Kush", price=35, cost=12, margin=23)
+        for store in ("yakima", "pullman", "mount-vernon"):
+            SyncState.objects.update_or_create(
+                location_slug=store,
+                defaults={"last_synced_at": timezone.now()},
+            )
 
     def _auth(self):
         return {"HTTP_AUTHORIZATION": f"Bearer {TOKEN}"}
@@ -148,7 +154,6 @@ class SearchEndpointTests(TestCase):
             "limit": 2,
             "ranking_weights": {},
         }
-
         anonymous = self.client.post(
             "/api/v1/products/search/",
             data=json.dumps(payload),

@@ -26,7 +26,14 @@ class FakeBudtender:
         self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None
     ):
         self.search_calls.append(
-            {"slots": slots, "limit": limit, "phone": phone, "session_token": session_token}
+            {
+                "slots": slots,
+                "limit": limit,
+                "phone": phone,
+                "session_token": session_token,
+                "exclude_skus": exclude_skus,
+                "location": location,
+            }
         )
         return {"results": self.search_results[:limit]}
 
@@ -102,12 +109,42 @@ def test_speakable_pick_drops_non_allowlist_fields():
 
 
 def test_suggest_caps_at_three(fake_bt):
-    fake_bt.search_results = [dict(_ROW, sku=f"S{i}") for i in range(6)]
+    fake_bt.search_results = [
+        dict(_ROW, sku=f"S{i}", brand=f"Brand{i}", strain=f"Strain{i}") for i in range(6)
+    ]
     out = suggest.handle_suggest_products(
         {"store": "yakima", "category": "flower"}, {"call_id": "", "store": "yakima"}
     )
     assert len(out["picks"]) == 3
 
+
+def test_suggest_dedupes_by_strain(fake_bt):
+    fake_bt.search_results = [
+        dict(_ROW, sku="S1", brand="Phat Panda", strain="Blueberry OG", name="Blueberry OG 3.5g"),
+        dict(_ROW, sku="S2", brand="Wyld", strain="Blueberry OG", name="Blueberry OG 1g"),
+        dict(_ROW, sku="S3", brand="Jetty", strain="OG Kush", name="OG Kush 1g"),
+        dict(_ROW, sku="S4", brand="Wyld", strain="Blue Dream", name="Blue Dream 2g"),
+        dict(_ROW, sku="S5", brand="Drum", strain="Blue Dream", name="Blue Dream mini"),
+    ]
+    out = suggest.handle_suggest_products(
+        {"store": "yakima", "category": "flower"}, {"call_id": "", "store": "yakima"}
+    )
+    assert [p["sku"] for p in out["picks"]] == ["S1", "S3", "S4"]
+
+
+def test_suggest_dedupes_by_brand(fake_bt):
+    fake_bt.search_results = [
+        dict(_ROW, sku="B1", brand="Repeat", strain="StrainA", name="A"),
+        dict(_ROW, sku="B2", brand="Repeat", strain="StrainB", name="B"),
+        dict(_ROW, sku="B3", brand="Fresh", strain="StrainC", name="C"),
+        dict(_ROW, sku="B4", brand="New", strain="StrainD", name="D"),
+        dict(_ROW, sku="B5", brand="Fresh", strain="StrainE", name="E"),
+        dict(_ROW, sku="B6", brand="Rare", strain="StrainF", name="F"),
+    ]
+    out = suggest.handle_suggest_products(
+        {"store": "yakima", "category": "flower"}, {"call_id": "", "store": "yakima"}
+    )
+    assert [p["sku"] for p in out["picks"]] == ["B1", "B3", "B4"]
 
 # ── B1. required-field validation (clear tool error, not a 500) ─────────────────
 def test_suggest_missing_category_is_tool_error(fake_bt):
@@ -156,6 +193,45 @@ def test_known_caller_sends_phone(fake_bt):
 
 
 # ── C1. check_inventory ─────────────────────────────────────────────────────────
+def test_suggest_forwards_product_context_like_website_search(fake_bt):
+    fake_bt.search_results = [_ROW]
+    ctx = {
+        "call_id": "",
+        "store": "pullman",
+        "recognition_resolved": True,
+        "_caller_phone": "+15095551234",
+        "session_token": "s-parity",
+    }
+    suggest.handle_suggest_products(
+        {
+            "store": "pullman",
+            "category": "cart",
+            "effect_desired": "relaxed",
+            "price_tier": "mid",
+            "price_min": 20,
+            "price_max": 45,
+            "exclude_skus": ["OLD1"],
+        },
+        ctx,
+    )
+
+    assert fake_bt.search_calls[0] == {
+        "slots": {
+            "store": "pullman",
+            "category": "cartridge",
+            "price_tier": "mid",
+            "effect_desired": "relaxed",
+            "price_min": 20,
+            "price_max": 45,
+        },
+        "limit": 12,
+        "phone": "+15095551234",
+        "session_token": "s-parity",
+        "exclude_skus": ["OLD1"],
+        "location": "pullman",
+    }
+
+
 def test_check_inventory_in_stock(fake_bt):
     fake_bt.check = {"in_stock": True, "price_otd": 41.2, "stock_on_hand": 14, "name": "X"}
     out = suggest.handle_check_inventory({"store": "yakima", "sku": "SKU1"}, {"store": "yakima"})

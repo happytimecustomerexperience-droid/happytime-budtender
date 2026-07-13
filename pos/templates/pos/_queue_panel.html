@@ -12,3 +12,24 @@
   {% endfor %}
 </div>
 {% else %}<p class="muted" style="padding:2px 0">Queue is empty.</p>{% endif %}
+
+<div class="active-head" style="margin-top:10px"><span class="livedot"></span> Phone carts <span class="muted">({{ phone_carts|length }})</span></div>
+{% if phone_carts %}
+<div class="vtable queue">
+  <div class="vrow vhead"><span>Token</span><span>Customer</span><span class="num">Items</span><span class="num">Total</span><span class="num">Load</span></div>
+  {% for draft in phone_carts %}
+  <div class="vrow">
+    <span class="nm">{{ draft.draft_token }}</span>
+    <span>{% if draft.pickup_name %}{{ draft.pickup_name }}{% elif draft.phone_last4 %}***{{ draft.phone_last4 }}{% else %}Phone caller{% endif %}</span>
+    <span class="num">{{ draft.lines|length }}</span>
+    <span class="num">${{ draft.quote.total|default:0|floatformat:2 }}</span>
+    <span class="num">
+      <form hx-post="{% url 'phone_cart_claim' %}" hx-target="#cart">
+        <input type="hidden" name="draft_token" value="{{ draft.draft_token }}">
+        <button class="smallbtn" type="submit">Load</button>
+      </form>
+    </span>
+  </div>
+  {% endfor %}
+</div>
+{% else %}<p class="muted" style="padding:2px 0">No saved phone carts.</p>{% endif %}

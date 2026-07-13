@@ -96,7 +96,7 @@ MEMBER_TOOLS = {
     "entry_router": ["faq_lookup"],
     # faq_lookup too: callers ask about deals/hours/returns MID-pick — the budtender must be able to
     # answer from the KB without a handoff (else it says "I don't have access to the deals").
-    "budtender": ["suggest_products", "check_inventory", "pair_upsell", "faq_lookup"],
+    "budtender": ["suggest_products", "check_inventory", "pair_upsell", "faq_lookup", "stage_phone_cart"],
     "faq": ["faq_lookup"],  # + the KB Query Tool (attached by ensure_files)
     "vendor": ["notify_vendor_callback"],  # + transferCall (built from transfer_number_key)
     "escalation": ["notify_staff_issue"],  # gather+email is the default; transferCall is last-resort
@@ -180,6 +180,30 @@ TOOL_SPECS = {
                 "session_token": {"type": "string"},
             },
             "required": ["store", "anchor_sku"],
+        },
+        "async": False,
+    },
+    "stage_phone_cart": {
+        "description": (
+            "Stage or release a phone-cart draft for POS staff. This never submits, reserves, "
+            "or writes a Dutchie order; it only prepares a register handoff."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["add_item", "remove_item", "set_quantity", "quote", "release"],
+                },
+                "store": {"type": "string", "enum": ["yakima", "mount-vernon", "pullman"]},
+                "sku": {"type": "string"},
+                "quantity": {"type": "number"},
+                "draft_token": {"type": "string"},
+                "call_id": {"type": "string"},
+                "session_token": {"type": "string"},
+                "pickup_name": {"type": "string"},
+            },
+            "required": ["action", "store"],
         },
         "async": False,
     },

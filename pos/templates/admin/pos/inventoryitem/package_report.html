@@ -1,0 +1,43 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<div class="module">
+  <h1>{{ title }}</h1>
+  <p><a class="button" href="{{ csv_url }}">Download CSV</a></p>
+  <table class="admin-table">
+    <thead>
+      <tr>
+        <th>Store</th>
+        <th>Product</th>
+        <th>Brand</th>
+        <th>Category</th>
+        <th>Latest received</th>
+        <th>Stale package ids</th>
+        <th>Active package ids</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in report %}
+      <tr>
+        <td>{{ row.store }}</td>
+        <td>{{ row.name }}{% if row.product_id %}<br><small>{{ row.product_id }}</small>{% endif %}</td>
+        <td>{{ row.brand }}</td>
+        <td>{{ row.category }}</td>
+        <td>{{ row.latest_received|date:"Y-m-d" }}</td>
+        <td>
+          {% for item in row.stale %}
+            <div>{{ item.serial_no|default:item.batch_id|default:item.product_id }} <small>{{ item.received_date|date:"Y-m-d" }}</small></div>
+          {% endfor %}
+        </td>
+        <td>
+          {% for item in row.active %}
+            <div>{{ item.serial_no|default:item.batch_id|default:item.product_id }} <small>{{ item.received_date|date:"Y-m-d" }}</small></div>
+          {% endfor %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7">No stale packages found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

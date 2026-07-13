@@ -63,12 +63,20 @@ _SOURCE_REQUIRED_RE = re.compile(
     r"\b(returns?|refund|policy|age|wa|wac|legal|compliance|id|identification)\b",
     re.I,
 )
+_FAQ_FIRST_RE = re.compile(
+    r"\b("
+    r"specials?|deals?|discounts?|sale|hours?|open|close|location|address|phone|"
+    r"returns?|refund|policy|age|wa|wac|legal|compliance|id|identification|"
+    r"delivery|payment|order|defective|broken|won'?t\s+fire|doesn'?t\s+work"
+    r")\b",
+    re.I,
+)
 _PRICE_MAX_RE = re.compile(r"\b(?:under|below|less than|no more than|up to|max(?:imum)?)\s*\$?\s*(\d+(?:\.\d{1,2})?)\b", re.I)
 _DOH_ONLY_RE = re.compile(r"\b(doh|medical|medically compliant|compliant)\b", re.I)
 _SUBCATEGORY_RE = re.compile(r"\b(indica|sativa|hybrid)\b", re.I)
 _EFFECT_ALIASES = (
     ("sleep", re.compile(r"\b(sleep|sleepy|bedtime|insomnia)\b", re.I)),
-    ("relaxed", re.compile(r"\b(relax|relaxed|calm|chill|unwind)\b", re.I)),
+    ("relaxed", re.compile(r"\b(relax|relaxed|relaxing|calm|chill|unwind)\b", re.I)),
     ("focused", re.compile(r"\b(focus|focused|creative|energy|energized)\b", re.I)),
     ("pain relief", re.compile(r"\b(pain|ache|aches|sore|soreness)\b", re.I)),
     ("anxiety relief", re.compile(r"\b(anxiety|anxious|stress|stressed)\b", re.I)),
@@ -191,6 +199,43 @@ def _requires_sources(message: str) -> bool:
     return bool(_SOURCE_REQUIRED_RE.search(message or ""))
 
 
+def _prefers_products(message: str, category: str, *, escalation: bool) -> bool:
+    return bool(category) and not escalation and not _FAQ_FIRST_RE.search(message or "")
+
+
+# Coarse conversation-intent label so sibling services can classify + track turns
+# without re-deriving the route. Derived from the SAME signals the router acts on.
+_RETURN_RE = re.compile(r"\b(returns?|refund|exchange|money\s*back|policy)\b", re.I)
+_SPECIALS_RE = re.compile(r"\b(specials?|deals?|discounts?|sale|promo|coupon|bogo)\b", re.I)
+_HOURS_LOC_RE = re.compile(r"\b(hours?|open|opening|close|closing|location|address|directions?|phone|parking|where\s+are)\b", re.I)
+
+
+def _faq_topic(message: str) -> str:
+    if _RETURN_RE.search(message or ""):
+        return "return_policy"
+    if _SPECIALS_RE.search(message or ""):
+        return "specials"
+    if _HOURS_LOC_RE.search(message or ""):
+        return "hours_location"
+    return ""
+
+
+def _intent_label(message: str, *, escalation: bool, product: bool) -> str:
+    """conflict_resolution | product_suggestion | return_policy | specials |
+    hours_location | general_faq | greeting_other. Escalation wins (a dispute is a
+    dispute even when grounded); an explicit product ask beats a broad FAQ match."""
+    if escalation:
+        return "conflict_resolution"
+    if product:
+        return "product_suggestion"
+    topic = _faq_topic(message)
+    if topic:
+        return topic
+    if _FAQ_FIRST_RE.search(message or ""):
+        return "general_faq"
+    return "greeting_other"
+
+
 def _suggested_next_action(action: str) -> str:
     if action == "escalate":
         return "Please share the location and the best way for staff to follow up."
@@ -241,9 +286,14 @@ def answer_text_chat(data: dict) -> dict:
         ctx.update(recognition.resolve_caller(phone, ctx) or {})
     else:
         ctx["profile_summary"] = {"has_history": False, "top_categories": [], "price_tier": ""}
+    escalation = bool(_HUMAN_RE.search(message))
+    category = str(slots.get("category") or _category_from_text(message)).strip()
+    category = _normalize_category(category)
+    if not category and not _requires_sources(message):
+        category = _profile_top_category(ctx.get("profile_summary"))
+    prefer_products = _prefers_products(message, category, escalation=escalation)
     faq = dispatch("faq_lookup", {"query": message, "store": store}, ctx)
     tool_results = [{"tool": "faq_lookup", "result": faq}]
-    escalation = bool(_HUMAN_RE.search(message))
     if faq.get("grounded") and not str(faq.get("answer") or "").strip():
         faq = {"grounded": False, "fallback": faq.get("fallback") or "can't confirm"}
         tool_results[0]["result"] = faq
@@ -252,12 +302,13 @@ def answer_text_chat(data: dict) -> dict:
         faq = {"grounded": False, "fallback": "can't confirm"}
         tool_results[0]["result"] = faq
 
-    if faq.get("grounded") and faq.get("answer"):
+    if faq.get("grounded") and faq.get("answer") and not prefer_products:
         answer = str(faq["answer"])
         if escalation:
             answer = f"I'm sorry that happened. {answer} {_staff_followup_hint(store, phone)}"
         return {
             "ok": True,
+            "intent": _intent_label(message, escalation=escalation, product=False),
             "answer": answer,
             "grounded": True,
             "sources": faq.get("sources", []),
@@ -278,6 +329,7 @@ def answer_text_chat(data: dict) -> dict:
                 "Happy Time knowledge base, but I can get the store team involved. Please share the "
                 "location and the best way for staff to follow up."
             ),
+            "intent": "conflict_resolution",
             "grounded": False,
             "sources": [],
             "tool_results": tool_results,
@@ -289,10 +341,6 @@ def answer_text_chat(data: dict) -> dict:
             "store": store,
         }
 
-    category = str(slots.get("category") or _category_from_text(message)).strip()
-    category = _normalize_category(category)
-    if not category and not _requires_sources(message):
-        category = _profile_top_category(ctx.get("profile_summary"))
     if category:
         suggest_args = {key: slots[key] for key in _PRODUCT_SLOT_KEYS if key in slots}
         if "price_max" not in suggest_args:
@@ -334,6 +382,7 @@ def answer_text_chat(data: dict) -> dict:
             policy_context = _requires_sources(message) and not (faq.get("grounded") and faq.get("sources"))
             return {
                 "ok": True,
+                "intent": "product_suggestion",
                 "answer": suggest.get("spoken_summary") or "I found a few in-stock options.",
                 "grounded": not policy_context,
                 "sources": [{"kind": "tool", "title": "Live budtender inventory"}],
@@ -347,6 +396,7 @@ def answer_text_chat(data: dict) -> dict:
             }
         return {
             "ok": True,
+            "intent": "product_suggestion",
             "answer": "I can't find any matching items in stock right now. I can help my team check options manually if you share the best contact method.",
             "grounded": False,
             "sources": [{"kind": "tool", "title": "Live budtender inventory"}],
@@ -373,6 +423,7 @@ def answer_text_chat(data: dict) -> dict:
         answer = f"I can't confirm that right now from the current knowledge base. {_staff_followup_hint(store, phone)}"
     return {
         "ok": True,
+        "intent": _intent_label(message, escalation=escalation, product=False),
         "answer": answer,
         "grounded": False,
         "sources": [],

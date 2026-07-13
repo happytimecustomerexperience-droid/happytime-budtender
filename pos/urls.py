@@ -19,6 +19,7 @@ urlpatterns = [
     path("cart/add/", views.cart_add, name="cart_add"),
     path("cart/remove/", views.cart_remove, name="cart_remove"),
     path("cart/submit/", views.cart_submit, name="cart_submit"),
+    path("phone-cart/claim/", views.phone_cart_claim, name="phone_cart_claim"),
     # roles + live queue
     path("door/", views.door, name="door"),
     path("door/scan/", views.door_scan, name="door_scan"),

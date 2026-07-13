@@ -13,6 +13,7 @@ class InventoryItem(models.Model):
     product_id = models.BigIntegerField(null=True, db_index=True)
     batch_id = models.BigIntegerField(null=True)
     serial_no = models.CharField(max_length=64, blank=True)
+    received_date = models.DateField(null=True, blank=True)
     name = models.CharField(max_length=300)
     category = models.CharField(max_length=120, blank=True)
     brand = models.CharField(max_length=120, blank=True)

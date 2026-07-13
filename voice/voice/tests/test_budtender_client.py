@@ -178,6 +178,23 @@ def test_chat_message_empty_skips_request():
     assert fs.calls == []
 
 
+def test_phone_cart_upsert_posts_staging_endpoint():
+    fs = FakeSession(default={"ok": True, "draft": {"draft_token": "pc-1"}})
+    out = _client(fs).phone_cart_upsert({"call_id": "call-1", "action": "quote", "store": "yakima"})
+    call = fs.calls[0]
+    assert out["draft"]["draft_token"] == "pc-1"
+    assert call["url"] == f"{BASE}/api/v1/phone-cart/upsert"
+    assert call["headers"]["Authorization"] == f"Bearer {TOKEN}"
+    assert call["body"] == {"call_id": "call-1", "action": "quote", "store": "yakima"}
+
+
+def test_phone_cart_release_posts_release_endpoint():
+    fs = FakeSession(default={"ok": True, "draft": {"status": "released"}})
+    out = _client(fs).phone_cart_release({"call_id": "call-1", "store": "yakima"})
+    assert out["draft"]["status"] == "released"
+    assert fs.calls[0]["url"] == f"{BASE}/api/v1/phone-cart/release"
+
+
 # ── B. selection switch (margin vs taste) — request body presence of phone ──────
 def test_search_omits_phone_when_anonymous():
     fs = FakeSession(default={"results": []})

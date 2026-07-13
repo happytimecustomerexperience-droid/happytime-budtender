@@ -12,6 +12,7 @@ from django.test import RequestFactory
 from django.urls import reverse
 
 from pos import ranking
+from pos import suggest as sug
 from pos import views as V
 from customers import intelligence as I
 from customers import tracking
@@ -107,6 +108,16 @@ def test_session_only_personalizes_ranking():
     assert ranked[0]["category"] == "Flower"
 
 
+def test_for_you_rank_handles_api_and_pos_category_vocab_mismatch():
+    inv = [_item("Vaporizer", "vapes", "Cart Brand", "hybrid", 0.40, 30),
+           _item("Flower", "flower", "Flower Brand", "hybrid", 0.40, 30)]
+    profile = {"category_affinity": {"vape-cartridges": 1.0}}
+
+    ranked = ranking.rank(inv, profile)
+
+    assert ranked[0]["brand"] == "Cart Brand"
+
+
 # ── taste accrual ─────────────────────────────────────────────────────────────
 def test_known_customer_taste_beats_unbought_high_margin_phat_panda():
     inv = [_item("Flower", "flower", "Loved Brand", "hybrid", 0.30, 40),
@@ -192,3 +203,84 @@ def test_menu_renders_per_category_carousels(auth, monkeypatch):
     s.save()
     r = auth.get(reverse("menu"), SERVER_NAME="localhost")
     assert r.status_code == 200 and b"for Jane" in r.content and b"Flower" in r.content
+
+
+def test_menu_brand_search_and_high_thc_sort(auth, monkeypatch):
+    cache.clear()
+    _use_store(monkeypatch)
+    inv = [
+        _item("Flower", "flower", "Alpha", "hybrid", 0.5, 40),
+        _item("Flower", "flower", "Beta", "hybrid", 0.5, 40),
+    ]
+    inv[0]["thc"] = 18
+    inv[1]["thc"] = 31
+    monkeypatch.setattr(V.catalog, "get_inventory", lambda store: inv)
+    s = auth.session
+    s["acct_id"] = 1
+    s["acct_name"] = "Jane"
+    s.save()
+    body = auth.get(reverse("menu") + "?brand_q=bet&sort=thc_high", SERVER_NAME="localhost").content
+    assert b"Beta" in body and b"Alpha" not in body
+
+
+def test_suggestion_copy_is_more_personable():
+    inv = [{
+        "product_id": "1", "sku": "1", "name": "Sunset Sherbet", "brand": "Good Stuff",
+        "category": "Flower", "cat_key": "flower", "subcategory": "hybrid", "qty": 8,
+        "price": 28, "received_date": "2026-07-01", "velocity": 1.0, "bucket": "core",
+    }]
+    profile = {
+        "purchase_history": [{"product_id": "1"}],
+        "brand_affinity": {"Good Stuff": 1.0},
+        "category_affinity": {"Flower": 1.0},
+        "price_tier": "mid",
+    }
+    item = sug.suggest(inv, profile, mode="usual")[0]
+    assert "·" in item["why_this"]
+    assert "Sunset Sherbet" in item["why_this"]
+
+
+def test_suggestion_usual_matches_history_by_sku_when_product_id_missing():
+    inv = [{
+        "product_id": "live-1", "sku": "SKU-1", "name": "Usual Hybrid", "brand": "Good Stuff",
+        "category": "Flower", "cat_key": "flower", "subcategory": "hybrid", "qty": 8,
+        "price": 28, "received_date": "2026-07-01", "velocity": 1.0, "bucket": "core",
+    }]
+    profile = {"purchase_history": [{"sku": "SKU-1", "times_bought": 4}], "orders": 4}
+
+    item = sug.suggest(inv, profile, mode="usual")[0]
+
+    assert item["recommendation_type"] == "usual"
+    assert item["sku"] == "SKU-1"
+
+
+def test_suggestion_category_affinity_handles_api_and_pos_vocab_mismatch():
+    inv = [_item("Vaporizer", "vapes", "Cart Brand", "hybrid", 0.4, 30)]
+    profile = {"category_affinity": {"vape-cartridges": 1.0}, "orders": 4}
+
+    item = sug.suggest(inv, profile)[0]
+
+    assert item["recommendation_type"] == "similar"
+    assert item["brand"] == "Cart Brand"
+
+
+def test_suggestion_uses_more_than_single_top_brand():
+    inv = [_item("Flower", "flower", "Second Favorite", "hybrid", 0.4, 30)]
+    profile = {"brand_affinity": {"Top Favorite": 0.9, "Second Favorite": 0.6}, "orders": 4}
+
+    item = sug.suggest(inv, profile)[0]
+
+    assert item["recommendation_type"] == "similar"
+    assert item["brand"] == "Second Favorite"
+
+
+def test_suggestion_copy_speaks_to_customer_not_about_them():
+    inv = [_item("Flower", "flower", "Good Stuff", "hybrid", 0.4, 30)]
+    profile = {"brand_affinity": {"Good Stuff": 1.0}, "orders": 4}
+
+    item = sug.suggest(inv, profile)[0]
+
+    assert "you" in item["why_this"].lower()
+    assert item["name"] in item["why_this"]
+    assert "their" not in item["why_this"].lower()
+    assert "them" not in item["why_this"].lower()

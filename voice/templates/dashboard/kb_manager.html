@@ -3,10 +3,33 @@
 {% block content %}
 <div class="row between">
   <div><h1>Knowledge base</h1><p class="muted">The grounded facts the FAQ agent speaks. Edits are live on the next call (no redeploy).</p></div>
-  <form method="post" action="{% url 'dash-kb-reindex' %}">
-    {% csrf_token %}
-    <button class="btn btn-primary" type="submit" data-testid="kb-reindex">Reindex embeddings + Vapi Files</button>
-  </form>
+  <div class="row">
+    <form method="post" action="{% url 'dash-kb-scrape' %}">
+      {% csrf_token %}
+      <button class="btn" type="submit" data-testid="kb-scrape">Scrape happytimeweed.com</button>
+    </form>
+    <form method="post" action="{% url 'dash-kb-reindex' %}">
+      {% csrf_token %}
+      <button class="btn btn-primary" type="submit" data-testid="kb-reindex">Reindex embeddings + Vapi Files</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Website scrape</h2>
+  {% if last_scrape %}
+    <p><span class="badge {% if last_scrape.status == 'applied' %}green{% elif last_scrape.status == 'blocked' %}amber{% else %}red{% endif %}">{{ last_scrape.status }}</span> {{ last_scrape.summary }}</p>
+    <p class="muted">Started {{ last_scrape.started_at }}{% if last_scrape.finished_at %}; finished {{ last_scrape.finished_at }}{% endif %}</p>
+    <p class="muted">Changes: {{ last_scrape.changes }}</p>
+    {% if last_scrape.validation_errors %}
+      <div class="note-red"><div>Validation blocked publish: {{ last_scrape.validation_errors }}</div></div>
+    {% endif %}
+    {% if last_scrape.publish_results %}
+      <p class="muted">Publish: {{ last_scrape.publish_results }}</p>
+    {% endif %}
+  {% else %}
+    <p class="muted">No website scrape has run yet. Daily cron target: 3:00 AM America/Los_Angeles.</p>
+  {% endif %}
 </div>
 
 <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));margin-top:16px">

@@ -13,6 +13,9 @@ provisional=True (verbatim house copy blocked by the Vercel wall — re-run seed
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from kb import models as m
 from kb.taxonomy_source import CONCENTRATE_SUBTYPE_VALUES  # parity-anchored to budtender
 
@@ -179,6 +182,80 @@ def seed_faq() -> int:
     return len(FAQ_ROWS)
 
 
+# FAQ rows distilled verbatim from happytimeweed.com's FAQ (kb/data/site_faqs.json,
+# built from the site's data/faqs.json — HTML stripped, category → topic). Keyed
+# site-faq-<id> so they never collide with the hand-written FAQ_ROWS above.
+_SITE_FAQ_PATH = Path(__file__).resolve().parent / "data" / "site_faqs.json"
+
+# Facts that live in the site FOOTER (not the FAQ page): the Facebook handle.
+_FOOTER_FAQ_ROWS = [
+    {
+        "key": "footer-social",
+        "question": "Are you on social media? What's your Facebook?",
+        "answer": "Yes — follow Happy Time Dispensary on Facebook at facebook.com/happytimeyak509 "
+        "for the latest deals, new products, and store news across our Yakima, Mount Vernon, "
+        "and Pullman locations.",
+        "topic": "general",
+        "source_url": "https://happytimeweed.com",
+        "paraphrases": ["facebook", "social media", "instagram", "do you have a page"],
+    },
+    {
+        "key": "footer-wa-warning",
+        "question": "Is there a health warning? Are there risks to cannabis?",
+        "answer": "Per Washington state: There may be health risks associated with consumption of "
+        "this product. For use only by adults twenty-one and older. Keep out of the reach of children.",
+        "topic": "general",
+        "source_url": "https://happytimeweed.com",
+        "paraphrases": ["health warning", "risks", "is it safe", "warning label", "keep away from kids"],
+    },
+]
+
+# Education guides distilled from happytimeweed.com/education/* (kb/data/site_education.json).
+_SITE_EDU_PATH = Path(__file__).resolve().parent / "data" / "site_education.json"
+
+
+def seed_site_education() -> int:
+    try:
+        rows = json.loads(_SITE_EDU_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    for r in rows:
+        m.EducationDoc.objects.update_or_create(
+            slug=r["slug"],
+            defaults={
+                "title": r["title"],
+                "topic": r.get("topic", ""),
+                "body": r["body"],
+                "source_url": r.get("source_url", ""),
+                "is_active": True,
+            },
+        )
+    return len(rows)
+
+
+def seed_site_faqs() -> int:
+    try:
+        rows = json.loads(_SITE_FAQ_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        rows = []
+    rows = rows + _FOOTER_FAQ_ROWS
+    for r in rows:
+        m.FAQEntry.objects.update_or_create(
+            key=r["key"],
+            defaults={
+                "question": r["question"],
+                "answer": r["answer"],
+                "topic": r.get("topic", "general"),
+                "store": r.get("store", ""),
+                "source_url": r.get("source_url", ""),
+                "paraphrases": r.get("paraphrases", []),
+                "weight": r.get("weight", 100),
+                "is_active": True,
+            },
+        )
+    return len(rows)
+
+
 # ── 2. Return policy (§8.2) — WAC 314-55-079 ──────────────────────────────────
 
 RETURN_POLICY_BODY = (
@@ -220,13 +297,7 @@ STORE_FACT_ROWS = [
     # Mount Vernon [CONFIRMED from happytimeweed.com /data/store-locations.json]
     ("mount-vernon", "address", "Mt Vernon address", "200 Suzanne Ln, Mt Vernon, WA 98273", True),
     ("mount-vernon", "phone", "Mt Vernon phone", "(360) 488-2923", True),
-    (
-        "mount-vernon",
-        "hours",
-        "Mt Vernon hours",
-        "Sunday–Thursday 9 AM–10 PM, Friday–Saturday 9 AM–11 PM",
-        True,
-    ),
+    ("mount-vernon", "hours", "Mt Vernon hours", "9 AM–10 PM daily", True),
     # Pullman [CONFIRMED]
     ("pullman", "address", "Pullman address", "5602 WA-270, Pullman, WA 99163", True),
     ("pullman", "phone", "Pullman phone", "(509) 334-2788", True),
@@ -835,6 +906,11 @@ BUDTENDER_BODY = (
     "payment, or pickup while you're helping them, just answer it with faq_lookup (it's grounded in "
     "our knowledge base), then pick up right where you left off. NEVER say you don't have access to "
     "the deals — you do, through faq_lookup.\n\n"
+    "PHONE CART HANDOFF: if a caller asks you to set items aside, order by phone, or total up what "
+    "they chose, use stage_phone_cart. This only stages a draft for the register; it does NOT submit "
+    "or reserve a Dutchie order. Always say staff will verify ID, availability, discounts, and final "
+    "total at checkout. At the end of the call, if there are staged items, call stage_phone_cart with "
+    "action=release so POS staff can load the draft by token.\n\n"
     "MID-CALL CORRECTIONS (the caller changes their mind): if the caller REVISES a prior choice "
     "('actually, make it edibles', 'no — let's do a cart instead', 'change my budget to 60', "
     "'cancel that, start over'), do NOT march forward on the old plan. Acknowledge warmly ('Got "
@@ -991,7 +1067,7 @@ def seed_agent_prompts() -> int:
         },
         "budtender": {
             "body": BUDTENDER_BODY,
-            "tool_names": ["suggest_products", "check_inventory", "pair_upsell", "faq_lookup"],
+            "tool_names": ["suggest_products", "check_inventory", "pair_upsell", "faq_lookup", "stage_phone_cart"],
         },
         "vendor": {
             "body": VENDOR_BODY,
@@ -1035,6 +1111,8 @@ def seed_all() -> dict[str, int]:
     )
     return {
         "faq": seed_faq(),
+        "site_faq": seed_site_faqs(),
+        "site_education": seed_site_education(),
         "return_policy": seed_return_policy(),
         "store_facts": seed_store_facts(),
         "vendor_facts": seed_vendor_facts(),

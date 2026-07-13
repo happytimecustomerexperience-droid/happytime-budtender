@@ -18,6 +18,12 @@
       </div>
     </div>
   </a>
+  {% if p.received_date %}
+  <details class="reveal-date">
+    <summary>Received</summary>
+    <div>{{ p.received_date|slice:":10" }}</div>
+  </details>
+  {% endif %}
   <form class="addrow" hx-post="{% url 'cart_add' %}" hx-target="#cart">
     <input type="hidden" name="ProductId" value="{{ p.ProductId }}">
     <input name="Cnt" type="number" min="1" max="99" value="1" aria-label="qty">

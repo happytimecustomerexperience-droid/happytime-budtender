@@ -228,10 +228,43 @@ def test_text_chat_suggestions_forward_structured_slots(monkeypatch):
     }
 
 
+def test_text_chat_product_intent_beats_broad_faq_match(monkeypatch):
+    from voice import chat
+
+    calls = []
+
+    def fake_dispatch(tool, args, ctx):
+        calls.append((tool, args, dict(ctx)))
+        if tool == "faq_lookup":
+            return {
+                "grounded": True,
+                "answer": "Per visit you can buy up to 16 ounces of solid edibles.",
+                "sources": [{"source_url": "https://happytimeweed.com/faq"}],
+            }
+        return {
+            "picks": [{"sku": "EDIBLE1", "name": "Relaxed Gummy"}],
+            "spoken_summary": "My top pick is Relaxed Gummy.",
+        }
+
+    monkeypatch.setattr(chat, "dispatch", fake_dispatch)
+
+    out = chat.answer_text_chat(
+        {"message": "I want a relaxing edible under 25 dollars", "store": "yakima"}
+    )
+
+    assert out["safe_next_action"] == "show_products"
+    assert out["answer"] == "My top pick is Relaxed Gummy."
+    assert [call[0] for call in calls] == ["faq_lookup", "suggest_products"]
+    assert calls[1][1]["category"] == "edible"
+    assert calls[1][1]["price_max"] == 25.0
+    assert calls[1][1]["effect_desired"] == "relaxed"
+
+
 @pytest.mark.django_db
 def test_site_scrape_maps_pages_and_validates(monkeypatch, settings):
     from kb import site_scrape
     from kb.models import FAQEntry, StoreFact
+    from voice.tools import dispatch
 
     settings.HHT_AUTO_PUBLISH = False
     pages = [
@@ -269,6 +302,11 @@ def test_site_scrape_maps_pages_and_validates(monkeypatch, settings):
     assert StoreFact.objects.filter(kind="special", source_url__contains="/specials").exists()
     assert StoreFact.objects.filter(store="yakima", kind="hours").exists()
     assert run.changes["created"] >= 3
+
+    specials = dispatch("faq_lookup", {"query": "what specials are on today?", "store": "yakima"}, {"store": "yakima"})
+    assert specials["grounded"] is True
+    assert "Monday flower special" in specials["answer"]
+    assert specials["sources"][0]["source_url"] == "https://happytimeweed.com/specials"
 
 
 @pytest.mark.django_db
@@ -317,3 +355,17 @@ def test_dashboard_scrape_button_runs_admin_only(client, monkeypatch):
 
     assert resp.status_code == 302
     assert resp["Location"].endswith("/dashboard/kb/")
+
+
+@pytest.mark.django_db
+def test_dashboard_kb_manager_shows_daily_scrape_target(client):
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    user = User.objects.create_user("owner2", password="pw", is_staff=True)
+    client.force_login(user)
+
+    resp = client.get("/dashboard/kb/")
+
+    assert resp.status_code == 200
+    assert b"Daily cron target: 3:00 AM America/Los_Angeles" in resp.content

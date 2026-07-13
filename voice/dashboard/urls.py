@@ -24,6 +24,7 @@ urlpatterns = [
     path("flow/save", views.flow_save, name="dash-flow-save"),
     # KB + KB-source manager + reindex
     path("kb/", views.kb_manager, name="dash-kb"),
+    path("kb/scrape", views.kb_scrape_now, name="dash-kb-scrape"),
     path("kb/reindex", views.kb_reindex, name="dash-kb-reindex"),
     path("kb/<slug:kind>/", views.kb_source_list, name="dash-kb-source"),
     path("kb/<slug:kind>/new/", views.kb_row_new, name="dash-kb-row-new"),

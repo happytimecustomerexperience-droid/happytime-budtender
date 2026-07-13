@@ -67,7 +67,7 @@ def test_provision_creates_budtender_member_and_tools(fake_vapi, p1_prompts):
     report = provision.provision_all(dry_run=False)
     assert report.ok
     names = {(r.kind, r.name): r for r in report.results}
-    for tool in ("suggest_products", "check_inventory", "pair_upsell"):
+    for tool in ("suggest_products", "check_inventory", "pair_upsell", "stage_phone_cart"):
         assert names[("tool", tool)].action == "created"
         assert names[("tool", tool)].vapi_id
     assert names[("assistant", "budtender")].action == "created"
@@ -75,13 +75,13 @@ def test_provision_creates_budtender_member_and_tools(fake_vapi, p1_prompts):
 
 
 @pytest.mark.django_db
-def test_budtender_assistant_attaches_four_tool_ids(fake_vapi, p1_prompts):
+def test_budtender_assistant_attaches_five_tool_ids(fake_vapi, p1_prompts):
     # tools first so the assistant resolves their ids (faq_lookup too — deals/hours mid-pick).
-    for t in ("suggest_products", "check_inventory", "pair_upsell", "faq_lookup"):
+    for t in ("suggest_products", "check_inventory", "pair_upsell", "faq_lookup", "stage_phone_cart"):
         provision.ensure_tool(t)
     payload, warnings = provision.build_assistant_payload("budtender", name="budtender")
     assert not [w for w in warnings if w.startswith("tool not provisioned")]
-    assert len(payload["model"]["toolIds"]) == 4  # suggest/check/pair + faq_lookup, none dangling
+    assert len(payload["model"]["toolIds"]) == 5  # suggest/check/pair/phone-cart + faq_lookup
 
 
 # ── G3. voice/model/keyterms ONCE on the budtender assistant payload (ADR-011) ──

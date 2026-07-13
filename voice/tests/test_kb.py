@@ -358,13 +358,16 @@ def test_every_mapped_row_exists():
     from kb import seed
 
     seed.seed_all()
-    assert m.FAQEntry.objects.count() == 13  # 8 core + 5 from the real site (loyalty/ordering/etc.)
+    # 13 hand-written core FAQs + 40 from the site FAQ page + 2 footer (social + WA warning).
+    assert m.FAQEntry.objects.count() == 55
+    assert m.FAQEntry.objects.filter(key__startswith="site-faq-").count() == 40
+    assert m.FAQEntry.objects.filter(key__startswith="footer-").count() == 2
     assert m.PolicyDocument.objects.filter(kind="return_policy").count() == 1
     assert m.StoreFact.objects.filter(kind="special").count() == len(seed.SPECIAL_ROWS)
     for store in ("yakima", "mount-vernon", "pullman"):
         assert m.StoreFact.objects.filter(kind="special", store=store).count() == 10
     assert m.StoreFact.objects.filter(kind="limit").count() == 5  # 4 limits + age/ID rule
-    assert m.EducationDoc.objects.count() == 5
+    assert m.EducationDoc.objects.count() == 15  # 5 core + 10 distilled from /education/*
     assert m.BlogDoc.objects.count() == 3
     assert m.AgentPrompt.objects.filter(role="faq").count() == 1
     # P2: the escalation persona is seeded (de-escalation + the WAC defective path, grounded).
@@ -396,7 +399,8 @@ def test_o8_mount_vernon_hours_unconfirmed():
     seed.seed_all()
     mv = m.StoreFact.objects.get(store="mount-vernon", kind="hours")
     assert mv.confirmed is True
-    assert "Sunday" in mv.value and "Friday" in mv.value
+    # Matches store-locations.json ("Open Everyday: 9:00 AM - 10:00 PM").
+    assert "9 AM" in mv.value and "10 PM" in mv.value and "daily" in mv.value
 
     yak = m.StoreFact.objects.get(store="yakima", kind="hours")
     assert yak.confirmed is True and "8 AM" in yak.value and "11:30 PM" in yak.value

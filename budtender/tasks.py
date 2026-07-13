@@ -265,6 +265,7 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
                     u28[prod.sku] += qty
             # History: fold only NEW transactions (exactly-once / no over-count).
             if is_new:
+                times_bought = 1
                 by_phone[phone].append({
                     "product_id": pid,
                     "sku": prod.sku if prod else pid,
@@ -279,12 +280,18 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
                     "effects": prod.effects if prod else [],
                     "flavors": prod.flavors if prod else [],
                     "thc_percent": prod.thc_percent if prod else None,
+                    "total_terpenes": None,
+                    "cbd": None,
                     "unit_weight": prod.unit_weight if prod else None,
                     "potency_mg": prod.potency_mg if prod else None,
+                    "vendor": "",
                     "price_z": float(prod.price_z) if prod else 0.0,
                     "qty": qty,
                     "last_price": float(it.get("unitPrice") or 0),
                     "bought_at": bought_at,
+                    "first_bought_at": bought_at,
+                    "last_bought_at": bought_at,
+                    "times_bought": times_bought,
                 })
     for phone, lines in by_phone.items():
         _fold_history(phone, lines, name=name_by_phone.get(phone))
@@ -329,8 +336,9 @@ def recompute_affinity(phone: str) -> bool:
     if not hist:
         return False
 
-    brand, cat, stype, sub, bucket = Counter(), Counter(), Counter(), Counter(), Counter()
+    brand, cat, stype, sub, bucket, terp, flavor = Counter(), Counter(), Counter(), Counter(), Counter(), Counter(), Counter()
     price_z_sum = price_z_n = 0.0
+    thc_vals = []
     total = 0
     for h in hist:
         n = int(h.get("times_bought", 1) or 1)
@@ -345,36 +353,25 @@ def recompute_affinity(phone: str) -> bool:
             sub[h["subcategory"]] += n
         if h.get("bucket"):
             bucket[h["bucket"]] += n
+        if h.get("dominant_terpene"):
+            terp[h["dominant_terpene"]] += n
+        for fl in (h.get("flavors") or []):
+            if fl:
+                flavor[str(fl)] += n
         if h.get("price_z") is not None:
             price_z_sum += float(h.get("price_z") or 0) * n
             price_z_n += n
+        if h.get("thc_percent") is not None:
+            thc_vals.extend([float(h.get("thc_percent") or 0)] * n)
 
     profile.brand_affinity = _normalize_counter(brand)
     profile.category_affinity = _normalize_counter(cat)
     profile.strain_type_affinity = _normalize_counter(stype)
     profile.subcategory_affinity = _normalize_counter(sub)
     profile.bucket_mix = _normalize_counter(bucket)
-    profile.total_orders = total
-
-    # Terpene affinity: purchase_history doesn't carry terpene, so join each
-    # purchased SKU → its product's dominant terpene. This ACTIVATES the terpene
-    # term in ranking._affinity_score (the field was defined but never populated).
-    terp: Counter = Counter()
-    sku_list = [h.get("sku") for h in hist if h.get("sku")]
-    terp_by_sku: dict[str, str] = {}
-    if sku_list:
-        for sku_, dt in (Product.objects.filter(sku__in=sku_list)
-                         .exclude(dominant_terpene="")
-                         .values_list("sku", "dominant_terpene")):
-            terp_by_sku.setdefault(sku_, dt)
-    for h in hist:
-        # Prefer the terpene captured at sync time (permanent); else join the
-        # current product. (Dutchie sends 0% terpene for this account today, so
-        # this stays empty until that data appears — then it lights up for free.)
-        dt = h.get("dominant_terpene") or terp_by_sku.get(h.get("sku"))
-        if dt:
-            terp[dt] += int(h.get("times_bought", 1) or 1)
     profile.terpene_affinity = _normalize_counter(terp)
+    profile.flavor_affinity = _normalize_counter(flavor)
+    profile.total_orders = total
 
     # Most-recent purchase timestamp (feeds the recency boost in ranking).
     last_dts = [h.get("last_bought_at") for h in hist if h.get("last_bought_at")]
@@ -393,14 +390,18 @@ def recompute_affinity(phone: str) -> bool:
 
     # Novelty: distinct products ÷ total purchases. ~1 = always something new
     # (explorer); low = repeats the same items (creature of habit).
-    distinct = len(hist)
+    distinct = len({(h.get("product_id") or h.get("sku") or str(i)) for i, h in enumerate(hist)})
     profile.novelty_score = round(min(distinct / total, 1.0), 3) if total else 0.0
+    if thc_vals:
+        profile.thc_min = round(min(thc_vals), 2)
+        profile.thc_max = round(max(thc_vals), 2)
 
     profile.computed_at = datetime.now(timezone.utc)
     profile.save(update_fields=[
         "brand_affinity", "category_affinity", "strain_type_affinity",
-        "subcategory_affinity", "terpene_affinity", "bucket_mix", "price_tier",
-        "novelty_score", "total_orders", "last_purchase_at", "computed_at",
+        "subcategory_affinity", "terpene_affinity", "flavor_affinity",
+        "bucket_mix", "price_tier", "novelty_score", "total_orders",
+        "thc_min", "thc_max", "last_purchase_at", "computed_at",
     ])
     return True
 
@@ -511,29 +512,24 @@ def classify_products(location_slug: str) -> int:
 
     now = datetime.now(timezone.utc)
     for items in groups.values():
-        margins = [p.margin_pct for p in items]
         prices = [float(p.price) for p in items]
-        gps = [float(p.margin) for p in items]
-        vels = [p.velocity for p in items]
+        margins = [p.margin_pct for p in items]
         m_mean, m_sd = (mean(margins), pstdev(margins) or 1.0) if margins else (0, 1)
         p_mean, p_sd = (mean(prices), pstdev(prices) or 1.0) if prices else (0, 1)
-        gp90 = _percentile(gps, 90)   # only the genuine top-GP items, not just "expensive"
-        vel60 = _percentile(vels, 60)
+        traffic_cutoff = _percentile(prices, 15)
+        profit_cutoff = _percentile(prices, 85)
         for p in items:
             p.margin_z = (p.margin_pct - m_mean) / m_sd
             p.price_z = (float(p.price) - p_mean) / p_sd
             p.classified_at = now
             if p.bucket_source == "manual":
                 continue
-            # Profit-driver: clearly above-peer margin %, or a true top-GP$ item.
-            if p.margin_z >= PROFIT_MARGIN_Z or float(p.margin) >= gp90:
-                p.bucket = "profit"
-            # Traffic-driver: cheap + low-margin. Velocity sharpens this once
-            # transaction data is aligned (subsystem 2); until then (vel60==0) we
-            # classify on price+margin alone so the bucket isn't empty.
-            elif (p.margin_z <= TRAFFIC_MARGIN_Z and p.price_z <= TRAFFIC_PRICE_Z
-                  and (vel60 == 0 or p.velocity >= vel60)):
+            price = float(p.price) or 0.0
+            # Price-positioned bell curve: cheapest 15% traffic, highest 15% profit.
+            if price <= traffic_cutoff:
                 p.bucket = "traffic"
+            elif price >= profit_cutoff:
+                p.bucket = "profit"
             else:
                 p.bucket = "core"
 
@@ -593,17 +589,18 @@ def _fold_history(phone: str, lines: list[dict], name: str | None = None) -> Non
             "first_bought_at": None,
             "last_bought_at": None,
         }
-        entry["times_bought"] = int(entry.get("times_bought", 0)) + 1
+        entry["times_bought"] = int(entry.get("times_bought", 0)) + int(ln.get("times_bought", 1) or 1)
         entry["qty"] = float(entry.get("qty") or 0) + float(ln.get("qty") or 0)
-        entry["last_bought_at"] = ln["bought_at"]
+        entry["last_bought_at"] = ln.get("last_bought_at") or ln.get("bought_at")
         entry["last_price"] = ln.get("last_price", entry.get("last_price"))
         if not entry.get("first_bought_at") or ln["bought_at"] < entry["first_bought_at"]:
-            entry["first_bought_at"] = ln["bought_at"]
+            entry["first_bought_at"] = ln.get("first_bought_at") or ln["bought_at"]
         # refresh joined attributes if we now resolved the product
         for f in (
             "product_name", "brand", "category", "subcategory", "strain",
             "strain_type", "dominant_terpene", "effects", "flavors",
             "thc_percent", "unit_weight", "potency_mg", "bucket", "price_z",
+            "total_terpenes", "cbd", "vendor",
         ):
             if ln.get(f):
                 entry[f] = ln[f]

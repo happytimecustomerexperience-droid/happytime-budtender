@@ -63,6 +63,16 @@ class SupersetSignalTests(SimpleTestCase):
                 "cat_key": "vapes", "subcategory": "", "terpene": "", "flavors": []}
         self.assertAlmostEqual(engine._affinity_score(feat, pf), 0.6)   # 0.6 * cat_key match
 
+    def test_category_lookup_handles_api_and_pos_vocab_mismatch(self):
+        pf = {"category_affinity": {"vape-cartridges": 1.0}}
+        feat = {"brand": "", "strain_type": "", "category": "Vaporizer",
+                "cat_key": "vapes", "subcategory": "", "terpene": "", "flavors": []}
+        self.assertAlmostEqual(engine._affinity_score(feat, pf), 0.6)
+        self.assertAlmostEqual(
+            engine._recency_boost(feat, set(), {"vape-cartridges"}),
+            0.05,
+        )
+
     def test_thc_band_fit_is_an_additive_nudge(self):
         pf = {"thc_min": 15.0, "thc_max": 25.0}
         base = {"brand": "", "strain_type": "", "category": "", "cat_key": "",

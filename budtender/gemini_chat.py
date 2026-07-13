@@ -104,6 +104,36 @@ def _voice_grounding(query: str, store: str = "") -> dict | None:
     return result
 
 
+def _voice_chat(messages, *, store: str = "") -> dict | None:
+    base = os.environ.get("HHT_VOICE_BASE_URL", "").rstrip("/")
+    token = os.environ.get("HHT_BACKEND_TOKEN", "").strip()
+    latest = _latest_customer_message(messages)
+    if not base or not token or not latest:
+        return None
+    history = [
+        {
+            "role": "assistant" if getattr(m, "role", "") == "assistant" else "user",
+            "content": _safe_grounding_value(getattr(m, "content", ""), limit=1200),
+        }
+        for m in messages
+    ]
+    try:
+        resp = requests.post(
+            f"{base}/api/voice/chat",
+            json={"message": latest, "history": history, "store": store},
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=(2.0, float(os.environ.get("HHT_VOICE_TIMEOUT", "5") or 5)),
+        )
+        if resp.status_code >= 300:
+            return None
+        data = resp.json() if resp.content else {}
+    except (requests.RequestException, ValueError):
+        return None
+    if not isinstance(data, dict) or not data.get("ok") or not data.get("answer"):
+        return None
+    return data
+
+
 def _grounding_text(result: dict | None) -> str:
     if not result:
         return ""
@@ -130,6 +160,10 @@ def _safe_grounding_value(value, *, limit: int) -> str:
 
 def generate_chat_reply(messages, *, store: str = "") -> str:
     from google.genai import types
+
+    shared = _voice_chat(messages, store=store)
+    if shared and shared.get("answer"):
+        return _safe_grounding_value(shared["answer"], limit=1200)
 
     model = os.environ.get("GEMINI_CHAT_MODEL", "gemini-2.5-flash-lite")
     grounding = _grounding_text(_voice_grounding(_latest_customer_message(messages), store=store))

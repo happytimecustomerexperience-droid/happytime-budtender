@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 
 from voice import pricing
+from voice import recognition
 from voice.budtender_client import budtender
 from voice.tools import register
 
@@ -62,6 +63,36 @@ _CARTRIDGE_ALIASES = {
 _SPEAKABLE_FIELDS = ("rank", "name", "brand", "strain", "thc_percent", "why_this", "sku")
 
 _HONEST_EMPTY = "I'm not finding that in stock right now."
+
+
+def _dedupe_results(raw_results: list[dict], limit: int = 3) -> list[dict]:
+    deduped: list[dict] = []
+    seen = set()
+    seen_strains = set()
+    should_dedupe = len(raw_results) > 3 and limit >= 3
+    seen_brands = set()
+    for r in raw_results:
+        sku = str(r.get("sku") or "").strip()
+        strain = str(r.get("strain") or "").strip().lower()
+        brand = str(r.get("brand") or "").strip().lower()
+        key = (sku, strain, brand)
+        if key in seen:
+            continue
+        if should_dedupe and strain and strain in seen_strains:
+            continue
+        if should_dedupe and brand and brand in seen_brands:
+            continue
+        if not sku:
+            continue
+        seen.add(key)
+        if strain:
+            seen_strains.add(strain)
+        if brand:
+            seen_brands.add(brand)
+        deduped.append(r)
+        if len(deduped) >= limit:
+            break
+    return deduped
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────────
@@ -143,10 +174,10 @@ def _maybe_resolve_recognition(args: dict, ctx: dict) -> None:
     when available) OR is absent (blocked/anonymous → margin-first). No-op if already resolved."""
     if ctx.get("recognition_resolved"):
         return
-    from voice import recognition
-
     number = ctx.get("caller_number") or ""
-    recognition.resolve_caller(number, ctx)
+    resolved = recognition.resolve_caller(number, ctx)
+    if isinstance(resolved, dict):
+        ctx.update(resolved)
 
 
 def _stamp_suggested(ctx: dict, skus: list[str]) -> None:
@@ -198,14 +229,16 @@ def handle_suggest_products(args: dict, ctx: dict) -> dict:
     exclude = args.get("exclude_skus") if isinstance(args.get("exclude_skus"), list) else None
     out = budtender().search(
         slots,
-        limit=3,
+        limit=12,
         phone=ctx.get("_caller_phone"),  # presence → W_KNOWN; absence → W_ANON (margin-first)
         session_token=ctx.get("session_token"),
         exclude_skus=exclude,
         location=store,
     )
     results = out.get("results") or []
-    picks = [_speakable_pick(r, store) for r in results[:3]]
+    # Fetch a bit wider than the final limit so dedupe can still return 3 useful options.
+    # ponytail: one-wide fetch window; adjust the limit here if upstream quality drops.
+    picks = [_speakable_pick(r, store) for r in _dedupe_results(results, limit=6)][:3]
     _stamp_suggested(ctx, [p["sku"] for p in picks if p.get("sku")])
 
     return {"picks": picks, "spoken_summary": _spoken_summary(picks)}

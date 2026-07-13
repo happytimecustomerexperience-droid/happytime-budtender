@@ -6,7 +6,7 @@ nightly classifier never overwrites a human decision.
 from django.contrib import admin
 
 from .models import (AdminAudit, AnalyticsEvent, CustomerProfile, Feedback,
-                     ManualPairing, Product, Setting, SuggestedProduct)
+                     ManualPairing, PhoneCartDraft, Product, Setting, SuggestedProduct)
 
 
 @admin.register(Product)
@@ -84,6 +84,22 @@ class FeedbackAdmin(admin.ModelAdmin):
 
     def short_msg(self, obj):
         return (obj.message[:60] + "…") if len(obj.message) > 60 else obj.message
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(PhoneCartDraft)
+class PhoneCartDraftAdmin(admin.ModelAdmin):
+    list_display = ("draft_token", "location_slug", "status", "phone_last4", "pickup_name",
+                    "released_at", "claimed_at", "updated_at")
+    list_filter = ("location_slug", "status")
+    search_fields = ("draft_token", "call_id", "session_token", "phone_hash", "pickup_name")
+    readonly_fields = (
+        "draft_token", "call_id", "session_token", "location_slug", "phone_hash", "phone_last4",
+        "pickup_name", "status", "lines", "quote", "audit", "released_at", "claimed_at",
+        "expires_at", "created_at", "updated_at",
+    )
 
     def has_add_permission(self, request):
         return False

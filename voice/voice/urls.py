@@ -10,5 +10,6 @@ from voice import api, webhooks
 
 urlpatterns = [
     path("vapi", webhooks.vapi_webhook, name="vapi_webhook"),
+    path("chat", api.text_chat, name="voice_text_chat"),
     path("kb/search", api.kb_search, name="voice_kb_search"),
 ]

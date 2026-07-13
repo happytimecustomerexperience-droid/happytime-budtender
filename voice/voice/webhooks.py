@@ -207,6 +207,7 @@ def handle_tool_calls(message: dict) -> JsonResponse:
     results = []
     for tc in _extract_tool_calls(message):
         args = _apply_correction(tc["arguments"])
+        ctx["tool_call_id"] = tc["id"]
         result = dispatch_tool(tc["name"], args, ctx)
         # Belt-and-suspenders: the central scrub already ran in dispatch; assert the wall held.
         guardrails.assert_no_leak(result)
@@ -295,7 +296,7 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
     (1) synchronous idempotent ``VoiceCall`` upsert (record never lost) + turns + phone-hash;
     (2) inline summary; (3) ``crm.sinks.dispatch`` email digest. Always returns ``200 {}``."""
     from crm.models import phone_hash
-    from voice.models import VoiceCall, VoiceTurn
+    from voice.models import VoiceCall, VoiceToolCall, VoiceTurn
 
     call = message.get("call") or {}
     call_id = call.get("id", "")
@@ -350,6 +351,14 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
     # this is non-critical: ``run_post_call`` enqueues it on Celery when HHT_USE_CELERY=1 (the
     # webhook returns fast), else runs it INLINE exactly as P2 did (sync fallback; broker-free).
     # Never raises — a summary/email failure must not lose the durable record (ADR-017).
+    if VoiceToolCall.objects.filter(call_id=call_id, name="stage_phone_cart").exists():
+        try:
+            from voice.budtender_client import budtender
+
+            budtender().phone_cart_release({"call_id": call_id, "store": store})
+        except Exception:  # noqa: BLE001 - release is best-effort and must not break the webhook
+            logger.warning("phone-cart release failed for %s", call_id, exc_info=True)
+
     try:
         from voice import tasks
 

@@ -7,12 +7,22 @@ mgmt command (cron/Task Scheduler) so browse stays fast and Dutchie isn't hammer
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from dutchie.pos_read import PosReadClient
 
 from .models import InventoryItem
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value)[:10]).date()
+    except ValueError:
+        return None
 
 
 def refresh_inventory(store) -> int:
@@ -36,6 +46,7 @@ def refresh_inventory(store) -> int:
             product_id=pid,
             batch_id=it.get("batchId") or it.get("BatchId"),
             serial_no=str(it.get("packageId") or it.get("serialNumber") or "")[:64],
+            received_date=_parse_date(it.get("receivedDate") or it.get("received_date") or it.get("receivedAt")),
             name=(it.get("productName") or cat.get("productName") or it.get("product") or "")[:300],
             category=(it.get("category") or cat.get("category") or "")[:120],
             brand=(it.get("brandName") or cat.get("brandName") or "")[:120],

@@ -10,6 +10,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
+from voice.chat import answer_text_chat
 from voice.tools import dispatch
 
 _VALID_STORES = {"yakima", "mount-vernon", "pullman"}
@@ -52,3 +53,15 @@ def kb_search(request):
 
     result = dispatch("faq_lookup", {"query": query, "store": store}, {"store": store})
     return JsonResponse({"ok": True, "result": result})
+
+
+@csrf_exempt
+@require_POST
+def text_chat(request):
+    """Shared website-chat endpoint backed by the same grounded tool layer as Vapi."""
+    if not _authorized(request):
+        return JsonResponse({"ok": False, "error": "unauthorized"}, status=401)
+
+    result = answer_text_chat(_body(request))
+    status = 200 if result.get("ok") else 400
+    return JsonResponse(result, status=status)

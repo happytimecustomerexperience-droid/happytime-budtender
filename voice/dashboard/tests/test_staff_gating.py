@@ -22,6 +22,7 @@ DASH_ROUTES = [
     ("dash-flow", {}),
     ("dash-flow-save", {}),
     ("dash-kb", {}),
+    ("dash-kb-scrape", {}),
     ("dash-kb-reindex", {}),
     ("dash-kb-source", {"kind": "faq"}),
     ("dash-kb-row-new", {"kind": "faq"}),

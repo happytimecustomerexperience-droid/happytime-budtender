@@ -64,6 +64,10 @@
     <button type="submit">Find</button>
   </form>
   <button type="button" class="ghost" hx-post="{% url 'guest_start' %}" hx-target="#profile">Guest</button>
+  <form hx-post="{% url 'phone_cart_claim' %}" hx-target="#cart" class="grow ac-form">
+    <input class="grow" name="draft_token" placeholder="Phone cart token..." autocomplete="off">
+    <button type="submit">Load phone cart</button>
+  </form>
   <div id="guests" class="ac-results"></div>
   <div id="profile">{% if not acct_id %}<span class="muted">No customer selected — claim from the queue, scan, search, or continue as guest.</span>{% endif %}</div>
 </div>

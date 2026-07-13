@@ -57,6 +57,12 @@
           {% if p.price_was and p.price_was > p.price %}<span class="was">${{ p.price_was|floatformat:0 }}</span>{% endif %}
           {% if p.thc %}<span class="thc">{{ p.thc|floatformat:0 }}% THC</span>{% endif %}
         </div>
+        {% if p.received_date %}
+        <details class="reveal-date" style="margin-top:10px">
+          <summary>Received</summary>
+          <div>{{ p.received_date|slice:":10" }}</div>
+        </details>
+        {% endif %}
         <form class="addrow" hx-post="{% url 'cart_add' %}" hx-target="#cart" style="margin-top:14px;max-width:280px">
           <input type="hidden" name="ProductId" value="{{ p.ProductId }}">
           <input name="Cnt" type="number" min="1" max="99" value="1" aria-label="qty">
@@ -107,9 +113,16 @@
         {% if p.brand %}<div>Brand <b>{{ p.brand }}</b></div>{% endif %}
         {% if p.vendor %}<div>Grower <b>{{ p.vendor }}</b></div>{% endif %}
         {% if p.cat_label %}<div>Category <b>{{ p.cat_label }}</b></div>{% endif %}
+        {% if p.package_id %}<div>Package <b>{{ p.package_id }}</b></div>{% endif %}
         {% if p.received_date %}<div>Received <b>{{ p.received_date|slice:":10" }}</b></div>{% endif %}
         <div>In stock <b>{{ p.qty|floatformat:0 }}</b></div>
       </div>
+      {% if p.package_ids %}
+      <details class="reveal-date" style="margin-top:10px">
+        <summary>Package ids ({{ p.package_ids|length }})</summary>
+        <div>{% for pid in p.package_ids %}<span class="chip">{{ pid }}</span>{% endfor %}</div>
+      </details>
+      {% endif %}
       <p class="hint" style="margin-top:8px">Educational terpene/effect notes are general references, not medical claims.</p>
     </div>
 

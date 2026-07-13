@@ -227,6 +227,7 @@ services:
       start_period: 40s
     command: >
       sh -c "python manage.py migrate --noinput &&
+             ( python manage.py seed_kb || true ) &&
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers ${VOICE_GUNICORN_WORKERS:-2} --timeout 120"
 
   # Voice post-call queue (Gemini summary + staff email OFF the webhook turn).

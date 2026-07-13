@@ -156,6 +156,7 @@ main{padding:16px 18px 40px;max-width:1500px;margin:0 auto}
 .filters{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
 .filters .search{flex:1 1 280px;min-height:54px;font-size:16px;border:2px solid var(--amber);
   border-radius:12px;padding:13px 16px}
+.filters .brand-search{flex:0 1 220px;border-color:var(--line)}
 .filters .search:focus{outline:none;border-color:var(--amber);box-shadow:0 0 0 3px rgba(255,183,77,.30)}
 .filters select{min-height:54px;padding:13px 16px;font-weight:600;font-size:15px;border-radius:12px}
 .doh-toggle{display:inline-flex;align-items:center;gap:8px;background:var(--ink);border:1.5px solid var(--line);
@@ -383,7 +384,8 @@ th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
   .customerbar{padding:10px;gap:8px}
   .customerbar form{width:100%}
   .customerbar form.grow{flex:1 1 100%}
-  .filters .search,.filters select,.filters .doh-toggle{min-height:52px}
+  .filters{gap:8px}
+  .filters .search,.filters .brand-search,.filters select,.filters .doh-toggle{flex:1 1 100%;min-height:50px}
   .grid{gap:12px}
   .tab{padding:10px 14px}
   .crumbs{padding:12px 10px}
@@ -404,3 +406,10 @@ th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
 .pref-pills .pilllink.active{background:var(--amber);color:#1a130a;border-color:var(--amber)}
 .pref-pills.sub{margin-top:8px}
 .sub-h{margin:12px 0 6px;color:var(--sage);font-size:14px}
+.reveal-date{margin-top:4px;color:var(--sage);font-size:12px}
+.reveal-date summary{cursor:pointer;list-style:none}
+.reveal-date summary::-webkit-details-marker{display:none}
+.reveal-date div{margin-top:4px;color:var(--cream)}
+.mini-table{display:flex;flex-direction:column;gap:8px}
+.mini-row{display:grid;grid-template-columns:1.6fr .7fr .7fr 1.4fr;gap:8px;align-items:center;font-size:13px;padding:8px 0;border-top:1px solid var(--line)}
+.mini-row:first-child{border-top:0}

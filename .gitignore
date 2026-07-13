@@ -1,5 +1,9 @@
 .env
 .env.dutchie
+# GCP / Vertex AI service-account keys — NEVER commit.
+data/creds/
+*gcp*.json
+sa-key.json
 stores.json
 stores.local.json
 *.pyc

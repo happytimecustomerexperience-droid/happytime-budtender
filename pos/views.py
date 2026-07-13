@@ -30,6 +30,9 @@ from customers import tracking
 from customers.intelligence import load_customer_history, load_profile_full_cached
 from customers.models import Customer, ShopEvent, ShopVisit, StaffSession
 from customers.services import record_write, upsert_customer
+from budtender.models import PhoneCartDraft
+from budtender.profile_tree import build_category_pref_tree
+from budtender.product_similarity import similarity as product_similarity
 from dutchie.pos_register_client import PosRegisterClient
 from dutchie.stores import load_stores
 
@@ -357,6 +360,7 @@ def screen(request):
     # The screen is the hub: budtenders land here to see the QUEUE + claim / scan / lookup.
     # The menu only personalizes once a customer is selected (acct_id). Door browses read-only.
     role = _role(request)
+    store_name = request.session.get("store") or ""
     return render(request, "pos/screen.html", {
         "stores": list(_stores().keys()),
         "active": request.session.get("store"),
@@ -365,7 +369,8 @@ def screen(request):
         "acct_name": request.session.get("acct_name"),
         "initial_cat": request.GET.get("cat", ""),
         "role": role,
-        "queue": list(_store_queue(request.session.get("store") or "")) if role != "door" else [],
+        "queue": list(_store_queue(store_name)) if role != "door" else [],
+        "phone_carts": _phone_cart_queue(store_name) if role != "door" else [],
     })
 
 
@@ -544,14 +549,26 @@ def _store_queue(store_name):
             .order_by("started_at"))
 
 
+def _phone_cart_queue(store_name):
+    if not store_name:
+        return []
+    return list(
+        PhoneCartDraft.objects.filter(
+            location_slug=store_name,
+            status__in=[PhoneCartDraft.Status.OPEN, PhoneCartDraft.Status.RELEASED],
+        ).order_by("-released_at", "-updated_at")[:50]
+    )
+
+
 @login_required
 @rate_limit("sessions", limit=600, window=60)
 @require_http_methods(["GET"])
 def queue_panel(request):
     """Live per-store queue partial - polled every 5s by the budtender screen."""
     _require_not_door(request)
+    store_name = request.session.get("store") or ""
     return render(request, "pos/_queue_panel.html",
-                  {"queue": list(_store_queue(request.session.get("store") or ""))})
+                  {"queue": list(_store_queue(store_name)), "phone_carts": _phone_cart_queue(store_name)})
 
 
 @login_required
@@ -662,29 +679,6 @@ def _fav_strains(hist, n=8):
     return sorted(agg.values(), key=lambda a: a["times"], reverse=True)[:n]
 
 
-def _category_pref_tree(hist):
-    """Build ordered category/subcategory buckets from purchase history rows."""
-    tree = {}
-    for h in hist:
-        if not isinstance(h, dict):
-            continue
-        cat = (h.get("category") or "other").strip() or "other"
-        sub = (h.get("subcategory") or "").strip() or "unclassified"
-        entry = tree.setdefault(cat, {"items": 0, "subcats": {}})
-        entry["items"] += _affw(h.get("times_bought")) or 0
-        sub_entry = entry["subcats"].setdefault(sub, {"items": 0, "rows": []})
-        sub_entry["items"] += _affw(h.get("times_bought")) or 0
-        sub_entry["rows"].append(h)
-    rows = sorted(({"category": c, "items": v["items"], "subcats": v["subcats"]}
-                   for c, v in tree.items()), key=lambda x: x["items"], reverse=True)
-    for row in rows:
-        row["subcats"] = sorted(
-            ({"subcategory": s, "items": vals["items"], "rows": vals["rows"]} for s, vals in row["subcats"].items()),
-            key=lambda x: x["items"], reverse=True,
-        )
-    return rows
-
-
 def _find_product_in_inventory(inv, row):
     """Try to resolve a purchas history row into current inventory for direct open-linking."""
     if not row:
@@ -706,6 +700,74 @@ def _find_product_in_inventory(inv, row):
     return None
 
 
+def _product_package_id(p):
+    for key in ("package_id", "SerialNo", "BatchId", "ProductId", "product_id"):
+        val = p.get(key)
+        if val not in (None, ""):
+            return str(val)
+    return ""
+
+
+def _product_received_date(p):
+    return p.get("received_date") or p.get("receivedDate") or p.get("received_at") or ""
+
+
+def _inventory_by_identity(inv):
+    by_pid = {}
+    by_name = {}
+    for p in inv or []:
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("product_id") or p.get("ProductId") or "").strip()
+        if pid:
+            by_pid.setdefault(pid, []).append(p)
+        name = (p.get("name") or "").strip().lower()
+        brand = (p.get("brand") or "").strip().lower()
+        key = (name, brand)
+        if name:
+            by_name.setdefault(key, []).append(p)
+    return by_pid, by_name
+
+
+def _resolve_inventory_matches(inv, row):
+    by_pid, by_name = _inventory_by_identity(inv)
+    row_pid = str(row.get("product_id") or row.get("sku") or "").strip()
+    if row_pid and row_pid in by_pid:
+        return by_pid[row_pid]
+    name = (row.get("product_name") or row.get("product") or row.get("name") or "").strip().lower()
+    brand = (row.get("brand") or "").strip().lower()
+    if name:
+        matches = by_name.get((name, brand)) or by_name.get((name, ""))
+        if matches:
+            return matches
+    out = []
+    for p in inv or []:
+        if not isinstance(p, dict):
+            continue
+        if row.get("category") and str(p.get("cat_key") or p.get("category") or "").strip().lower() != str(row.get("category")).strip().lower():
+            continue
+        if row.get("subcategory") and str(p.get("subcategory") or "").strip().lower() != str(row.get("subcategory")).strip().lower():
+            continue
+        out.append(p)
+    return out
+
+
+def _package_summary(inv_rows):
+    packages = []
+    for p in inv_rows or []:
+        if not isinstance(p, dict):
+            continue
+        packages.append({
+            "package_id": _product_package_id(p),
+            "received_date": _product_received_date(p),
+            "price": p.get("price"),
+            "bucket": p.get("bucket", ""),
+            "in_stock": _affw(p.get("qty")) > 0,
+        })
+    packages.sort(key=lambda r: str(r.get("received_date") or ""), reverse=True)
+    return packages[:12]
+
+
 def _customer_ctx(request, full):
     acct_id = request.session.get("acct_id")
     phone = request.session.get("acct_phone") or ""
@@ -723,6 +785,8 @@ def _customer_ctx(request, full):
             inv = catalog.get_inventory(store.name)
         except Exception as exc:
             logger.warning("customer inv load failed: %s", exc)
+    if isinstance(profile, dict):
+        profile.setdefault("orders", profile.get("total_orders", 0))
     # purchase_history comes from an uncontrolled remote DB; keep only dict rows so a
     # stray null/string element degrades instead of 500-ing (same guard as ranking/suggest).
     # COPY each row â€” `profile` is now cached/shared, so the full-page `h["spend"]=` below
@@ -751,47 +815,91 @@ def _customer_ctx(request, full):
     if full:
         sel_cat = (request.GET.get("cat") or "").strip().lower()
         sel_sub = (request.GET.get("subcat") or "").strip().lower()
-        pref_tree = _category_pref_tree(hist)
-        selected_nodes = []
-        table_rows = []
+        pref_tree = build_category_pref_tree(hist)
         selected_cat_label = ""
         selected_sub_label = ""
+        selected_subcats = []
+        table_rows = []
+
+        def _norm(v):
+            return str(v or "").strip().lower()
+
         for node in pref_tree:
-            cat_key = str(node["category"]).strip().lower()
-            for sub_node in node["subcats"]:
-                if sub_node["rows"]:
-                    for r in sub_node["rows"]:
-                        if not isinstance(r, dict):
-                            continue
-                        r["spend"] = round(_affw(r.get("last_price")) * _affw(r.get("qty")), 2)
-                        inv_row = _find_product_in_inventory(inv, r)
-                        if inv_row:
-                            r["in_stock"] = inv_row.get("qty", 0) > 0
-                            r["product_id"] = inv_row.get("product_id")
-                        else:
-                            r["in_stock"] = False
-                if (not sel_cat or cat_key == sel_cat) and (not sel_sub or sel_sub == str(sub_node["subcategory"]).strip().lower()):
-                    selected_nodes.append((node["category"], sub_node))
-            if (not sel_cat or cat_key == sel_cat) and sel_cat:
-                selected_cat_label = node["category"]
-        if sel_cat:
-            for _cat, _sub in selected_nodes:
-                selected_sub_label = _sub["subcategory"]
-                if not sel_sub or str(_sub["subcategory"]).strip().lower() == sel_sub:
-                    table_rows.extend(_sub["rows"])
-            table_rows = sorted([r for r in table_rows if isinstance(r, dict)],
-                               key=lambda h: str(h.get("last_bought_at") or ""), reverse=True)
-        elif pref_tree:
-            selected_cat_label = pref_tree[0]["category"]
-            selected_sub_label = pref_tree[0]["subcats"][0]["subcategory"] if pref_tree[0]["subcats"] else ""
-            table_rows = sorted([r for r in pref_tree[0]["subcats"][0]["rows"] if isinstance(r, dict)],
-                               key=lambda h: str(h.get("last_bought_at") or ""), reverse=True)
+            cat_key = _norm(node.get("category"))
+            if not selected_cat_label and (not sel_cat or cat_key == sel_cat):
+                selected_cat_label = node.get("category") or ""
+            if sel_cat and cat_key != sel_cat:
+                continue
+            subcats = []
+            for sub_node in node.get("subcategories", []):
+                sub_key = _norm(sub_node.get("subcategory"))
+                subcats.append(sub_node)
+                if not selected_sub_label and (not sel_sub or sub_key == sel_sub):
+                    selected_sub_label = sub_node.get("subcategory") or ""
+                if sel_sub and sub_key != sel_sub:
+                    continue
+                selected_subcats.append(sub_node)
+                for row in sub_node.get("products") or []:
+                    if not isinstance(row, dict):
+                        continue
+                    r = dict(row)
+                    matches = _resolve_inventory_matches(inv, r)
+                    r["spend"] = round(_affw(r.get("last_price")) * _affw(r.get("qty")), 2)
+                    r["in_stock"] = bool(matches)
+                    r["current_price"] = (matches[0].get("price") if matches else None)
+                    r["current_bucket"] = (matches[0].get("bucket") if matches else "")
+                    r["package_ids"] = sorted({m.get("package_id") or m.get("SerialNo") or m.get("BatchId") or m.get("ProductId")
+                                               for m in matches if m.get("package_id") or m.get("SerialNo") or m.get("BatchId") or m.get("ProductId")},
+                                              key=lambda x: str(x))
+                    r["menu_link"] = ""
+                    if matches:
+                        first = matches[0]
+                        pid = first.get("ProductId") or first.get("product_id")
+                        if pid:
+                            r["menu_link"] = reverse("product", args=[pid])
+                    if not r["menu_link"]:
+                        q = (r.get("product_name") or r.get("product") or r.get("name") or "").strip()
+                        params = [f"q={q}"]
+                        if r.get("category"):
+                            params.append(f"cat={str(r.get('category')).strip().lower()}")
+                        if r.get("subcategory"):
+                            params.append(f"subcat={str(r.get('subcategory')).strip().lower()}")
+                        r["menu_link"] = reverse("screen") + ("?" + "&".join(params) if params else "")
+                    r["similar_rows"] = []
+                    if not r["in_stock"]:
+                        cands = []
+                        for item in inv:
+                            if not isinstance(item, dict):
+                                continue
+                            if _norm(item.get("cat_key") or item.get("category")) != _norm(r.get("category")):
+                                continue
+                            if _norm(item.get("subcategory")) != _norm(r.get("subcategory")):
+                                continue
+                            sim = product_similarity(r, item)
+                            cands.append((sim.get("score", 0.0), item, sim.get("reasons") or []))
+                        cands.sort(key=lambda x: x[0], reverse=True)
+                        r["similar_rows"] = [{
+                            "name": c[1].get("name"),
+                            "price": c[1].get("price"),
+                            "bucket": c[1].get("bucket", ""),
+                            "reasons": c[2],
+                            "product_id": c[1].get("ProductId") or c[1].get("product_id"),
+                        } for c in cands[:5]]
+                    table_rows.append(r)
+            if sel_cat and cat_key == sel_cat and not selected_sub_label and subcats:
+                selected_sub_label = subcats[0].get("subcategory") or ""
+        if not selected_cat_label and pref_tree:
+            selected_cat_label = pref_tree[0].get("category") or ""
+        if not selected_sub_label and selected_subcats:
+            selected_sub_label = selected_subcats[0].get("subcategory") or ""
+        table_rows = sorted(table_rows, key=lambda h: str(h.get("last_bought_at") or ""), reverse=True)
         ctx.update({
             "pref_tree": pref_tree,
             "selected_cat": sel_cat,
             "selected_subcat": sel_sub,
             "selected_cat_label": selected_cat_label,
             "selected_subcat_label": selected_sub_label,
+            "pref_subcats": selected_subcats,
             "pref_rows": table_rows,
             "history": sorted(hist, key=lambda h: str(h.get("last_bought_at") or ""), reverse=True),
         })
@@ -833,6 +941,7 @@ def _filters(request):
 
     return {
         "q": g.get("q", ""), "cat": g.get("cat", ""), "brand": g.get("brand", ""),
+        "brand_q": g.get("brand_q", ""),
         "subcat": g.get("subcat", ""),
         "strain_type": g.get("strain_type", ""), "effect": g.get("effect", ""),
         "sort": g.get("sort", "foryou"),
@@ -949,8 +1058,17 @@ def _track_browse(request, f, total, suggestions):
     if suggestions:
         ids = [str(s.get("product_id")) for s in suggestions]
         request.session["_lastsugg"] = ids   # so cart_add can flag suggestion-sourced adds
-        tracking.track(request, "suggestions_shown", dedupe_key=",".join(sorted(ids)),
-                       detail=f"{len(ids)} suggested", ids=ids)
+        tracking.track(
+            request,
+            "suggestions_shown",
+            dedupe_key=",".join(sorted(ids)),
+            detail=f"{len(ids)} suggested",
+            ids=ids,
+            recommendation_types=[s.get("recommendation_type") or s.get("type") for s in suggestions],
+            buckets=[s.get("bucket", "") for s in suggestions],
+            categories=[s.get("category") or s.get("cat_key") for s in suggestions],
+            subcategories=[s.get("subcategory", "") for s in suggestions],
+        )
 
 
 @login_required
@@ -966,11 +1084,23 @@ def product(request, product_id):
     if not p:
         return render(request, "pos/product.html",
                       {"missing": True, "acct_name": request.session.get("acct_name")})
+    try:
+        inv = catalog.get_inventory(store.name) if store else []
+    except Exception:
+        inv = []
+    matches = _resolve_inventory_matches(inv, p) if inv else []
+    p["package_ids"] = sorted({
+        str(m.get("package_id") or m.get("SerialNo") or m.get("BatchId") or m.get("ProductId") or "")
+        for m in matches
+        if m.get("package_id") or m.get("SerialNo") or m.get("BatchId") or m.get("ProductId")
+    })
+    if matches and not p.get("received_date"):
+        p["received_date"] = max((m.get("received_date") or "") for m in matches)
     effects = [(e, education.effect_info(e)) for e in (p.get("effects") or [])]
     terp_aroma_effect = education.terpene_info(p.get("terpene"))
     tracking.track(request, "product_view", product=p, dedupe_key=p.get("product_id"))
     tracking.accrue_taste(request, p, weight=1)   # live personalization signal
-    similar = [s for s in catalog.query(catalog.get_inventory(store.name), None,
+    similar = [s for s in catalog.query(inv, None,
                                         {"cat": p["cat_key"], "sort": "popular"})
                if str(s.get("product_id")) != str(p.get("product_id"))][:6]
     return render(request, "pos/product.html", {
@@ -1034,7 +1164,9 @@ def cart_add(request):
     tracking.track(request, "item_add", product=item, price=item.get("UnitPrice"),
                    discount=item.get("Discount"), qty=cnt,
                    brand=p.get("brand"), category=p.get("cat_key") or p.get("category"),
-                   from_suggestion=str(item.get("ProductId")) in (request.session.get("_lastsugg") or []))
+                   subcategory=p.get("subcategory"), bucket=p.get("bucket"),
+                   from_suggestion=str(item.get("ProductId")) in (request.session.get("_lastsugg") or []),
+                   source_recommendation_type=p.get("recommendation_type") or p.get("type") or "")
     tracking.accrue_taste(request, p, weight=3)   # an add is a stronger signal than a view
     return render(request, "pos/_cart.html", _cart_ctx(cart))
 
@@ -1054,6 +1186,70 @@ def cart_remove(request):
         tracking.track(request, "item_remove", product=cart.pop(idx))
     request.session["cart"] = cart
     return render(request, "pos/_cart.html", _cart_ctx(cart))
+
+
+@login_required
+@require_http_methods(["POST"])
+def phone_cart_claim(request):
+    """Load a released phone-cart draft into the normal POS session cart.
+
+    This intentionally stops before checkout. Staff still verifies the customer and uses
+    the existing `cart_submit` path, which remains the only Dutchie order writer.
+    """
+    _require_not_door(request)
+    token = str(request.POST.get("draft_token") or "").strip()
+    draft = PhoneCartDraft.objects.filter(draft_token=token).first()
+    if not draft:
+        ctx = _cart_ctx(request.session.get("cart", []))
+        ctx["add_error"] = "Phone cart not found."
+        return render(request, "pos/_cart.html", ctx)
+    if draft.status not in {PhoneCartDraft.Status.RELEASED, PhoneCartDraft.Status.OPEN}:
+        ctx = _cart_ctx(request.session.get("cart", []))
+        ctx["add_error"] = f"Phone cart is {draft.status}."
+        return render(request, "pos/_cart.html", ctx)
+
+    request.session["store"] = draft.location_slug
+    store = _active_store(request)
+    cart = request.session.get("cart", [])
+    skipped = []
+    loaded = 0
+    for line in draft.lines or []:
+        if not isinstance(line, dict):
+            continue
+        product_id = line.get("product_id")
+        p = catalog.find_item(store.name, product_id=product_id) if store and product_id else None
+        if not p:
+            skipped.append(line.get("name") or line.get("sku") or "item")
+            continue
+        item = {k: p.get(k) for k in _TRUSTED_ITEM_KEYS}
+        item["Discount"] = 0.0
+        try:
+            item["Cnt"] = max(1, min(99, int(line.get("quantity") or 1)))
+        except (TypeError, ValueError):
+            item["Cnt"] = 1
+        cart.append(item)
+        loaded += 1
+        tracking.track(request, "item_add", product=item, price=item.get("UnitPrice"),
+                       qty=item["Cnt"], brand=p.get("brand"),
+                       category=p.get("cat_key") or p.get("category"),
+                       subcategory=p.get("subcategory"), bucket=p.get("bucket"),
+                       source_recommendation_type="phone_cart")
+    request.session["cart"] = cart
+    draft.status = PhoneCartDraft.Status.CLAIMED
+    draft.claimed_at = timezone.now()
+    audit = draft.audit or []
+    audit.append({
+        "at": timezone.now().isoformat(),
+        "action": "pos_claim",
+        "loaded_lines": loaded,
+        "skipped": skipped[:20],
+    })
+    draft.audit = audit[-100:]
+    draft.save(update_fields=["status", "claimed_at", "audit", "updated_at"])
+    ctx = _cart_ctx(cart)
+    if skipped:
+        ctx["add_error"] = "Some phone-cart items need manual review: " + ", ".join(skipped[:3])
+    return render(request, "pos/_cart.html", ctx)
 
 
 @login_required

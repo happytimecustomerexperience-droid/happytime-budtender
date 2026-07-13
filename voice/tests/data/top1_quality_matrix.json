@@ -1,0 +1,585 @@
+[
+  {
+    "label": "policy_with_source",
+    "message": "what is your return policy",
+    "expected": {
+      "grounded": true,
+      "escalation_required": false,
+      "safe_next_action": "answer",
+      "has_sources": true
+    },
+    "faq": {
+      "grounded": true,
+      "answer": "Return disputes under WAC 314-55-079.",
+      "sources": [
+        {
+          "source_url": "https://happytimeweed.com/faq",
+          "kind": "kb"
+        }
+      ]
+    }
+  },
+  {
+    "label": "policy_without_source",
+    "message": "what is your return policy",
+    "expected": {
+      "grounded": false,
+      "escalation_required": false,
+      "safe_next_action": "ask_staff"
+    },
+    "faq": {
+      "grounded": true,
+      "answer": "Return disputes under WAC 314-55-079.",
+      "sources": []
+    }
+  },
+  {
+    "label": "policy_without_answer_text",
+    "message": "what is your return policy",
+    "expected": {
+      "grounded": false,
+      "escalation_required": false,
+      "safe_next_action": "ask_staff",
+      "has_sources": false
+    },
+    "faq": {
+      "grounded": true,
+      "answer": "",
+      "sources": [
+        {
+          "source_url": "https://happytimeweed.com/faq",
+          "kind": "kb"
+        }
+      ]
+    }
+  },
+  {
+    "label": "defective_with_grounds",
+    "message": "my vape cart is broken and won't fire",
+    "expected": {
+      "grounded": true,
+      "escalation_required": true,
+      "safe_next_action": "escalate",
+      "safe_contains": "share the location"
+    },
+    "faq": {
+      "grounded": true,
+      "answer": "Defective products are reviewed by staff under WAC 314-55-079.",
+      "sources": [
+        {
+          "source_url": "https://happytimeweed.com/faq",
+          "kind": "kb"
+        }
+      ]
+    }
+  },
+  {
+    "label": "angry_without_policy_claim",
+    "message": "this is unacceptable, I am really upset",
+    "expected": {
+      "grounded": false,
+      "escalation_required": true,
+      "safe_next_action": "escalate"
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "can't confirm"
+    }
+  },
+  {
+    "label": "wrong_item_no_match",
+    "message": "I got the wrong item and it is not what I ordered",
+    "expected": {
+      "grounded": false,
+      "escalation_required": true,
+      "safe_next_action": "escalate"
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "can't confirm"
+    }
+  },
+  {
+    "label": "age_question_without_source",
+    "message": "what is your age policy",
+    "expected": {
+      "grounded": false,
+      "safe_next_action": "ask_staff",
+      "escalation_required": false,
+      "has_sources": false
+    },
+    "faq": {
+      "grounded": true,
+      "answer": "age docs required"
+    }
+  },
+  {
+    "label": "policy_then_suggests_if_no_kb",
+    "message": "what are your returns and also show me vapes",
+    "expected": {
+      "grounded": false,
+      "safe_next_action": "show_products",
+      "escalation_required": false
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "not in kb"
+    },
+    "suggest": {
+      "spoken_summary": "I found 2 picks with your current context.",
+      "picks": [
+        {
+          "sku": "S1",
+          "name": "A",
+          "why_this": "Matches session vibe"
+        }
+      ]
+    }
+  },
+  {
+    "label": "profile_forwarding",
+    "message": "show me a flower",
+    "slots": {
+      "category": "flower"
+    },
+    "store": "pullman",
+    "session_token": "sess-top1",
+    "customer_phone": "(509) 555-2323",
+    "known_caller": true,
+    "exclude_skus": ["X1", "X2"],
+    "expected": {
+      "grounded": true,
+      "safe_next_action": "show_products",
+      "escalation_required": false
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "no faq match"
+    },
+    "suggest": {
+      "spoken_summary": "I found two flower picks.",
+      "picks": [
+        {
+          "sku": "S2",
+          "name": "Blue Dream",
+          "why_this": "Matches scent profile"
+        }
+      ]
+    }
+  },
+  {
+    "label": "suggest_budget_only",
+    "message": "show me edible under 30",
+    "slots": {
+      "category": "edible",
+      "price_max": 30
+    },
+    "store": "yakima",
+    "expected": {
+      "grounded": true,
+      "safe_next_action": "show_products",
+      "escalation_required": false
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "no faq match"
+    },
+    "suggest": {
+      "spoken_summary": "Two edible options.",
+      "picks": [
+        {
+          "sku": "S3",
+          "name": "A",
+          "why_this": "price fit"
+        }
+      ]
+    }
+  },
+  {
+    "label": "suggest_medical_budget_from_text",
+    "message": "show me medical gummies under 25",
+    "store": "yakima",
+    "expected": {
+      "grounded": true,
+      "safe_next_action": "show_products",
+      "escalation_required": false
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "no faq match"
+    },
+    "suggest": {
+      "spoken_summary": "I found DOH edible options under your budget.",
+      "picks": [
+        {
+          "sku": "S3M",
+          "name": "Medical Gummy",
+          "why_this": "Matches your medical and budget request"
+        }
+      ]
+    },
+    "expect_suggest_args": {
+      "category": "edible",
+      "price_max": 25.0,
+      "doh_only": true
+    }
+  },
+  {
+    "label": "suggest_effect_subcategory_budget_from_text",
+    "message": "show me sleepy indica flower under 40",
+    "store": "pullman",
+    "expected": {
+      "grounded": true,
+      "safe_next_action": "show_products",
+      "escalation_required": false
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "no faq match"
+    },
+    "suggest": {
+      "spoken_summary": "I found indica flower options for sleep under your budget.",
+      "picks": [
+        {
+          "sku": "S3S",
+          "name": "Sleepy Indica",
+          "why_this": "Matches your sleepy indica flower request"
+        }
+      ]
+    },
+    "expect_suggest_args": {
+      "category": "flower",
+      "subcategory": "indica",
+      "effect_desired": "sleep",
+      "price_max": 40.0
+    }
+  },
+  {
+    "label": "suggest_size_budget_from_text",
+    "message": "show me a 1g cart under 35",
+    "store": "yakima",
+    "expected": {
+      "grounded": true,
+      "safe_next_action": "show_products",
+      "escalation_required": false
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "no faq match"
+    },
+    "suggest": {
+      "spoken_summary": "I found 1g cartridge options under your budget.",
+      "picks": [
+        {
+          "sku": "S3C",
+          "name": "Budget 1g Cartridge",
+          "why_this": "Matches your 1g cartridge and budget request"
+        }
+      ]
+    },
+    "expect_suggest_args": {
+      "category": "cartridge",
+      "size": "1g",
+      "price_max": 35.0
+    }
+  },
+  {
+    "label": "suggest_vaporizer_alias_normalized",
+    "message": "give me cart options",
+    "slots": {
+      "category": "cart"
+    },
+    "store": "yakima",
+    "expected": {
+      "safe_next_action": "show_products",
+      "escalation_required": false
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "no faq match"
+    },
+    "suggest": {
+      "spoken_summary": "I found three cartridge options.",
+      "picks": [
+        {
+          "sku": "S4",
+          "name": "A",
+          "why_this": "vape format match"
+        }
+      ]
+    },
+    "expect_category": "cartridge"
+  },
+  {
+    "label": "empty_prompt",
+    "message": "",
+    "expected": {
+      "error": "message required"
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "missing"
+    }
+  },
+  {
+    "label": "duplicate_contact_hint",
+    "message": "this was the wrong thing I purchased",
+    "expected": {
+      "grounded": false,
+      "escalation_required": true,
+      "safe_next_action": "escalate"
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "can't confirm"
+    }
+  },
+  {
+    "label": "rude_escalation_with_store",
+    "message": "you people ripped me off with a bad item",
+    "expected": {
+      "grounded": false,
+      "escalation_required": true,
+      "safe_next_action": "escalate"
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "can't confirm"
+    }
+  },
+  {
+    "label": "missing_item_followup",
+    "message": "something is missing from my order",
+    "expected": {
+      "grounded": false,
+      "escalation_required": true,
+      "safe_next_action": "escalate"
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "can't confirm"
+    }
+  },
+  {
+    "label": "compliance_question_without_kb",
+    "message": "what is your compliance policy",
+    "expected": {
+      "grounded": false,
+      "safe_next_action": "ask_staff",
+      "escalation_required": false,
+      "has_sources": false
+    },
+    "faq": {
+      "grounded": true,
+      "answer": "We follow Washington compliance guidance."
+    }
+  },
+  {
+    "label": "suggest_with_contradiction",
+    "message": "find me flower but I want budget only and no concentrates",
+    "slots": {
+      "category": "flower",
+      "category_blocklist": ["concentrate"],
+      "price_tier": "low"
+    },
+    "store": "yakima",
+    "expected": {
+      "safe_next_action": "show_products",
+      "escalation_required": false,
+      "grounded": true
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "no faq match"
+    },
+    "suggest": {
+      "spoken_summary": "I filtered to your budget and flower preference.",
+      "picks": [
+        {
+          "sku": "S5",
+          "name": "Budget Flower",
+          "why_this": "Fits your low price requirement and category"
+        }
+      ]
+    }
+  },
+  {
+    "label": "suggest_hash_only_profile",
+    "message": "suggest me gummies",
+    "slots": {
+      "category": "edible"
+    },
+    "store": "mount-vernon",
+    "customer_phone": "",
+    "expected": {
+      "safe_next_action": "show_products",
+      "escalation_required": false,
+      "grounded": true
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "no faq match"
+    },
+    "suggest": {
+      "spoken_summary": "I found edible picks.",
+      "picks": [
+        {
+          "sku": "S6",
+          "name": "Gummy",
+          "why_this": "Good budget edible option"
+        }
+      ]
+    }
+  },
+  {
+    "label": "suggest_exclude_only",
+    "message": "show me vape cartridges",
+    "slots": {
+      "category": "cartridge"
+    },
+    "store": "yakima",
+    "exclude_skus": ["S9", "S10"],
+    "expected": {
+      "safe_next_action": "show_products",
+      "escalation_required": false,
+      "grounded": true
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "no faq match"
+    },
+    "suggest": {
+      "spoken_summary": "Filtered out excluded SKUs.",
+      "picks": [
+        {
+          "sku": "S11",
+          "name": "Cartridge",
+          "why_this": "Clean option after exclusions"
+        }
+      ]
+    }
+  },
+  {
+    "label": "suggest_stability_repeat",
+    "message": "show me relax gummies",
+    "slots": {
+      "category": "edible",
+      "effect_desired": "relaxed"
+    },
+    "store": "pullman",
+    "session_token": "sess-repeat",
+    "expected": {
+      "safe_next_action": "show_products",
+      "escalation_required": false,
+      "grounded": true
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "no faq match"
+    },
+    "suggest": {
+      "spoken_summary": "Here are my best relax gummies.",
+      "picks": [
+        {
+          "sku": "S12",
+          "name": "Relax Gummies",
+          "why_this": "Matches your repeated relax request"
+        }
+      ]
+    }
+  },
+  {
+    "label": "policy_reference_no_sources",
+    "message": "what is your legal policy for returns",
+    "expected": {
+      "grounded": false,
+      "safe_next_action": "ask_staff",
+      "escalation_required": false,
+      "has_sources": false
+    },
+    "faq": {
+      "grounded": true,
+      "answer": "Legal policy is documented."
+    }
+  },
+  {
+    "label": "age_restriction_without_kb",
+    "message": "how do you verify age and ID",
+    "expected": {
+      "grounded": false,
+      "safe_next_action": "ask_staff",
+      "escalation_required": false,
+      "has_sources": false
+    },
+    "faq": {
+      "grounded": true,
+      "answer": "Age and ID checks are done at pickup."
+    }
+  },
+  {
+    "label": "cartridge_vs_pre_roll_constraint",
+    "message": "just want cart not pre-roll",
+    "slots": {
+      "category": "cart",
+      "category_blocklist": ["pre-roll"]
+    },
+    "store": "yakima",
+    "expected": {
+      "safe_next_action": "show_products",
+      "escalation_required": false,
+      "grounded": true
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "no faq match"
+    },
+    "suggest": {
+      "spoken_summary": "I kept this to cartridge-only options.",
+      "picks": [
+        {
+          "sku": "S13",
+          "name": "Clean Cartridge",
+          "why_this": "Matches your explicit cartridge preference"
+        }
+      ]
+    }
+  },
+  {
+    "label": "no_stock_suggestion_path",
+    "message": "show me flower",
+    "slots": {
+      "category": "flower"
+    },
+    "store": "yakima",
+    "expected": {
+      "grounded": false,
+      "safe_next_action": "ask_staff",
+      "escalation_required": false,
+      "has_sources": true
+    },
+    "faq": {
+      "grounded": false,
+      "fallback": "no faq match"
+    },
+    "suggest": {
+      "spoken_summary": "No matching stock right now.",
+      "picks": []
+    }
+  },
+  {
+    "label": "policy_with_store_context_handoff",
+    "message": "what is your legal policy for returns",
+    "store": "yakima",
+    "customer_phone": "+1 (509) 555-7777",
+    "expected": {
+      "grounded": false,
+      "safe_next_action": "ask_staff",
+      "escalation_required": false,
+      "has_sources": false
+    },
+    "faq": {
+      "grounded": true,
+      "answer": "Legal policy is documented."
+    }
+  }
+]

@@ -17,6 +17,9 @@ urlpatterns = [
     path("pairing/for-sku", views.PairingView.as_view()),
     path("chat/resume-by-phone", views.ResumeByPhoneView.as_view()),
     path("chat/persist/", views.PersistView.as_view()),
+    path("phone-cart/upsert", views.PhoneCartUpsertView.as_view()),
+    path("phone-cart/release", views.PhoneCartReleaseView.as_view()),
+    path("phone-cart/claim", views.PhoneCartClaimView.as_view()),
     path("customer/profile-upsert", views.ProfileUpsertView.as_view()),
     path("customer/list", views.CustomerListView.as_view()),       # P7 staff roster (dashboard)
     path("customer/detail", views.CustomerDetailView.as_view()),   # P7 full profile (dashboard)

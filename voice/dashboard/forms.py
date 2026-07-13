@@ -38,7 +38,16 @@ KB_KINDS = {
 class FAQEntryForm(forms.ModelForm):
     class Meta:
         model = FAQEntry
-        fields = ["key", "question", "answer", "store", "topic", "weight", "is_active"]
+        fields = [
+            "key",
+            "question",
+            "answer",
+            "store",
+            "topic",
+            "source_url",
+            "weight",
+            "is_active",
+        ]
 
 
 class PolicyForm(forms.ModelForm):
@@ -50,7 +59,16 @@ class PolicyForm(forms.ModelForm):
 class StoreFactForm(forms.ModelForm):
     class Meta:
         model = StoreFact
-        fields = ["store", "kind", "label", "value", "confirmed", "weight", "is_active"]
+        fields = [
+            "store",
+            "kind",
+            "label",
+            "value",
+            "source_url",
+            "confirmed",
+            "weight",
+            "is_active",
+        ]
 
 
 class EducationDocForm(forms.ModelForm):

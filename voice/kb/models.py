@@ -22,6 +22,18 @@ from __future__ import annotations
 
 from django.db import models
 
+
+class SourceSyncMixin(models.Model):
+    """Metadata for KB rows imported from happytimeweed.com."""
+
+    source_hash = models.CharField(max_length=64, blank=True)
+    last_scraped_at = models.DateTimeField(null=True, blank=True)
+    scrape_status = models.CharField(max_length=16, blank=True)
+    scrape_error = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        abstract = True
+
 # Agent roles match Vapi member roles (03-CONVENTIONS.md §1.4). entry_faq's row is
 # role="faq" so the later faq split is a rename, not a new row (10-P0 §6.4).
 AGENT_ROLE_CHOICES = [
@@ -36,7 +48,7 @@ AGENT_ROLE_CHOICES = [
 # ── The six voice KB text models ──────────────────────────────────────────────
 
 
-class FAQEntry(models.Model):
+class FAQEntry(SourceSyncMixin, models.Model):
     """One row per spoken FAQ (hours/payment/pickup/returns/limits/specials/general/age).
     The single most-hit KB model. Forked + flattened from swedish-bot FAQEntry+FAQEntryText
     (HVAC-category-scoped + i18n-split) into a flat single-row English model."""
@@ -51,6 +63,7 @@ class FAQEntry(models.Model):
     topic = models.CharField(
         max_length=32, blank=True
     )  # hours|payment|pickup|returns|limits|specials|general|age
+    source_url = models.URLField(blank=True)
     weight = models.IntegerField(default=100)  # retrieval priority tiebreak (higher first)
     embedding = models.JSONField(null=True, blank=True)  # pgvector swap-seam (null today)
     is_active = models.BooleanField(default=True)
@@ -67,7 +80,7 @@ class FAQEntry(models.Model):
         return f"{self.key} ({self.topic})"
 
 
-class PolicyDocument(models.Model):
+class PolicyDocument(SourceSyncMixin, models.Model):
     """Company-level policy bodies the FAQ cites — primarily the return policy with
     WAC 314-55-079. Forked from swedish-bot PolicyDocument (PDF-backed Swedish terms) into
     a body-text model with an optional PDF attachment (ingestible via kb/ingest.py)."""
@@ -102,7 +115,7 @@ class PolicyDocument(models.Model):
         return f"{self.title} [{self.kind}]"
 
 
-class StoreFact(models.Model):
+class StoreFact(SourceSyncMixin, models.Model):
     """Per-store + global operational facts the agent localizes — address, phone, hours,
     email, payment, pickup, specials, limits, age. The ``confirmed`` flag carries O-8
     (Mt Vernon hours stay unspoken until confirmed). Shaped from swedish-bot SiteFAQ."""
@@ -122,6 +135,7 @@ class StoreFact(models.Model):
     kind = models.CharField(max_length=16, choices=KINDS)
     label = models.CharField(max_length=120)  # human label ("Yakima hours")
     value = models.TextField(blank=True)  # the spoken value ("9 AM–11 PM daily")
+    source_url = models.URLField(blank=True)
     confirmed = models.BooleanField(default=True)  # O-8: False => "call to confirm", never a fact
     weight = models.IntegerField(default=110)
     embedding = models.JSONField(null=True, blank=True)  # pgvector swap-seam
@@ -144,7 +158,7 @@ class StoreFact(models.Model):
         return f"{self.store or 'global'}/{self.kind}/{self.label}"
 
 
-class EducationDoc(models.Model):
+class EducationDoc(SourceSyncMixin, models.Model):
     """One row per happytimeweed.com/education/* page (edibles, microdosing, strain types,
     storage, THC/CBD) — the longer-form teaching content. An education analogue of
     swedish-bot GenericGuide. provisional=True until verbatim house copy lands (Vercel wall)."""
@@ -172,7 +186,7 @@ class EducationDoc(models.Model):
         return f"{self.slug} [{self.topic}]"
 
 
-class BlogDoc(models.Model):
+class BlogDoc(SourceSyncMixin, models.Model):
     """One row per happytimeweed.com/blog/* post (disposable-vape how-to, Yakima dispensary
     SEO posts) — lighter than education. Same shape as EducationDoc minus topic."""
 
@@ -302,3 +316,28 @@ class FlowConfig(models.Model):
     def __str__(self):
         n = len((self.graph or {}).get("nodes", []))
         return f"FlowConfig(#{self.pk}, {n} steps)"
+
+
+class SiteScrapeRun(models.Model):
+    """Audit record for one scrape/apply/publish attempt."""
+
+    STATUS_CHOICES = [
+        ("running", "Running"),
+        ("applied", "Applied"),
+        ("blocked", "Blocked"),
+        ("failed", "Failed"),
+    ]
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="running")
+    pages = models.JSONField(default=list, blank=True)
+    changes = models.JSONField(default=dict, blank=True)
+    validation_errors = models.JSONField(default=list, blank=True)
+    publish_results = models.JSONField(default=list, blank=True)
+    summary = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        return f"site scrape {self.status} at {self.started_at:%Y-%m-%d %H:%M}"

@@ -472,13 +472,19 @@ def flow_save(request):
 @staff_member_required
 def kb_manager(request):
     """KB landing: one card per KB source kind with a live count."""
+    from kb.models import SiteScrapeRun
+
     from .forms import KB_KINDS
 
     groups = [
         {"kind": slug, "label": label, "count": model.objects.count()}
         for slug, (model, label) in KB_KINDS.items()
     ]
-    return render(request, "dashboard/kb_manager.html", {"groups": groups})
+    return render(
+        request,
+        "dashboard/kb_manager.html",
+        {"groups": groups, "last_scrape": SiteScrapeRun.objects.first()},
+    )
 
 
 @staff_member_required
@@ -603,6 +609,19 @@ def kb_reindex(request):
         msg = f"{chunks} chunks reindexed, {files} files mirrored."
     resp = redirect("dash-kb")
     resp["HX-Trigger"] = _toast("success", msg)
+    return resp
+
+
+@staff_member_required
+@require_POST
+def kb_scrape_now(request):
+    """Scrape happytimeweed.com now; apply/publish only if validation passes."""
+    from kb.site_scrape import run_scrape
+
+    run = run_scrape(publish=True)
+    resp = redirect("dash-kb")
+    level = "success" if run.status == "applied" else "error"
+    resp["HX-Trigger"] = _toast(level, run.summary or f"Scrape {run.status}.")
     return resp
 
 

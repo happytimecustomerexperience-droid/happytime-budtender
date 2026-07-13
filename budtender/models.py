@@ -9,6 +9,12 @@ from django.db import models
 STORES = (("yakima", "Yakima"), ("mount-vernon", "Mount Vernon"), ("pullman", "Pullman"))
 
 
+def _phone_cart_token() -> str:
+    import secrets
+
+    return "pc-" + secrets.token_urlsafe(18)
+
+
 class Product(models.Model):
     """One in-stock SKU at one store, synced from Dutchie."""
 
@@ -117,6 +123,9 @@ class ChatSession(models.Model):
     customer = models.ForeignKey(CustomerProfile, null=True, blank=True, on_delete=models.SET_NULL, related_name="sessions")
     slots = models.JSONField(default=dict, blank=True)
     stage = models.CharField(max_length=24, default="WELCOME")
+    # Sticky conversation-level intent: escalation dominates, else the first real
+    # (non-greeting) turn intent. Per-turn intent lives in AnalyticsEvent.props.
+    primary_intent = models.CharField(max_length=24, blank=True, db_index=True)
     channel = models.CharField(max_length=16, default="chat")  # chat|questionnaire|voice
     is_active = models.BooleanField(default=True)
     started_at = models.DateTimeField(auto_now_add=True)
@@ -170,6 +179,48 @@ class AnalyticsEvent(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["event_type", "-ts"]), models.Index(fields=["location_slug", "-ts"])]
+
+
+class PhoneCartDraft(models.Model):
+    """A staged phone/cart handoff for POS staff.
+
+    Voice may create/update/release these rows, but it never writes a Dutchie order.
+    Staff must claim the draft into the normal POS session cart before checkout.
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "open", "Open"
+        RELEASED = "released", "Released"
+        CLAIMED = "claimed", "Claimed"
+        EXPIRED = "expired", "Expired"
+        CANCELLED = "cancelled", "Cancelled"
+
+    draft_token = models.CharField(max_length=64, unique=True, db_index=True, default=_phone_cart_token)
+    call_id = models.CharField(max_length=80, blank=True, db_index=True)
+    session_token = models.CharField(max_length=80, blank=True, db_index=True)
+    location_slug = models.CharField(max_length=32, choices=STORES, db_index=True)
+    phone_hash = models.CharField(max_length=64, blank=True, db_index=True)
+    phone_last4 = models.CharField(max_length=4, blank=True)
+    pickup_name = models.CharField(max_length=120, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN, db_index=True)
+    lines = models.JSONField(default=list, blank=True)
+    quote = models.JSONField(default=dict, blank=True)
+    audit = models.JSONField(default=list, blank=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["location_slug", "status", "-updated_at"]),
+            models.Index(fields=["phone_hash", "status", "-updated_at"]),
+        ]
+        ordering = ["-updated_at"]
+
+    def __str__(self) -> str:
+        return f"PhoneCartDraft<{self.draft_token} {self.status}>"
 
 
 class AdminAudit(models.Model):

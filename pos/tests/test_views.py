@@ -306,6 +306,7 @@ def test_customer_full_renders(auth, monkeypatch):
     assert r.status_code == 200
     assert b"All transactions" in body and b"Buying mix" in body and b"Units bought" in body
     assert b"Blue Dream" in body and b"OG Kush" in body   # both history rows
+    assert b"package" in body.lower()
 
 
 def test_customer_full_degrades_on_malformed_history(auth, monkeypatch):
@@ -348,6 +349,7 @@ def test_product_detail_renders(auth, monkeypatch):
     assert b"Myrcene" in body and b"Earthy" in body          # terpene + explanation
     assert b"Relaxed" in body and b"winding down" in body     # effect + explanation
     assert b"Hybrid" in body                                  # strain type
+    assert b"Received" in body and b"Package ids" in body
 
 
 def test_product_detail_requires_session(auth, monkeypatch):
