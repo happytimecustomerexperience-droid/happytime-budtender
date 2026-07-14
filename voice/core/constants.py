@@ -22,14 +22,15 @@ MODELS = {
     "flash": "gemini-2.5-flash",        # workhorse: 1M ctx, multimodal (verified)
     "flash_lite": "gemini-2.5-flash-lite",  # intake/extraction/router/safety (verified)
     "pro": "gemini-2.5-pro",            # reserved: v2 QA / hard cases
-    # Latest multimodal embedding (GA 2026-04). Override via GEMINI_EMBED_MODEL.
-    # gemini.embed() falls back through EMBED_FALLBACKS if a project hasn't
-    # provisioned it yet (e.g. the reused us-central1 demo project → 404 → 001).
-    "embedding": os.environ.get("GEMINI_EMBED_MODEL", "gemini-embedding-2"),
+    # Vertex AI's text-embedding endpoint currently supports 001. Embedding 2
+    # is a Gemini Developer API model and is not available to this Vertex client.
+    # Override via GEMINI_EMBED_MODEL only after verifying that model on the
+    # selected auth surface.
+    "embedding": os.environ.get("GEMINI_EMBED_MODEL", "gemini-embedding-001"),
 }
 
 # Tried in order when the preferred embedding model 404s on the current project.
-EMBED_FALLBACKS = ["gemini-embedding-001"]
+EMBED_FALLBACKS = ["text-embedding-005"]
 
 # Per-1,000-token prices in USD: (input, output, cached_input).
 PRICING_PER_1K = {

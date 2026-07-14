@@ -83,6 +83,15 @@ def test_vapi_auth_ok_unconfigured_degrades(monkeypatch):
     assert out == {"ok": False, "configured": False, "error": "VAPI_PRIVATE_KEY not configured"}
 
 
+def test_vertex_embedding_default_uses_vertex_text_model(monkeypatch):
+    """Vertex credentials must not probe the Gemini Developer API-only model."""
+    monkeypatch.delenv("GEMINI_EMBED_MODEL", raising=False)
+    from core import constants
+
+    assert constants.MODELS["embedding"] == "gemini-embedding-001"
+    assert constants.EMBED_FALLBACKS == ["text-embedding-005"]
+
+
 # ── A2: prod-fail-closed boot guard ────────────────────────────────────
 def _reload_settings(monkeypatch, env: dict) -> None:
     for k, v in env.items():
