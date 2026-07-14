@@ -90,12 +90,12 @@ FAQ_ROWS = [
     {
         "key": "specials",
         "question": "What are the current deals? / Any specials? / What's on sale?",
-        "answer": "We have big June deals running all month at every Happy Time location. "
-        "Flower is 40% off select ounces and 30% off everything else. "
+        "answer": "We have big July deals running all month at every Happy Time location. "
+        "Flower is 30% off — eighths, quarters, and halves. "
         "Concentrates are 30% off, vape carts and disposables are 25% off, "
         "and pre-rolls including infused are 20% off. "
-        "Edibles, drinks, and tinctures are 20% off at Yakima and Mount Vernon, "
-        "and 30% off at Pullman. All deals run June 1 through June 30. "
+        "Edibles, drinks, and wellness products are 20% off at Yakima and Mount Vernon, "
+        "and 30% off at Pullman. All deals run July 1 through July 31. "
         "Tell me which store you're shopping at and I can give you the exact list.",
         "topic": "specials",
         "paraphrases": [
@@ -104,7 +104,7 @@ FAQ_ROWS = [
             "today's special",
             "discounts",
             "what are the deals",
-            "June deals",
+            "July deals",
             "promotions",
             "current specials",
         ],
@@ -315,32 +315,32 @@ STORE_FACT_ROWS = [
     ("", "age", "Age requirement", "21+ with a valid government-issued photo ID.", True),
 ]
 
-# June 2026 monthly deals — per-store (store, label, value).
-# Yakima and Mount Vernon share the same percentages; Pullman has 30% on edibles/drinks/tinctures.
+# July 2026 monthly deals — per-store (store, label, value). Source of truth:
+# happytimeweed data/deals.json (July 1–31; synced 2026-07-14). Yakima and Mount
+# Vernon share percentages; Pullman runs 30% on edibles/drinks/wellness.
 # Natural key for update_or_create is (store, kind, label) — see seed_store_facts().
-_JUNE_BASE = [
-    ("June: 40% off select flower ounces", "40% off select ounces of flower — June 1–30. While supplies last."),
-    ("June: 30% off all flower", "30% off all flower — eighths, quarters, halves — June 1–30."),
-    ("June: 30% off concentrates", "30% off all concentrates — rosin, live resin, dabs, sauce — June 1–30."),
-    ("June: 25% off vape carts", "25% off vape cartridges — June 1–30."),
-    ("June: 25% off disposables", "25% off all-in-one disposable vapes — June 1–30."),
-    ("June: 20% off pre-rolls", "20% off flower pre-rolls — June 1–30."),
-    ("June: 20% off infused pre-rolls", "20% off infused pre-rolls — June 1–30."),
+_JULY_BASE = [
+    ("July: 30% off all flower", "30% off all flower — eighths, quarters, halves — July 1–31."),
+    ("July: 30% off concentrates", "30% off all concentrates — rosin, live resin, dabs, sauce — July 1–31."),
+    ("July: 25% off vape carts", "25% off vape cartridges — July 1–31."),
+    ("July: 25% off disposables", "25% off all-in-one disposable vapes — July 1–31."),
+    ("July: 20% off pre-rolls", "20% off flower pre-rolls — July 1–31."),
+    ("July: 20% off infused pre-rolls", "20% off infused pre-rolls — July 1–31."),
 ]
-_JUNE_EDIBLES_20 = [
-    ("June: 20% off edibles", "20% off edibles — gummies, chocolates, and more — June 1–30."),
-    ("June: 20% off drinks", "20% off cannabis-infused drinks — June 1–30."),
-    ("June: 20% off tinctures topicals CBD", "20% off tinctures, topicals, and CBD products — June 1–30."),
+_JULY_EDIBLES_20 = [
+    ("July: 20% off edibles", "20% off edibles — gummies, chocolates, and more — July 1–31."),
+    ("July: 20% off drinks", "20% off cannabis-infused drinks — July 1–31."),
+    ("July: 20% off wellness products", "20% off wellness products — tinctures, topicals, and CBD — July 1–31."),
 ]
-_JUNE_EDIBLES_30 = [
-    ("June: 30% off edibles", "30% off edibles — gummies, chocolates, and more — June 1–30."),
-    ("June: 30% off drinks", "30% off cannabis-infused drinks — June 1–30."),
-    ("June: 30% off tinctures topicals CBD", "30% off tinctures, topicals, and CBD products — June 1–30."),
+_JULY_EDIBLES_30 = [
+    ("July: 30% off edibles", "30% off edibles — gummies, chocolates, and more — July 1–31."),
+    ("July: 30% off drinks", "30% off cannabis-infused drinks — July 1–31."),
+    ("July: 30% off wellness products", "30% off wellness products — tinctures, topicals, and CBD — July 1–31."),
 ]
 SPECIAL_ROWS: list[tuple[str, str, str]] = (
-    [("yakima", label, value) for label, value in _JUNE_BASE + _JUNE_EDIBLES_20]
-    + [("mount-vernon", label, value) for label, value in _JUNE_BASE + _JUNE_EDIBLES_20]
-    + [("pullman", label, value) for label, value in _JUNE_BASE + _JUNE_EDIBLES_30]
+    [("yakima", label, value) for label, value in _JULY_BASE + _JULY_EDIBLES_20]
+    + [("mount-vernon", label, value) for label, value in _JULY_BASE + _JULY_EDIBLES_20]
+    + [("pullman", label, value) for label, value in _JULY_BASE + _JULY_EDIBLES_30]
 )
 
 

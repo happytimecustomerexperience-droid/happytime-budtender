@@ -365,7 +365,7 @@ def test_every_mapped_row_exists():
     assert m.PolicyDocument.objects.filter(kind="return_policy").count() == 1
     assert m.StoreFact.objects.filter(kind="special").count() == len(seed.SPECIAL_ROWS)
     for store in ("yakima", "mount-vernon", "pullman"):
-        assert m.StoreFact.objects.filter(kind="special", store=store).count() == 10
+        assert m.StoreFact.objects.filter(kind="special", store=store).count() == 9  # July 2026 deals
     assert m.StoreFact.objects.filter(kind="limit").count() == 5  # 4 limits + age/ID rule
     assert m.EducationDoc.objects.count() == 15  # 5 core + 10 distilled from /education/*
     assert m.BlogDoc.objects.count() == 3
