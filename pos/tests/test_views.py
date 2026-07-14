@@ -8,7 +8,7 @@ from django.contrib.auth.models import User
 from django.urls import reverse
 
 from pos import views as V
-from customers.models import DutchieWriteAudit
+from customers.models import Customer, DutchieWriteAudit, ShopVisit
 from dutchie.session import Store
 
 pytestmark = pytest.mark.django_db
@@ -39,6 +39,11 @@ class FakeClient:
     def submit_cart(self, acct_id, items, **kw):
         return {"shipment_id": 999, "schedule_id": 111, "allotment": 2530.1,
                 "added": items, "saved": {"Result": True}}
+
+
+class CreateClient(FakeClient):
+    def create_guest(self, **kwargs):
+        return 710000099
 
 
 def _use_store(monkeypatch, store=STORE):
@@ -95,6 +100,62 @@ def test_start_under21_blocks(auth, monkeypatch):
     assert "acct_id" not in auth.session  # no session started
 
 
+def test_scanned_customer_is_previewed_before_create_and_phone_is_required(auth, monkeypatch):
+    _use_store(monkeypatch)
+    monkeypatch.setattr(V, "_run_scan", lambda request: {
+        "first_name": "Jane", "last_name": "Doe", "accts_name": "Jane Doe",
+        "birth_date": "1990-01-15", "id_number": "DL-7", "address": "123 Main",
+        "city": "Yakima", "state": "WA", "postal_code": "98901", "over_21": True,
+    })
+    monkeypatch.setattr(V, "_client", lambda s: FakeClient())
+
+    preview = auth.post(reverse("start"), {"store": "yakima"}, SERVER_NAME="localhost")
+    assert preview.status_code == 200
+    assert b"Scanned profile preview" in preview.content
+    assert b"Create customer and continue" in preview.content
+    assert "acct_id" not in auth.session
+
+    blocked = auth.post(reverse("create_customer"), {}, SERVER_NAME="localhost")
+    assert blocked.status_code == 200
+    assert b"Phone number is required" in blocked.content
+
+
+def test_door_scan_previews_then_create_refreshes_and_queues_exact_customer(auth, monkeypatch):
+    _use_store(monkeypatch)
+    monkeypatch.setattr(V, "_run_scan", lambda request: {
+        "first_name": "Jane", "last_name": "Doe", "accts_name": "Jane Doe",
+        "birth_date": "1990-01-15", "id_number": "DL-7", "over_21": True,
+    })
+    monkeypatch.setattr(V, "_client", lambda s: CreateClient())
+
+    preview = auth.post(reverse("door_scan"), {"id_payload": "barcode"}, SERVER_NAME="localhost")
+    assert preview.status_code == 200 and b"Create and queue customer" in preview.content
+    assert ShopVisit.objects.count() == 0
+
+    queued = auth.post(reverse("create_customer"), {
+        "queue": "1", "phone": "5095550100", "email": "jane@example.test",
+        "address": "123 Main", "address2": "Unit 4", "city": "Yakima", "state": "WA",
+        "postal_code": "98901",
+    }, SERVER_NAME="localhost")
+    assert queued.status_code == 200 and b"Added to queue" in queued.content
+    visit = ShopVisit.objects.get()
+    assert visit.acct_id == 710000099 and visit.status == "queued" and visit.phone == "5095550100"
+    customer = Customer.objects.get(dutchie_acct_id=710000099)
+    assert customer.address == "123 Main" and customer.address2 == "Unit 4"
+    assert "acct_id" not in auth.session
+
+
+def test_door_phone_lookup_queues_resolved_customer(auth, monkeypatch):
+    _use_store(monkeypatch)
+    monkeypatch.setattr(V, "_client", lambda s: FakeClient(guests={"Data": [
+        {"Guest_id": 710000001, "Name": "Jane Doe", "PhoneNo": "5095550100"}]}))
+
+    response = auth.post(reverse("door_scan"), {"phone": "5095550100"}, SERVER_NAME="localhost")
+    assert response.status_code == 200 and b"Added to queue" in response.content
+    visit = ShopVisit.objects.get()
+    assert visit.acct_id == 710000001 and visit.acct_name == "Jane Doe"
+
+
 def test_start_needs_input(auth, monkeypatch):
     _use_store(monkeypatch)
     r = auth.post(reverse("start"), {"store": "yakima"}, SERVER_NAME="localhost")
@@ -148,8 +209,8 @@ def test_resolve_prefers_phone(monkeypatch):
                 return {"Data": [{"Guest_id": 111, "Name": "Phone Match", "PhoneNo": "5095551234"}]}
             return {"Data": [{"Guest_id": 222, "Name": "Name Match"}]}
 
-    acct, name, how = _resolve_or_create(FC(), {"accts_name": "John Name"}, "5095551234")
-    assert acct == 111 and how == "phone"
+    acct, name, phone, how = _resolve_or_create(FC(), {"accts_name": "John Name"}, "5095551234")
+    assert acct == 111 and phone == "5095551234" and how == "phone"
 
 
 def test_resolve_creates_when_none(monkeypatch):
@@ -163,8 +224,8 @@ def test_resolve_creates_when_none(monkeypatch):
             return 999
 
     scan = {"accts_name": "New Guy", "first_name": "New", "last_name": "Guy", "birth_date": "1990-01-01"}
-    acct, name, how = _resolve_or_create(FC(), scan, "5090000000")
-    assert acct == 999 and how == "created"
+    acct, name, phone, how = _resolve_or_create(FC(), scan, "5090000000")
+    assert acct == 999 and phone == "5090000000" and how == "created"
 
 
 def test_lookup_degrades_without_store(auth, monkeypatch):

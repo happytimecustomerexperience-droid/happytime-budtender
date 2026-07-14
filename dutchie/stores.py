@@ -64,7 +64,7 @@ def _store_from_env(name: str) -> Store:
         register_id=_int(_env(f"STORE_{up}_REGISTER_ID")),
         username=_env(f"STORE_{up}_USERNAME") or _env("DUTCHIE_USERNAME"),
         password=_env(f"STORE_{up}_PASSWORD") or _env("DUTCHIE_PASSWORD"),
-        api_key=_env(f"STORE_{up}_API_KEY"),
+        api_key=_env(f"STORE_{up}_API_KEY") or _env(f"DUTCHIE_{up}_POS_KEY"),
     )
 
 

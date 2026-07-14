@@ -196,12 +196,14 @@ class PosRegisterClient(PosClient):
 
     def create_guest(self, *, first_name: str, last_name: str, dob: str, phone: str,
                      email: str = "", mj_state_id: str = "", dl_id: str = "",
-                     customer_type: int = 2) -> int | None:
+                     address: str = "", address2: str = "", city: str = "", state: str = "",
+                     postal_code: str = "", customer_type: int = 2) -> int | None:
         """POST /api/v2/guest/create (Recreational by default) -> new Guest_id (AcctId).
         Mirrors the captured create payload exactly."""
         body = {
             "FirstName": first_name or "", "LastName": last_name or "", "status": "Active",
-            "street": "", "street2": "", "city": "", "state": "", "postal_code": "",
+            "street": address or "", "street2": address2 or "", "city": city or "",
+            "state": state or "", "postal_code": postal_code or "",
             "MJStateIDNo": mj_state_id or "", "MJStateIDStartDate": "", "MMJIDState": "",
             "ExpirationDate": "", "CertificationCollectionDate": "", "CertificationExpirationDate": "",
             "CustomerTypeId": int(customer_type), "PhoneNo": phone or "", "CellPhone": "",

@@ -1,0 +1,17 @@
+{% if scan %}
+  <div class="card" style="margin-top:12px">
+    <strong>Scanned profile preview</strong>
+    <div class="muted" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:8px">
+      <span>Name: {{ scan.accts_name|default:"—" }}</span>
+      <span>DOB: {{ scan.birth_date|default:"—" }}</span>
+      <span>Driver license: {{ scan.id_number|default:"—" }}</span>
+      <span>ID expires: {{ scan.id_expiration|default:"—" }}</span>
+      <span>Address: {{ scan.address|default:"—" }}</span>
+      <span>Address 2: {{ scan.address2|default:"—" }}</span>
+      <span>City/state/ZIP: {{ scan.city|default:"—" }} {{ scan.state|default:"" }} {{ scan.postal_code|default:"" }}</span>
+      <span>Gender: {{ scan.gender|default:"—" }}</span>
+      <span>Phone: {{ scan.phone|default:"Needed before continuing" }}</span>
+      <span>Email: {{ scan.email|default:"Not provided" }}</span>
+    </div>
+  </div>
+{% endif %}

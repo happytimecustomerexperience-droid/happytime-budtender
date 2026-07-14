@@ -8,6 +8,7 @@
         hx-post="{% url 'profile' %}" hx-vals='{"acct": "{{ g.acct_id }}"}' hx-target="#profile"{% endif %}>
     <div class="ac-top">
       <span class="ac-name">{{ g.name }}</span>
+      {% if g.possible_name_match %}<span class="pill">Possible name match</span>{% endif %}
       {% if g.pt_label %}<span class="pill {% if g.is_medical %}pill-med{% else %}pill-rec{% endif %}">{{ g.pt_label }}</span>{% endif %}
     </div>
     <div class="ac-sub">📞 {{ g.phone }}{% if g.last %} · last {{ g.last }}{% endif %}</div>

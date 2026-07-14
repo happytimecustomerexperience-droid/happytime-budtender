@@ -16,6 +16,7 @@ SAMPLE = (
     "DBA01152030\n"
     "DAQD12345678\n"
     "DAG123 MAIN ST\n"
+    "DAHAPT 4\n"
     "DAISPOKANE\n"
     "DAJWA\n"
     "DAK992010000\n"
@@ -31,9 +32,11 @@ def test_parse_aamva_fields():
     assert f["birth_date"] == "1990-01-15"
     assert f["id_expiration"] == "2030-01-15"
     assert f["id_number"] == "D12345678"
+    assert f["mjstateidno"] is None
+    assert f["address2"] == "APT 4"
     assert f["state"] == "WA"
     assert f["city"] == "SPOKANE"
-    assert f["postal_code"] == "99201"
+    assert f["postal_code"] == "99201-0000"
     assert f["gender"] == "male"
     assert f["accts_name"] == "JOHN DOE"
 

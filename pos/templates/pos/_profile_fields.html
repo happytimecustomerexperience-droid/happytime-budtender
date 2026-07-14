@@ -1,0 +1,21 @@
+<label>Phone number
+  <input type="tel" name="phone" value="{{ phone_value|default:"" }}" required autocomplete="tel">
+</label>
+<label>Email
+  <input type="email" name="email" value="{{ scan.email|default:"" }}" autocomplete="email">
+</label>
+<label>Address
+  <input type="text" name="address" value="{{ scan.address|default:"" }}" autocomplete="street-address">
+</label>
+<label>Address line 2
+  <input type="text" name="address2" value="{{ scan.address2|default:"" }}" autocomplete="address-line2">
+</label>
+<label>City
+  <input type="text" name="city" value="{{ scan.city|default:"" }}" autocomplete="address-level2">
+</label>
+<label>State
+  <input type="text" name="state" value="{{ scan.state|default:"" }}" autocomplete="address-level1">
+</label>
+<label>ZIP / postal code
+  <input type="text" name="postal_code" value="{{ scan.postal_code|default:"" }}" autocomplete="postal-code">
+</label>

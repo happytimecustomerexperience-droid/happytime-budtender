@@ -23,3 +23,33 @@
 {% else %}
   <span class="muted">No customer selected.</span>
 {% endif %}
+
+{% include "pos/_scan_preview.html" %}
+
+{% if customer_matches %}
+  <div class="card" style="margin-top:12px">
+    <strong>Possible name matches</strong>
+    <p class="muted" style="margin:5px 0 10px">Choose the existing customer, or create a new profile below.</p>
+    {% for g in customer_matches %}
+      <form hx-post="{% url 'profile' %}" hx-target="#profile" class="stack" style="margin-top:8px">
+        <input type="hidden" name="acct" value="{{ g.acct_id }}">
+        <span class="ac-name">{{ g.name }}</span>
+        <span class="ac-sub">📞 {{ g.phone|default:"No phone" }}{% if g.last %} · last {{ g.last }}{% endif %}</span>
+        {% include "pos/_profile_fields.html" with phone_value=scan.phone|default:g.phone %}
+        <button type="submit" class="ghost">Use this existing customer</button>
+      </form>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% if can_create_customer %}
+  <div class="card" style="margin-top:12px">
+    <strong>Create new customer</strong>
+    <p class="muted" style="margin:5px 0 10px">Use the scanned ID details. Phone is required; email is optional.</p>
+    <form method="post" action="{% url 'create_customer' %}" class="stack">
+      {% csrf_token %}
+      {% include "pos/_profile_fields.html" with phone_value=scan.phone|default:"" %}
+      <button type="submit" style="width:100%">Create customer and continue</button>
+    </form>
+  </div>
+{% endif %}

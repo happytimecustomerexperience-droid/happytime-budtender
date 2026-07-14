@@ -14,6 +14,8 @@ from django.conf import settings
 from django.core.cache import cache
 from django.utils.text import slugify
 
+from customers.models import Customer as CachedCustomer
+
 from . import dutchie
 from .models import STORES, CustomerProfile, Product, SuggestedProduct, SyncState
 
@@ -193,10 +195,17 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
     u84: Counter = Counter()   # net units sold per sku, last 84 days
     # customerId → phone (prefer mobile) + customerId → display name.
     phone_by_id: dict[str, str] = {}
+    # Keep transaction history connected when Dutchie omits a phone on a later
+    # customer export; the scan cache already has the account-id relationship.
+    local_phone_by_id = {
+        str(row["dutchie_acct_id"]): row["phone"]
+        for row in CachedCustomer.objects.exclude(dutchie_acct_id__isnull=True)
+        .exclude(phone="").values("dutchie_acct_id", "phone")
+    }
     name_by_id: dict[str, str] = {}
     for c in dutchie.get_customers(location_slug):
         cid = str(c.get("customerId") or c.get("id") or "")
-        ph = c.get("cellPhone") or c.get("phone") or ""
+        ph = c.get("cellPhone") or c.get("phone") or local_phone_by_id.get(cid, "")
         if cid and ph:
             phone_by_id[cid] = ph
         nm = (f"{c.get('firstName', '') or ''} {c.get('lastName', '') or ''}".strip()

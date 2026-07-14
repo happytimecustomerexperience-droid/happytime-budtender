@@ -4,7 +4,7 @@ from idscan.pipeline import OCR_EXTRACTION_SCHEMA, _compute_age
 
 REQUIRED_KEYS = {
     "first_name", "last_name", "middle_name", "birth_date", "mjstateidno",
-    "id_number", "id_expiration", "address", "city", "state", "postal_code",
+    "id_number", "id_expiration", "address", "address2", "city", "state", "postal_code",
     "phone", "email", "gender", "id_type", "accts_name",
 }
 

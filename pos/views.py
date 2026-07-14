@@ -10,9 +10,12 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import sys
 from collections import Counter
 
 from django.contrib.auth import login as auth_login
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.contrib.auth import logout as auth_logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import AuthenticationForm
@@ -33,7 +36,9 @@ from customers.services import record_write, upsert_customer
 from budtender.models import PhoneCartDraft
 from budtender.profile_tree import build_category_pref_tree
 from budtender.product_similarity import similarity as product_similarity
+from dutchie.pos_read import PosReadClient
 from dutchie.pos_register_client import PosRegisterClient
+from dutchie.backoffice_customer_client import BackofficeCustomerClient
 from dutchie.stores import load_stores
 
 from . import catalog, education, imagemap, pairing, persona, ranking
@@ -87,6 +92,17 @@ def _with_register(request, store):
 
 def _client(store):
     return PosRegisterClient(store)
+
+
+def _rest_client(store):
+    key = getattr(store, "api_key", "") or ""
+    return PosReadClient(key) if key and "pytest" not in sys.modules else None
+
+
+def _backoffice_client(store):
+    if "pytest" in sys.modules or not store or not (store.base_url and store.username and store.password):
+        return None
+    return BackofficeCustomerClient(store)
 
 
 # ── roles + shift ─────────────────────────────────────────────────────────────
@@ -256,27 +272,191 @@ def _start_session(request, acct_id, name, phone, how="lookup", **meta):
     return redirect("screen")
 
 
-def _resolve_or_create(client, scan, phone):
-    """Look up by PHONE then by NAME (phone wins when both match); create from the
-    scan if neither exists. Returns (acct_id, name, how)."""
+def _normalize_name(value):
+    return " ".join(str(value or "").lower().split())
+
+
+def _normalize_phone_match(value):
+    digits = "".join(c for c in str(value or "") if c.isdigit())
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return digits
+
+
+def _guest_sort_key(row, *, phone="", name=""):
+    phone_digits = _normalize_phone_match(phone)
+    name_key = _normalize_name(name)
+    row_phone = _normalize_phone_match(row.get("phone"))
+    row_name = _normalize_name(row.get("name"))
+    return (
+        0 if phone_digits and row_phone == phone_digits else 1,
+        0 if name_key and row_name == name_key else 1,
+        int(row.get("acct_id") or 0),
+    )
+
+
+def _sort_guests(guests, *, phone="", name=""):
+    return sorted(guests, key=lambda row: _guest_sort_key(row, phone=phone, name=name))
+
+
+def _pick_guest(guests, *, phone="", name=""):
+    """Pick an exact identity match from a fuzzy POS search response."""
+    return _sort_guests(guests, phone=phone, name=name)[0] if guests else None
+
+
+def _apply_dutchie_customer(scan, row):
+    """Fill missing scan fields from the authoritative Dutchie customer row."""
+    if not isinstance(row, dict):
+        return
+    first = row.get("firstName") or row.get("FirstName") or ""
+    last = row.get("lastName") or row.get("LastName") or ""
+    values = {
+        "first_name": first, "middle_name": row.get("middleName") or row.get("MiddleName") or "", "last_name": last,
+        "phone": row.get("phone") or row.get("cellPhone") or row.get("CellPhone") or row.get("Phone") or "",
+        "email": row.get("emailAddress") or row.get("EmailAddress") or row.get("email") or "",
+        "address": row.get("address1") or row.get("Address1") or row.get("street") or "",
+        "address2": row.get("address2") or row.get("Address2") or row.get("street2") or "",
+        "city": row.get("city") or row.get("City") or "", "state": row.get("state") or row.get("State") or "",
+        "postal_code": row.get("postalCode") or row.get("PostalCode") or row.get("postal_code") or "",
+        "mjstateidno": row.get("mmjidNumber") or row.get("MJStateIDNo") or "",
+        "id_number": row.get("driversLicenseID") or row.get("DriversLicense") or "",
+        "id_expiration": str(row.get("DriversLicenseExpiration") or "")[:10],
+        "gender": row.get("gender") or row.get("Gender") or "",
+        "birth_date": str(row.get("dateOfBirth") or row.get("PatientDOB") or row.get("DOB") or "")[:10],
+    }
+    for key, value in values.items():
+        if value and not scan.get(key):
+            scan[key] = value
+    if not scan.get("accts_name") and (first or last):
+        scan["accts_name"] = f"{first} {last}".strip()
+    if row.get("Code"):
+        scan.setdefault("dutchie_code", row["Code"])
+    if row.get("CustomerTypeId") is not None:
+        scan.setdefault("customer_type_id", row["CustomerTypeId"])
+
+
+def _sync_customer_to_dutchie(store, scan, acct_id):
+    """Write then re-read the canonical Dutchie row when the API is available."""
+    if not acct_id:
+        return None
+    backoffice = _backoffice_client(store)
+    if backoffice is not None:
+        try:
+            row = backoffice.find_customer(acct_id, scan.get("accts_name") or "")
+            if row:
+                backoffice.update_customer(row, scan)
+                refreshed = backoffice.find_customer(acct_id, scan.get("accts_name") or "") or row
+                _apply_dutchie_customer(scan, refreshed)
+                return refreshed
+        except Exception as exc:
+            logger.warning("Dutchie Backoffice customer sync unavailable: %s", exc)
+    client = _rest_client(store)
+    if client is None:
+        return None
+    try:
+        client.save_customer(
+            customer_id=int(acct_id), first_name=scan.get("first_name", ""),
+            last_name=scan.get("last_name", ""), address=scan.get("address", ""),
+            address2=scan.get("address2", ""), city=scan.get("city", ""),
+            state=scan.get("state", ""), postal_code=scan.get("postal_code", ""),
+            phone=scan.get("phone", ""), email=scan.get("email", ""),
+            birth_date=scan.get("birth_date", ""),
+            mjstateidno=scan.get("mjstateidno", ""), id_number=scan.get("id_number", ""),
+        )
+        row = client.customer_lookup(
+            phone=scan.get("phone", ""), email=scan.get("email", ""),
+            first_name=scan.get("first_name", ""), last_name=scan.get("last_name", ""),
+            birth_date=scan.get("birth_date", ""), mjstateidno=scan.get("mjstateidno", ""))
+        if row:
+            _apply_dutchie_customer(scan, row)
+        return row
+    except Exception as exc:
+        logger.warning("Dutchie customer profile sync unavailable: %s", exc)
+    return None
+
+
+def _create_guest_from_scan(client, scan):
+    return client.create_guest(
+        first_name=scan["first_name"], last_name=scan.get("last_name", ""),
+        dob=scan["birth_date"], phone=scan.get("phone", ""),
+        email=scan.get("email", ""), mj_state_id=scan.get("mjstateidno", ""),
+        dl_id=scan.get("id_number", ""), address=scan.get("address", ""),
+        address2=scan.get("address2", ""), city=scan.get("city", ""),
+        state=scan.get("state", ""), postal_code=scan.get("postal_code", ""))
+
+
+def _resolve_or_create(client, scan, phone, rest_client=None):
+    """Look up by strong identity first, then POS phone/name; create if absent.
+    Returns (acct_id, name, resolved_phone, how)."""
     name = (scan.get("accts_name") or "").strip()
+    if rest_client is not None:
+        try:
+            row = rest_client.customer_lookup(
+                phone=phone or scan.get("phone", ""), email=scan.get("email", ""),
+                first_name=scan.get("first_name", ""), last_name=scan.get("last_name", ""),
+                birth_date=scan.get("birth_date", ""), mjstateidno=scan.get("mjstateidno", ""))
+        except Exception as exc:
+            logger.warning("Dutchie REST customer lookup unavailable: %s", exc)
+            row = None
+        if row:
+            _apply_dutchie_customer(scan, row)
+            acct = (row.get("customerId") or row.get("CustomerId") or row.get("Guest_id")
+                    or row.get("AcctId") or row.get("id"))
+            if acct:
+                return (acct, scan.get("accts_name") or name,
+                        scan.get("phone") or phone, "public")
     if phone:
         g = _parse_guests(client.guest_search(phone))
-        if g:
-            return g[0]["acct_id"], g[0]["name"], "phone"
+        match = _pick_guest(g, phone=phone, name=name)
+        if match:
+            return match["acct_id"], match["name"], match.get("phone") or phone, "phone"
     if name:
         g = _parse_guests(client.guest_search(name))
-        if g:
-            return g[0]["acct_id"], g[0]["name"], "name"
+        match = _pick_guest(g, name=name)
+        if match:
+            return match["acct_id"], match["name"], match.get("phone") or phone, "name"
     if scan.get("first_name") and scan.get("birth_date"):
-        gid = client.create_guest(
-            first_name=scan["first_name"], last_name=scan.get("last_name", ""),
-            dob=scan["birth_date"], phone=phone or scan.get("phone", ""),
-            email=scan.get("email", ""), mj_state_id=scan.get("mjstateidno", ""))
+        scan = {**scan, "phone": phone or scan.get("phone", "")}
+        gid = _create_guest_from_scan(client, scan)
         if gid:
             disp = scan.get("accts_name") or f"{scan['first_name']} {scan.get('last_name', '')}".strip()
-            return gid, disp, "created"
-    return None, None, "none"
+            return gid, disp, phone or scan.get("phone", ""), "created"
+    return None, None, phone or scan.get("phone", ""), "none"
+
+
+def _resolve_scanned_customer(client, scan, phone, rest_client=None, backoffice_client=None):
+    """Resolve strong scan identity, otherwise return every fuzzy name candidate."""
+    name = (scan.get("accts_name") or "").strip()
+    if rest_client is not None:
+        try:
+            row = rest_client.customer_lookup(
+                phone=phone or scan.get("phone", ""), email=scan.get("email", ""),
+                first_name=scan.get("first_name", ""), last_name=scan.get("last_name", ""),
+                birth_date=scan.get("birth_date", ""), mjstateidno=scan.get("mjstateidno", ""))
+        except Exception as exc:
+            logger.warning("Dutchie REST customer lookup unavailable: %s", exc)
+            row = None
+        if row:
+            _apply_dutchie_customer(scan, row)
+            acct = (row.get("customerId") or row.get("CustomerId") or row.get("Guest_id")
+                    or row.get("AcctId") or row.get("id"))
+            if acct:
+                return acct, scan.get("accts_name") or name, scan.get("phone") or phone, "public", []
+
+    if phone:
+        guests = _parse_guests(client.guest_search(phone))
+        match = _pick_guest(guests, phone=phone, name=name)
+        if match and _normalize_phone_match(match.get("phone")) == _normalize_phone_match(phone):
+            return match["acct_id"], match["name"], match.get("phone") or phone, "phone", []
+
+    if name:
+        guests = _merge_guests(_parse_guests(client.guest_search(name)),
+                               _backoffice_guests(backoffice_client, name))
+        guests = _sort_guests(guests, name=name)[:MAX_LIST]
+        for guest in guests:
+            guest["possible_name_match"] = True
+        return None, None, phone or scan.get("phone", ""), "name_matches", guests
+    return None, None, phone or scan.get("phone", ""), "none", []
 
 
 def _run_scan(request):
@@ -294,6 +474,50 @@ def _run_scan(request):
         raise
     from idscan.pipeline import run_id_scan
     return run_id_scan(images)
+
+
+def _contact_from_request(scan, request, fallback_phone=""):
+    phone = _normalize_phone_match(request.POST.get("phone") or scan.get("phone") or fallback_phone)
+    if len(phone) != 10:
+        return "Phone number is required."
+    scan["phone"] = phone
+    email = (request.POST.get("email") or scan.get("email") or "").strip()
+    if email:
+        try:
+            validate_email(email)
+        except ValidationError:
+            return "Enter a valid email address or leave it blank."
+        scan["email"] = email
+    for field in ("address", "address2", "city", "state", "postal_code"):
+        value = (request.POST.get(field) or "").strip()
+        if value:
+            scan[field] = value
+    return ""
+
+
+def _queue_customer(request, *, acct_id, name, phone, how):
+    """Queue one canonical customer once; a later budtender claim starts their cart."""
+    store_name = request.session.get("store") or ""
+    if not store_name:
+        return None
+    queued = ShopVisit.objects.filter(store=store_name, status="queued", ended_at__isnull=True)
+    if acct_id:
+        existing = queued.filter(acct_id=acct_id).first()
+    else:
+        existing = queued.filter(phone=phone).first() if phone else None
+    if existing:
+        return existing
+    visit = ShopVisit.objects.create(
+        store=store_name, status="queued", how_started=how, acct_id=acct_id or None,
+        acct_name=name or "Guest", phone=phone or "",
+        staff_session_id=request.session.get("staff_session_id"))
+    ShopEvent.objects.create(visit=visit, kind="queued", budtender=request.user.username,
+                             acct_id=acct_id or None, detail=(name or phone)[:200])
+    return visit
+
+
+def _pending_profile_template(request):
+    return "pos/_door_profile.html" if request.POST.get("queue") == "1" else "pos/_profile.html"
 
 
 @login_required
@@ -337,14 +561,32 @@ def start(request):
         return render(request, "pos/begin.html", ctx)
 
     phone = phone or "".join(c for c in (scan.get("phone") or "") if c.isdigit())
+    matches = []
     try:
-        acct_id, name, how = _resolve_or_create(_client(store), scan, phone)
+        if scan:
+            acct_id, name, resolved_phone, how, matches = _resolve_scanned_customer(
+                _client(store), scan, phone, _rest_client(store), _backoffice_client(store))
+        else:
+            acct_id, name, resolved_phone, how = _resolve_or_create(
+                _client(store), scan, phone, _rest_client(store))
     except Exception as exc:
         logger.warning("start lookup failed: %s", exc)
         ctx["error"] = "Lookup failed â€” try again."
         return render(request, "pos/begin.html", ctx)
+    phone = resolved_phone or phone
     if scan:
-        upsert_customer({**scan, "phone": phone}, dutchie_acct_id=acct_id)
+        if acct_id:
+            matches = [{"acct_id": acct_id, "name": name or scan.get("accts_name", ""), "phone": phone}]
+        cached = upsert_customer({**scan, "phone": phone})
+        request.session["pending_customer_id"] = cached.pk
+        allowed = request.session.get("guests") or {}
+        for guest in matches:
+            allowed[str(guest["acct_id"])] = {
+                "name": guest.get("name", ""), "phone": guest.get("phone", "")}
+        request.session["guests"] = allowed
+        ctx.update({"customer_matches": matches, "can_create_customer": not acct_id,
+                    "scan": scan, "phone": phone})
+        return render(request, "pos/begin.html", ctx)
     if not acct_id:
         # Persist structured scan data even when Dutchie account is not found.
         ctx["no_account"] = True
@@ -399,28 +641,34 @@ def scan(request):
         return render(request, "pos/_profile.html", ctx)
 
     acct_id = None
+    resolved_name = scan_result.get("accts_name", "")
+    matches = []
     if store:
         try:
-            q = scan_result.get("phone") or scan_result.get("accts_name") or ""
-            guests = _parse_guests(_client(store).guest_search(q))
-            if guests:
-                acct_id = guests[0]["acct_id"]
+            scan_phone = "".join(c for c in (scan_result.get("phone") or "") if c.isdigit())
+            acct_id, resolved_name, resolved_phone, _, matches = _resolve_scanned_customer(
+                _client(store), scan_result, scan_phone, _rest_client(store), _backoffice_client(store))
+            if resolved_phone:
+                scan_result["phone"] = resolved_phone
+            if resolved_name:
+                scan_result["accts_name"] = resolved_name
         except Exception as exc:
             logger.warning("scan guest lookup unavailable: %s", exc)
             ctx["warn"] = "Customer lookup unavailable."
-    upsert_customer(scan_result, dutchie_acct_id=acct_id)
     if acct_id:
-        request.session["acct_id"] = acct_id
-        request.session["acct_name"] = scan_result.get("accts_name")
-        allowed = request.session.get("guests") or {}
-        allowed[str(acct_id)] = {"name": scan_result.get("accts_name", ""),
-                                 "phone": scan_result.get("phone", "")}
-        request.session["guests"] = allowed
-        tracking.start_visit(request, acct_id=acct_id, name=scan_result.get("accts_name", ""),
-                             phone=scan_result.get("phone", ""), how="scan",
-                             scan_over21=scan_result.get("over_21"))
+        matches = [{"acct_id": acct_id, "name": resolved_name or scan_result.get("accts_name", ""),
+                    "phone": scan_result.get("phone", "")}]
+    cached = upsert_customer(scan_result)
+    request.session["pending_customer_id"] = cached.pk
     request.session["acct_phone"] = scan_result.get("phone") or ""
-    ctx.update({"scan": scan_result, "acct_id": acct_id,
+    allowed = request.session.get("guests") or {}
+    for guest in matches:
+        allowed[str(guest["acct_id"])] = {
+            "name": guest.get("name", ""), "phone": guest.get("phone", "")}
+    request.session["guests"] = allowed
+    ctx.update({"scan": scan_result, "acct_id": None,
+                "customer_matches": matches,
+                "can_create_customer": not acct_id,
                 "history": load_customer_history(acct_id=acct_id, phone=scan_result.get("phone"),
                                                  name=scan_result.get("accts_name"))})
     resp = render(request, "pos/_profile.html", ctx)
@@ -444,12 +692,16 @@ def lookup(request):
         ctx["guests"] = []
         return render(request, "pos/_guests.html", ctx)
     try:
-        guests = _parse_guests(_client(store).guest_search(q))
+        guests = _merge_guests(_parse_guests(_client(store).guest_search(q)),
+                               _backoffice_guests(_backoffice_client(store), q))
     except Exception as exc:
         logger.warning("lookup failed: %s", exc)
         tracking.track(request, "lookup_failed", detail=str(exc)[:120])
         ctx["error"] = "Lookup failed â€” try again."
         return render(request, "pos/_guests.html", ctx)
+    if request.POST.get("name"):
+        for guest in guests:
+            guest["possible_name_match"] = True
     ctx["guests"] = guests
     tracking.track(request, "customer_search", detail=q[:120], results=len(guests))
     # Record which accounts THIS budtender is allowed to open (anchors `profile`
@@ -475,18 +727,108 @@ def profile(request):
         return render(request, "pos/_profile.html",
                       {"error": "Select a customer from a lookup first."})
     name, phone = allowed.get("name", ""), allowed.get("phone", "")
+    scan = {}
+    pending_id = request.session.get("pending_customer_id")
+    if pending_id:
+        pending = Customer.objects.filter(pk=pending_id).first()
+        if pending and isinstance(pending.raw_scan, dict):
+            scan = {**pending.raw_scan, "accts_name": name, "phone": phone}
+            error = _contact_from_request(scan, request, phone)
+            if error:
+                return render(request, "pos/_profile.html", {"error": error, "scan": scan,
+                                                              "can_create_customer": True})
+            phone = scan["phone"]
     request.session["acct_id"] = acct
     request.session["acct_name"] = name
     request.session["acct_phone"] = phone
     tracking.start_visit(request, acct_id=acct, name=name, phone=phone, how="lookup")
-    upsert_customer({"accts_name": name, "phone": phone},
+    _sync_customer_to_dutchie(_active_store(request), scan or {"accts_name": name, "phone": phone}, acct)
+    upsert_customer(scan or {"accts_name": name, "phone": phone},
                     dutchie_acct_id=int(acct) if str(acct).isdigit() else None)
+    request.session.pop("pending_customer_id", None)
     resp = render(request, "pos/_profile.html", {
-        "acct_id": acct, "scan": {"accts_name": name, "phone": phone},
+        "acct_id": acct, "scan": scan or {"accts_name": name, "phone": phone},
         "history": load_customer_history(acct_id=acct, phone=phone, name=name),
     })
     resp["HX-Trigger"] = "customerChanged"  # re-rank the menu For-You
     return resp
+
+
+@login_required
+@rate_limit("start", limit=30, window=60)
+@require_http_methods(["POST"])
+def create_customer(request):
+    """Create a new Dutchie customer from the most recent ID scan."""
+    store = _active_store(request)
+    pending_id = request.session.get("pending_customer_id")
+    pending = Customer.objects.filter(pk=pending_id).first() if pending_id else None
+    scan = dict(pending.raw_scan or {}) if pending else {}
+    ctx = {"scan": scan, "can_create_customer": bool(pending)}
+    template = _pending_profile_template(request)
+    if not store or not pending:
+        ctx["error"] = "Scan the ID again before creating a customer."
+        return render(request, template, ctx)
+    error = _contact_from_request(scan, request)
+    if error:
+        ctx["error"] = error
+        return render(request, template, ctx)
+    if scan.get("over_21") is False:
+        ctx["error"] = "This customer is under 21 and cannot be created."
+        return render(request, template, ctx)
+    if not scan.get("first_name") or not scan.get("birth_date"):
+        ctx["error"] = "The ID scan did not provide the required name and birth date."
+        return render(request, template, ctx)
+    try:
+        acct_id = _create_guest_from_scan(_client(store), scan)
+    except Exception as exc:
+        logger.warning("customer create failed: %s", exc)
+        ctx["error"] = "Could not create the Dutchie customer."
+        return render(request, template, ctx)
+    if not acct_id:
+        ctx["error"] = "Dutchie did not return a customer account."
+        return render(request, template, ctx)
+    _sync_customer_to_dutchie(store, scan, acct_id)
+    upsert_customer(scan, dutchie_acct_id=acct_id)
+    request.session.pop("pending_customer_id", None)
+    name = scan.get("accts_name") or f"{scan['first_name']} {scan.get('last_name', '')}".strip()
+    if request.POST.get("queue") == "1":
+        queued = _queue_customer(request, acct_id=acct_id, name=name, phone=scan["phone"], how="created")
+        if queued is None:
+            return render(request, "pos/_door_result.html", {"error": "No store configured for the queue."})
+        return render(request, "pos/_door_result.html", {"queued": queued, "name": name, "phone": scan["phone"]})
+    return _start_session(request, acct_id, name, scan["phone"], how="created",
+                          scan_over21=scan.get("over_21"))
+
+
+@login_required
+@rate_limit("start", limit=30, window=60)
+@require_http_methods(["POST"])
+def start_existing(request):
+    """Continue with a name-match selected after an ID scan."""
+    acct = request.POST.get("acct")
+    allowed = (request.session.get("guests") or {}).get(str(acct))
+    pending_id = request.session.get("pending_customer_id")
+    pending = Customer.objects.filter(pk=pending_id).first() if pending_id else None
+    if not allowed or not pending:
+        return render(request, "pos/_door_profile.html" if request.POST.get("queue") == "1" else "pos/begin.html",
+                      {"error": "Scan the ID again before selecting a customer."})
+    scan = {**(pending.raw_scan or {}), "accts_name": allowed.get("name", ""),
+            "phone": allowed.get("phone", "")}
+    error = _contact_from_request(scan, request, allowed.get("phone", ""))
+    if error:
+        return render(request, "pos/_door_profile.html" if request.POST.get("queue") == "1" else "pos/begin.html",
+                      {"error": error, "scan": scan, "can_create_customer": True})
+    _sync_customer_to_dutchie(_active_store(request), scan, acct)
+    upsert_customer(scan, dutchie_acct_id=int(acct) if str(acct).isdigit() else None)
+    request.session.pop("pending_customer_id", None)
+    if request.POST.get("queue") == "1":
+        queued = _queue_customer(request, acct_id=acct, name=scan["accts_name"], phone=scan["phone"], how="scan")
+        if queued is None:
+            return render(request, "pos/_door_result.html", {"error": "No store configured for the queue."})
+        return render(request, "pos/_door_result.html", {
+            "queued": queued, "name": scan["accts_name"], "phone": scan["phone"]})
+    return _start_session(request, acct, scan["accts_name"], scan["phone"], how="scan",
+                          scan_over21=scan.get("over_21"))
 
 
 # -- door role: scan people into the shared per-store queue --------------------
@@ -503,24 +845,18 @@ def door(request):
 @rate_limit("start", limit=60, window=60)
 @require_http_methods(["POST"])
 def door_scan(request):
-    """Add a scanned/looked-up customer to the queue (status=queued, no budtender, no
-    Dutchie write - the budtender resolves + checks in on claim). Returns a confirmation."""
-    from pos_core.uploads import collect_id_images
-
-    store_name = request.session.get("store") or ""
-    phone = "".join(c for c in (request.POST.get("phone") or "") if c.isdigit())
+    """Door check-in: preview scanned data, then queue a refreshed canonical customer."""
+    store = _active_store(request)
+    phone = _normalize_phone_match(request.POST.get("phone") or "")
     name = (request.POST.get("name") or "").strip()
     ctx = {}
-    scan = {}
-    files = request.FILES.getlist("images")
-    if files:
+    has_scan = bool(request.POST.get("id_payload") or request.FILES.getlist("images"))
+    if has_scan:
         try:
-            images = collect_id_images(files)
+            scan = _run_scan(request) or {}
         except Exception as exc:
             ctx["error"] = f"upload rejected: {exc}"
             return render(request, "pos/_door_result.html", ctx)
-        from idscan.pipeline import run_id_scan
-        scan = run_id_scan(images)
         if scan.get("error"):
             ctx["error"] = f"scan failed: {scan['error']}"
             return render(request, "pos/_door_result.html", ctx)
@@ -528,17 +864,48 @@ def door_scan(request):
             return render(request, "pos/_door_result.html",
                           {"under21": True, "name": scan.get("accts_name")})
         name = name or (scan.get("accts_name") or "").strip()
-        phone = phone or "".join(c for c in (scan.get("phone") or "") if c.isdigit())
-        upsert_customer(scan, dutchie_acct_id=None)
+        phone = phone or _normalize_phone_match(scan.get("phone") or "")
+        matches = []
+        acct_id = None
+        if store:
+            try:
+                acct_id, resolved_name, resolved_phone, _, matches = _resolve_scanned_customer(
+                    _client(store), scan, phone, _rest_client(store), _backoffice_client(store))
+                if acct_id:
+                    matches = [{"acct_id": acct_id, "name": resolved_name or name,
+                                "phone": resolved_phone or phone}]
+                phone = resolved_phone or phone
+            except Exception as exc:
+                logger.warning("door customer lookup failed: %s", exc)
+                ctx["error"] = "Customer lookup unavailable. Try again."
+                return render(request, "pos/_door_result.html", ctx)
+        cached = upsert_customer({**scan, "phone": phone})
+        request.session["pending_customer_id"] = cached.pk
+        allowed = request.session.get("guests") or {}
+        for guest in matches:
+            allowed[str(guest["acct_id"])] = {
+                "name": guest.get("name", ""), "phone": guest.get("phone", "")}
+        request.session["guests"] = allowed
+        return render(request, "pos/_door_profile.html", {
+            "scan": scan, "customer_matches": matches, "can_create_customer": not acct_id,
+        })
     if not (name or phone):
         ctx["error"] = "Scan an ID or enter a phone/name to add to the queue."
         return render(request, "pos/_door_result.html", ctx)
-    v = ShopVisit.objects.create(
-        store=str(store_name), status="queued", how_started="door",
-        acct_name=name or "Guest", phone=phone or "",
-        staff_session_id=request.session.get("staff_session_id"))
-    ShopEvent.objects.create(visit=v, kind="queued", budtender=request.user.username,
-                             detail=(name or phone)[:200])
+    acct_id = None
+    if store:
+        try:
+            parts = name.split()
+            acct_id, resolved_name, resolved_phone, _ = _resolve_or_create(
+                _client(store), {"accts_name": name, "first_name": parts[0] if parts else "",
+                                 "last_name": " ".join(parts[1:])}, phone, _rest_client(store))
+            name, phone = resolved_name or name, resolved_phone or phone
+        except Exception as exc:
+            logger.warning("door lookup failed: %s", exc)
+    v = _queue_customer(request, acct_id=acct_id, name=name, phone=phone, how="door")
+    if v is None:
+        ctx["error"] = "No store configured for the queue."
+        return render(request, "pos/_door_result.html", ctx)
     ctx.update({"queued": v, "name": name or "Guest", "phone": phone})
     return render(request, "pos/_door_result.html", ctx)
 
@@ -584,12 +951,18 @@ def claim(request, visit_id):
     if v is None:
         return render(request, "pos/_profile.html", {"error": "That customer was already taken."})
     acct_id = v.acct_id
+    profile_scan = {"accts_name": v.acct_name or "", "phone": v.phone or ""}
     if store and not acct_id:                               # door only captured identity - resolve now
         try:
-            q = v.phone or v.acct_name or ""
-            guests = _parse_guests(_client(store).guest_search(q)) if len(q) >= 3 else []
-            if guests:
-                acct_id = guests[0]["acct_id"]
+            parts = (v.acct_name or "").split()
+            profile_scan.update({"first_name": parts[0] if parts else "",
+                                 "last_name": " ".join(parts[1:])})
+            acct_id, resolved_name, resolved_phone, _ = _resolve_or_create(
+                _client(store), profile_scan, v.phone or "", _rest_client(store))
+            if resolved_name:
+                profile_scan["accts_name"] = resolved_name
+            if resolved_phone:
+                profile_scan["phone"] = resolved_phone
         except Exception as exc:
             logger.warning("claim guest lookup failed: %s", exc)
     if not acct_id and store:                               # no match -> shop as a guest so checkout works
@@ -602,11 +975,15 @@ def claim(request, visit_id):
     v.claimed_at = timezone.now()
     v.budtender = v.claimed_by = request.user.username
     v.acct_id = acct_id or v.acct_id
+    v.acct_name = profile_scan.get("accts_name") or v.acct_name
+    v.phone = profile_scan.get("phone") or v.phone
     v.staff_session_id = request.session.get("staff_session_id") or v.staff_session_id
-    v.save(update_fields=["status", "claimed_at", "budtender", "claimed_by", "acct_id", "staff_session"])
+    v.save(update_fields=["status", "claimed_at", "budtender", "claimed_by", "acct_id",
+                          "acct_name", "phone", "staff_session"])
     _set_session_customer(request, v.acct_id, v.acct_name, v.phone)
     request.session["visit_id"] = v.id                     # adopt as the open visit
-    upsert_customer({"accts_name": v.acct_name, "phone": v.phone},
+    _sync_customer_to_dutchie(store, profile_scan, v.acct_id)
+    upsert_customer(profile_scan,
                     dutchie_acct_id=int(v.acct_id) if str(v.acct_id or "").isdigit() else None)
     ShopEvent.objects.create(visit=v, kind="claimed", budtender=request.user.username,
                              acct_id=v.acct_id, detail=v.wait_display)
@@ -750,6 +1127,32 @@ def _resolve_inventory_matches(inv, row):
             continue
         out.append(p)
     return out
+
+
+def _backoffice_guests(client, name: str) -> list[dict]:
+    if client is None or not name or len(_normalize_phone_match(name)) >= 7:
+        return []
+    rows = client.search_customers(name)
+    return [{
+        "acct_id": row.get("Id"),
+        "name": row.get("Name") or " ".join(filter(None, [row.get("FirstName"), row.get("LastName")])),
+        "phone": row.get("CellPhone") or row.get("Phone") or "",
+        "patient_type": row.get("CustomerType") or "",
+        "is_medical": bool(row.get("MJStateIDNo")),
+        "pt_label": row.get("CustomerType") or "",
+        "last": str(row.get("LastTransaction") or "")[:10],
+        "dutchie_customer": row,
+    } for row in rows if row.get("Id") is not None]
+
+
+def _merge_guests(*groups):
+    merged = {}
+    for group in groups:
+        for guest in group:
+            key = str(guest.get("acct_id") or "")
+            if key:
+                merged.setdefault(key, guest)
+    return list(merged.values())
 
 
 def _package_summary(inv_rows):

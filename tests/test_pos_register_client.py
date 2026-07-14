@@ -147,6 +147,19 @@ def test_guest_search_shape():
     assert body["SessionId"] == "SID-123" and "Register" not in body
 
 
+def test_create_guest_copies_id_profile_fields():
+    cap = []
+    _client(cap).create_guest(
+        first_name="Jane", last_name="Doe", dob="1990-01-01", phone="5095550100",
+        address="123 Main St", address2="Apt 2", city="Yakima", state="WA", postal_code="98901",
+        mj_state_id="MMJ-1", dl_id="DL-1")
+    path, body = cap[0]
+    assert path == "/api/v2/guest/create"
+    assert body["street"] == "123 Main St" and body["street2"] == "Apt 2"
+    assert body["city"] == "Yakima" and body["state"] == "WA" and body["postal_code"] == "98901"
+    assert body["MJStateIDNo"] == "MMJ-1" and body["DriversLicenseId"] == "DL-1"
+
+
 def test_map_product_row():
     row = {"ProductId": 3567668, "BatchId": 7548777, "SerialNo": "214", "UnitPrice": 19,
            "RecUnitPrice": 19, "ProductDescription": "Temple Ball 1g", "CannabisInventory": "Yes",

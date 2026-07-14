@@ -26,7 +26,7 @@ service token), so nothing sensitive appears in the browser network tab and
 Next.js (server-side /api/* proxy)  ──Bearer token, TLS──►  Cloudflare Tunnel ─► web (gunicorn, DRF /api/v1)
                                                                                    ├─ postgres (own DB)
                                                                                    ├─ redis (cache + Celery)
-                                                                                   └─ celery worker + beat ─► Dutchie (read-only)
+                                                                                   └─ celery worker + beat ─► Dutchie (sync)
 ```
 
 ## API (`/api/v1`, Bearer `HHT_BACKEND_TOKEN`; health is open)

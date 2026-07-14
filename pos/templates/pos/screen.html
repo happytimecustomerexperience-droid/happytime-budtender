@@ -25,6 +25,7 @@
   {% endif %}
   <span class="spacer"></span>
   {% if role != "door" %}
+    <a class="link" href="{% url 'door' %}">Door check-in</a>
     <button type="button" class="cartbtn" data-cart-open>🛒 Cart <span class="badge" id="cart-badge">{{ cart|length }}</span></button>
     {% if acct_id %}
       <a class="cust-chip" href="{% url 'customer' %}">👤 <b>{{ acct_name|default:"Guest" }}</b></a>
@@ -61,6 +62,7 @@
   <form hx-post="{% url 'lookup' %}" hx-target="#guests"
         hx-trigger="submit, keyup changed delay:350ms" class="grow ac-form">
     <input class="grow" name="phone" placeholder="Search customer by phone…" inputmode="tel" autocomplete="off">
+    <input class="grow" name="name" placeholder="Or search by name…" autocomplete="off">
     <button type="submit">Find</button>
   </form>
   <button type="button" class="ghost" hx-post="{% url 'guest_start' %}" hx-target="#profile">Guest</button>

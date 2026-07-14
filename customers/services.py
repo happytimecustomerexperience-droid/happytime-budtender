@@ -8,8 +8,8 @@ _DOB_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4})\b")
 
 # Scan keys we copy into the Customer record (only fills blanks).
 _SCAN_FIELDS = (
-    "first_name", "last_name", "phone", "mjstateidno",
-    "address", "city", "state", "postal_code", "email",
+    "first_name", "middle_name", "last_name", "phone", "mjstateidno", "id_number",
+    "id_type", "gender", "address", "address2", "city", "state", "postal_code", "email",
 )
 
 
@@ -56,15 +56,26 @@ def upsert_customer(scan: dict, dutchie_acct_id=None) -> Customer:
         if obj.over_21 is None and dup.over_21 is not None:
             obj.over_21 = dup.over_21
 
-    # Fill only blank string fields from the scan (don't clobber known data).
+    # A fresh ID scan is the authoritative identity snapshot; keep old values only
+    # when the new scan did not provide that field.
     for field in _SCAN_FIELDS:
         val = (scan.get(field) or "").strip()
-        if val and not getattr(obj, field, ""):
+        if val and val != getattr(obj, field, ""):
             setattr(obj, field, val)
 
-    if scan.get("birth_date") and obj.birth_date is None:
+    if scan.get("dutchie_code"):
+        obj.dutchie_code = str(scan["dutchie_code"]).strip()
+    if scan.get("customer_type_id") is not None:
+        try:
+            obj.customer_type_id = int(scan["customer_type_id"])
+        except (TypeError, ValueError):
+            pass
+
+    if scan.get("birth_date"):
         obj.birth_date = scan["birth_date"]
-    if scan.get("over_21") is not None and obj.over_21 is None:
+    if scan.get("id_expiration"):
+        obj.id_expiration = scan["id_expiration"]
+    if scan.get("over_21") is not None:
         obj.over_21 = bool(scan["over_21"])
 
     if scan:

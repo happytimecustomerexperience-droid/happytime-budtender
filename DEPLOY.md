@@ -41,7 +41,7 @@ cp .env.example .env
 #   TUNNEL_TOKEN          from Cloudflare (step 6)
 nano .env
 
-# Dutchie per-store POS keys (read-only; copy from marketing_dashboard Tenant.config):
+# Dutchie per-store POS keys (Customer scope required for ID/profile sync; copy from marketing_dashboard Tenant.config):
 cat > .env.dutchie <<'EOF'
 DUTCHIE_YAKIMA_POS_KEY=...
 DUTCHIE_MTVERNON_POS_KEY=...

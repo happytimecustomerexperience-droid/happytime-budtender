@@ -16,6 +16,8 @@ import re
 from django.core.cache import cache
 from django.db.models import F
 
+from customers.models import Customer as CachedCustomer
+
 from .models import CustomerProfile, Product
 
 logger = logging.getLogger(__name__)
@@ -117,6 +119,12 @@ def load_profile_full(phone: str) -> dict | None:
 def load_customer_history(acct_id=None, phone=None, name=None):
     """Compact customer-360 panel dict (orders / last purchase / top cats+brands /
     recent items), or None. ``acct_id`` / ``name`` kept for signature stability."""
+    if not phone and acct_id:
+        try:
+            phone = (CachedCustomer.objects.filter(dutchie_acct_id=acct_id)
+                     .values_list("phone", flat=True).first()) or ""
+        except Exception:
+            logger.debug("load_customer_history cache lookup failed", exc_info=True)
     cands = _phone_candidates(phone or "")
     if not cands:
         return None

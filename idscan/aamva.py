@@ -15,6 +15,7 @@ _ELEMENTS = {
     "DBA": "_exp",         # expiry
     "DAQ": "id_number",    # license / ID number
     "DAG": "address",      # street address
+    "DAH": "address2",     # street address line 2
     "DAI": "city",
     "DAJ": "state",
     "DAK": "postal_code",
@@ -36,6 +37,13 @@ def _date(v: str | None) -> str | None:
 
 def _clean(s):
     return s.strip().rstrip(",").strip() if isinstance(s, str) else s
+
+
+def _postal_code(value: str | None) -> str | None:
+    digits = "".join(c for c in str(value or "") if c.isdigit())
+    if len(digits) >= 9:
+        return f"{digits[:5]}-{digits[5:9]}"
+    return digits[:5] or None
 
 
 def _split_full_name(full: str) -> tuple[str | None, str | None, str | None]:
@@ -78,12 +86,14 @@ def parse_aamva(payload: str) -> dict | None:
         "middle_name": middle,
         "birth_date": _date(raw.get("_dob")),
         "id_number": idno,
-        "mjstateidno": idno,
+        # A driver's-license number is not a medical-registry ID.
+        "mjstateidno": None,
         "id_expiration": _date(raw.get("_exp")),
         "state": _clean(raw.get("state")),
         "address": _clean(raw.get("address")),
         "city": _clean(raw.get("city")),
-        "postal_code": (_clean(raw.get("postal_code")) or "")[:5] or None,
+        "postal_code": _postal_code(raw.get("postal_code")),
+        "address2": _clean(raw.get("address2")),
         "phone": None,
         "email": None,
         "gender": _SEX.get(raw.get("_sex", ""), None),

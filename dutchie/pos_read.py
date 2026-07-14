@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64
 import logging
 
-from .transport import http_get
+from .transport import http_get, http_post
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,53 @@ class PosReadClient:
             return resp.json()
         except Exception:
             return []
+
+    def _post(self, path: str, body: dict) -> dict:
+        resp = http_post(
+            _BASE + path,
+            json=body,
+            headers={**self._headers(), "Content-Type": "application/json"},
+            timeout=self.timeout,
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Dutchie REST {path} -> HTTP {resp.status_code}")
+        try:
+            data = resp.json()
+        except Exception as exc:
+            raise RuntimeError(f"Dutchie REST {path} returned non-JSON") from exc
+        if not isinstance(data, dict):
+            raise RuntimeError(f"Dutchie REST {path} returned an unexpected shape")
+        return data
+
+    def customer_lookup(self, *, phone: str = "", email: str = "", first_name: str = "",
+                        last_name: str = "", birth_date: str = "", mjstateidno: str = "") -> dict | None:
+        """Find one customer using Dutchie's documented identity priority order."""
+        body = {
+            key: value for key, value in {
+                "phone": phone,
+                "emailAddress": email,
+                "firstName": first_name,
+                "lastName": last_name,
+                "dateOfBirth": birth_date,
+                "mmjidNumber": mjstateidno,
+            }.items() if value
+        }
+        return self._post("/customer/customerLookup", body)
+
+    def save_customer(self, *, customer_id: int, first_name: str = "", last_name: str = "",
+                      address: str = "", address2: str = "", city: str = "", state: str = "",
+                      postal_code: str = "", phone: str = "", email: str = "", birth_date: str = "",
+                      mjstateidno: str = "", id_number: str = "") -> dict:
+        """Sparse update of an existing Dutchie customer profile."""
+        body = {"customerId": int(customer_id)}
+        fields = {
+            "firstName": first_name, "lastName": last_name, "address1": address,
+            "address2": address2, "city": city, "state": state, "postalCode": postal_code,
+            "phone": phone, "emailAddress": email, "dateOfBirth": birth_date,
+            "mmjidNumber": mjstateidno, "driversLicenseID": id_number,
+        }
+        body.update({key: value for key, value in fields.items() if value})
+        return self._post("/customer/customer", body)
 
     # ── the 3 reads we keep ──────────────────────────────────────────────────
     def search_customers(self, phone: str = "", name: str = "") -> list[dict]:
