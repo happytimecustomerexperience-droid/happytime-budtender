@@ -48,7 +48,7 @@ Next.js (server-side /api/* proxy)  ──Bearer token, TLS──►  Cloudflare
 2. `cp .env.example .env` and fill in:
    - `SECRET_KEY`, `HHT_BACKEND_TOKEN` (must match the website's `HHT_BACKEND_TOKEN`),
    - `SQL_PASSWORD`,
-  - `GOOGLE_CLOUD_PROJECT`/ADC for Vertex Gemini, or `GEMINI_API_KEY` for dev chat,
+  - `GOOGLE_CLOUD_PROJECT`/ADC for Vertex Gemini generation plus `GEMINI_API_KEY` for `gemini-embedding-2`,
   - `HHT_VOICE_BASE_URL` for chatbot grounding, e.g. `http://voice.internal:8000`,
    - Dutchie per-store keys/ids — **copy from marketing_dashboard's `Tenant.config`**
      (`dutchie_loc_id`, `dutchie_lsp_id`, POS API keys, backoffice user pool),

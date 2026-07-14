@@ -22,15 +22,15 @@ MODELS = {
     "flash": "gemini-2.5-flash",        # workhorse: 1M ctx, multimodal (verified)
     "flash_lite": "gemini-2.5-flash-lite",  # intake/extraction/router/safety (verified)
     "pro": "gemini-2.5-pro",            # reserved: v2 QA / hard cases
-    # Vertex AI's text-embedding endpoint currently supports 001. Embedding 2
-    # is a Gemini Developer API model and is not available to this Vertex client.
-    # Override via GEMINI_EMBED_MODEL only after verifying that model on the
-    # selected auth surface.
-    "embedding": os.environ.get("GEMINI_EMBED_MODEL", "gemini-embedding-001"),
+    # Embedding 2 is the canonical semantic model. It uses the Gemini Developer
+    # API key path; Vertex remains the generation surface.
+    "embedding": os.environ.get("GEMINI_EMBED_MODEL", "gemini-embedding-2"),
 }
 
 # Tried in order when the preferred embedding model 404s on the current project.
-EMBED_FALLBACKS = ["text-embedding-005"]
+# Do not silently compare vectors from a different embedding space. Missing
+# Gemini API credentials degrade to the deterministic keyword path in semantic.py.
+EMBED_FALLBACKS = []
 
 # Per-1,000-token prices in USD: (input, output, cached_input).
 PRICING_PER_1K = {

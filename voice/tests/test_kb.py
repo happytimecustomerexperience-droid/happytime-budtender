@@ -237,6 +237,7 @@ def test_rank_faq_keyword_fallback_when_gemini_down(db, settings):
     settings.SEMANTIC_SEARCH_ENABLED = True
 
     import core.services.gemini as gemini_mod
+    original_embed = gemini_mod.embed
 
     def _boom(*a, **k):
         raise RuntimeError("Gemini API down")
@@ -253,7 +254,7 @@ def test_rank_faq_keyword_fallback_when_gemini_down(db, settings):
             "returns query did not ground in the WAC-cited row"
         )
     finally:
-        semantic.gemini.embed = gemini_mod.embed
+        semantic.gemini.embed = original_embed
 
 
 @pytest.mark.django_db

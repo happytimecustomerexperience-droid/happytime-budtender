@@ -68,8 +68,9 @@ in the dashboard, then **Publish to Vapi** to PATCH the live assistants/squad.
 - For multiple inbound Vapi numbers, set `VAPI_PHONE_NUMBER_STORE_MAP='{"pn_...":"yakima","pn_...":"mount-vernon","pn_...":"pullman"}'`.
 - `HHT_BUDTENDER_BASE_URL` + `HHT_BACKEND_TOKEN` (must match the budtender service; the same token
   gates `POST /api/voice/kb/search` for the website chatbot's grounded RAG lookup).
-- `GOOGLE_CLOUD_PROJECT` / `GOOGLE_APPLICATION_CREDENTIALS` (Vertex) or `GEMINI_API_KEY`;
-  override the embedding model with `GEMINI_EMBED_MODEL` only if Google deprecates the default.
+- `GOOGLE_CLOUD_PROJECT` / `GOOGLE_APPLICATION_CREDENTIALS` (Vertex generation) and
+  `GEMINI_API_KEY` (required for the canonical `gemini-embedding-2` embedding surface).
+  Keep `GEMINI_EMBED_MODEL=gemini-embedding-2`; changing embedding spaces requires a full re-embed.
 - Transfer numbers (`HHT_TRANSFER_NUMBER_*`) are pre-filled with the published store lines — confirm.
 - **Dutchie POS keys live in the `happytime-budtender` service**, not here.
 - `/healthz` reports sanitized dependency booleans for DB, Gemini, Vapi, and the internal budtender

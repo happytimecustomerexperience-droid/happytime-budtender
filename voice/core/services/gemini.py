@@ -120,17 +120,17 @@ def _vertex_explicitly_requested() -> bool:
     return os.environ.get("GEMINI_USE_VERTEX", "").strip().lower() in ("true", "1", "yes", "on")
 
 
-def make_client(api_key: str | None = None):
-    """Return (client, auth_mode). Vertex preferred; API key is a dev fallback."""
+def make_client(api_key: str | None = None, *, force_api_key: bool = False):
+    """Return (client, auth_mode), optionally forcing the Gemini API key surface."""
     from google import genai
 
     project, location = _resolve_project_and_location()
-    if _vertex_explicitly_requested() and not project:
+    if _vertex_explicitly_requested() and not project and not force_api_key:
         raise RuntimeError(
             "GEMINI_USE_VERTEX=True but GOOGLE_CLOUD_PROJECT is unset. "
             "Set GOOGLE_CLOUD_PROJECT to enable Vertex AI."
         )
-    if project:
+    if project and not force_api_key:
         logger.info("Gemini: Vertex mode (project=%s location=%s)", project, location)
         ensure_clock_correction()  # make SA JWT signing immune to wall-clock drift
         try:
@@ -144,6 +144,11 @@ def make_client(api_key: str | None = None):
 
     key = api_key or os.environ.get("GEMINI_API_KEY")
     if not key:
+        if force_api_key:
+            raise RuntimeError(
+                "GEMINI_API_KEY is required for gemini-embedding-2. "
+                "That model uses the Gemini Developer API, not Vertex service-account auth."
+            )
         raise RuntimeError(
             "No Gemini auth configured. Set GOOGLE_CLOUD_PROJECT (Vertex; recommended) "
             "OR GEMINI_API_KEY (consumer API; dev only)."
@@ -281,6 +286,21 @@ def _is_not_found(exc) -> bool:
     return getattr(exc, "code", None) == 404 or "404" in s or "NOT_FOUND" in s.upper()
 
 
+def _embedding2_contents(items: list[str], task_type: str, types):
+    """Build separate Content objects using Embedding 2's retrieval instructions."""
+    if task_type == "RETRIEVAL_QUERY":
+        formatted = [f"task: search result | query: {text}" for text in items]
+    elif task_type == "RETRIEVAL_DOCUMENT":
+        formatted = [f"title: none | text: {text}" for text in items]
+    else:
+        label = task_type.lower().replace("_", " ")
+        formatted = [f"task: {label} | text: {text}" for text in items]
+    return [
+        types.Content(role="user", parts=[types.Part.from_text(text=text)])
+        for text in formatted
+    ]
+
+
 def embed(
     texts,
     *,
@@ -289,14 +309,13 @@ def embed(
     output_dimensionality: int | None = None,
     api_key: str | None = None,
 ):
-    """Embed text with the Gemini embedding model (Vertex). Multilingual — handles
+    """Embed text with the configured Gemini embedding model. Multilingual — handles
     Swedish. Pass a single str -> returns one vector; pass a list -> returns a list
     of vectors. `task_type` tunes the embedding space: RETRIEVAL_DOCUMENT for stored
     content, RETRIEVAL_QUERY for a user query, SEMANTIC_SIMILARITY for clustering.
 
-    Uses constants.MODELS['embedding'] with graceful fallback through EMBED_FALLBACKS
-    when a model 404s (not provisioned on this project); the winner is cached. An
-    explicit `model` is used as-is. Truncated (dim < 3072) vectors are L2-normalized."""
+    Embedding 2 uses Gemini API-key auth and prompt task instructions; Vertex text
+    embedding models use the task_type config. Truncated vectors are normalized."""
     global _RESOLVED_EMBED_MODEL
     from google.genai import types
 
@@ -305,8 +324,8 @@ def embed(
     if not items:
         return [] if not one else []
     dim = output_dimensionality or constants.EMBED_DIM
-    client, _ = make_client(api_key)
-    cfg = types.EmbedContentConfig(task_type=task_type, output_dimensionality=dim)
+    preferred_model = model or constants.MODELS["embedding"]
+    client, _ = make_client(api_key, force_api_key=preferred_model == "gemini-embedding-2")
 
     if model:
         candidates = [model]
@@ -320,7 +339,16 @@ def embed(
         try:
             vecs: list[list[float]] = []
             for i in range(0, len(items), 100):  # chunk: stay under Vertex per-request cap
-                resp = client.models.embed_content(model=cand, contents=items[i:i + 100], config=cfg)
+                batch = items[i:i + 100]
+                if cand == "gemini-embedding-2":
+                    contents = _embedding2_contents(batch, task_type, types)
+                    cfg = types.EmbedContentConfig(output_dimensionality=dim)
+                else:
+                    contents = batch
+                    cfg = types.EmbedContentConfig(
+                        task_type=task_type, output_dimensionality=dim
+                    )
+                resp = client.models.embed_content(model=cand, contents=contents, config=cfg)
                 vecs.extend(list(e.values) for e in resp.embeddings)
             if not model:
                 _RESOLVED_EMBED_MODEL = cand  # remember the working default
@@ -346,9 +374,14 @@ def health_check() -> dict:
     has_sa = bool(sa_path) and os.path.exists(sa_path)
     has_key = bool(os.environ.get("GEMINI_API_KEY"))
 
+    embedding_model = constants.MODELS["embedding"]
     if project:
-        mode, ready = "vertex", (has_adc or has_sa)
-        reason = "OK" if ready else "ADC or GOOGLE_APPLICATION_CREDENTIALS required"
+        if embedding_model == "gemini-embedding-2":
+            mode, ready = "vertex+api-key", has_key
+            reason = "OK" if ready else "GEMINI_API_KEY required for gemini-embedding-2"
+        else:
+            mode, ready = "vertex", (has_adc or has_sa)
+            reason = "OK" if ready else "ADC or GOOGLE_APPLICATION_CREDENTIALS required"
     elif has_key:
         mode, ready, reason = "api-key", True, "consumer API key (dev only)"
     else:
@@ -359,7 +392,7 @@ def health_check() -> dict:
         "project": project, "location": location,
         "has_adc": has_adc, "has_sa_creds": has_sa, "has_api_key": has_key,
         "llm_model": constants.MODELS["flash"],
-        "embedding_model": constants.MODELS["embedding"],          # configured / preferred
+        "embedding_model": embedding_model,                          # configured / preferred
         # Actually-resolved model for THIS worker (null until its first embed call;
         # resolution is per-process). Differs from preferred only after a 404 fallback.
         "embedding_model_active": _RESOLVED_EMBED_MODEL,
