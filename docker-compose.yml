@@ -70,6 +70,19 @@ services:
       - .env.dutchie
     expose:
       - "8000"
+    # Publicly expose ONLY the Bearer-gated /api paths at budtender-api.happytimeweed.com
+    # so the website (Vercel) can reach the margin+profile ranker — mirrors the voice-web
+    # labels (host-mode traefik-a0hc + Let's Encrypt). /admin + /dashboard stay UNreachable
+    # publicly (no route matches them) — keep them internal. DNS budtender-api → this VPS
+    # already exists; this just gives Traefik a router + cert for it.
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=happytime-budtender_default
+      - traefik.http.routers.budtender.rule=Host(`${BUDTENDER_HOST:-budtender-api.happytimeweed.com}`) && PathPrefix(`/api`)
+      - traefik.http.routers.budtender.entrypoints=web,websecure
+      - traefik.http.routers.budtender.tls=true
+      - traefik.http.routers.budtender.tls.certresolver=letsencrypt
+      - traefik.http.services.budtender.loadbalancer.server.port=8000
     depends_on:
       migrate:
         condition: service_completed_successfully
