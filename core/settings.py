@@ -37,7 +37,18 @@ ALLOWED_HOSTS = [h.strip() for h in env("ALLOWED_HOSTS", "localhost,127.0.0.1").
 for _alias in ("localhost", "127.0.0.1", "budtender.internal", "web"):
     if _alias not in ALLOWED_HOSTS:
         ALLOWED_HOSTS.append(_alias)
+# Vercel proxies happytimeweed.com/custom-order here and forwards the ORIGINAL Host,
+# so without these the storefront 400s DisallowedHost for every shopper who arrives
+# on the on-brand URL — while working perfectly when tested on budtender-api directly.
+for _public in ("happytimeweed.com", "www.happytimeweed.com"):
+    if _public not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_public)
+
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in env("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+# The storefront's checkout is a same-origin POST from happytimeweed.com once proxied.
+for _origin in ("https://happytimeweed.com", "https://www.happytimeweed.com"):
+    if _origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(_origin)
 
 # Service token the website presents. Required in production.
 HHT_BACKEND_TOKEN = env("HHT_BACKEND_TOKEN", "")
@@ -58,6 +69,11 @@ BUNDLE_DRAFT_TTL_HOURS = int(env("BUNDLE_DRAFT_TTL_HOURS", "4"))
 # (bundles/calibration.py) and stored per store. This value applies until a store
 # has enough sales to calibrate, and stops a quiet quarter calibrating it downward.
 BUNDLE_MAX_ORDER_TOTAL = float(env("BUNDLE_MAX_ORDER_TOTAL", "300"))
+# The marketing site. The storefront is proxied to happytimeweed.com/custom-order by a
+# Next.js rewrite, so its logo and nav point back here. Absolute on purpose: those
+# assets must also resolve when someone opens budtender-api directly, where /media/*
+# does not exist.
+SITE_ORIGIN = env("SITE_ORIGIN", "https://happytimeweed.com").rstrip("/")
 
 # ── Email (order confirmations) ──────────────────────────────────────────────
 # Unset EMAIL_HOST => locmem/dummy backend and nothing is sent; bundles.emails

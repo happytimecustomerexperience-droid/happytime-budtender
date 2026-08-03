@@ -12,6 +12,11 @@
   --info-bg: #eaf4ea;
   --err: #a12020;
   --radius: 14px;
+  /* happytimeweed.com's own tokens, so the proxied page matches the site chrome. */
+  --coal: #0F1A24;
+  --amber: #E9A13B;
+  --cream: #F5F1E8;
+  --sage: #9FB3A3;
 }
 
 * { box-sizing: border-box; }
@@ -24,26 +29,64 @@ h2 { font-size: 18px; margin: 24px 0 10px; }
 h3 { font-size: 16px; margin: 0; }
 a { color: var(--brand-dark); }
 
-/* ── chrome ─────────────────────────────────────────────────────────────── */
-.topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center;
-          justify-content: space-between; gap: 12px; padding: 10px 16px;
-          background: rgba(251,252,250,.94); backdrop-filter: blur(8px);
-          border-bottom: 1px solid var(--line); }
-.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
-.brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--brand); flex: 0 0 auto; }
+/* ── site chrome ─────────────────────────────────────────────────────────────
+   Mirrors happytimeweed.com so the proxied page reads as part of the site: the
+   coal bar and amber accents are the site's own tokens (bg-coal #0F1A24, amber,
+   cream, sage). Deliberately hand-written rather than importing the site's
+   Tailwind build — this page is served by Django and must not depend on a
+   stylesheet Next.js hashes and rebuilds. */
+.sitebar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center;
+           justify-content: space-between; gap: 16px; padding: 10px 16px;
+           background: var(--coal); border-bottom: 1px solid rgba(255,255,255,.12); }
+.sitelogo { flex: 0 0 auto; display: block; }
+.sitelogo img { height: 46px; width: auto; object-fit: contain; }
+.sitenav { display: none; gap: 20px; }
+.sitenav a { color: var(--cream); text-decoration: none; font-size: 14px; font-weight: 600;
+             letter-spacing: .01em; }
+.sitenav a:hover { color: var(--amber); }
+.cartbtn { display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+           border: 1px solid rgba(255,255,255,.25); background: transparent; color: var(--cream);
+           border-radius: 10px; padding: 8px 12px; font-weight: 600; font-size: 14px; }
+.cartbtn:hover { border-color: var(--amber); color: var(--amber); }
+.pill { background: var(--amber); color: var(--coal); border-radius: 999px; min-width: 22px;
+        padding: 1px 7px; text-align: center; font-size: 12px; font-weight: 700; }
+
+/* Which store you're shopping — the one fact the site header can't carry. */
+.storebar { background: var(--card); border-bottom: 1px solid var(--line); padding: 10px 16px; }
+.brand { display: block; text-decoration: none; color: var(--ink);
+         max-width: 1100px; margin: 0 auto; }
 .brand strong { display: block; font-size: 15px; line-height: 1.2; }
 .brand small { display: block; font-size: 12px; color: var(--muted); }
-.cartbtn { display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
-           border: 1px solid var(--line); background: var(--card); border-radius: 10px;
-           padding: 8px 12px; font-weight: 600; font-size: 14px; }
-.pill { background: var(--brand); color: #fff; border-radius: 999px; min-width: 22px;
-        padding: 1px 7px; text-align: center; font-size: 12px; font-weight: 700; }
+
+@media (min-width: 760px) {
+  .sitenav { display: flex; }
+  .sitelogo img { height: 58px; }
+}
+
+/* ── age gate ────────────────────────────────────────────────────────────────
+   A rewrite serves this page without the site's React layout, so the site's own
+   age gate never runs here. Same storage keys, so verifying once covers both. */
+#htco-age { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center;
+            justify-content: center; padding: 20px; background: rgba(15,26,36,.97); }
+#htco-age[hidden] { display: none; }
+.agebox { background: var(--card); border-radius: var(--radius); padding: 28px 24px;
+          max-width: 400px; width: 100%; text-align: center; }
+.agelogo { height: 64px; width: auto; margin: 0 auto 16px; object-fit: contain; }
+.agebox h2 { margin: 0 0 8px; font-size: 20px; }
+.agebox p { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+.agebtns { display: grid; gap: 10px; }
+.agebox .fineprint { margin-top: 16px; }
 
 .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 56px; }
 .wrap.narrow { max-width: 560px; }
-.foot { border-top: 1px solid var(--line); padding: 20px 16px 40px; text-align: center;
-        color: var(--muted); font-size: 13px; }
-.foot .fineprint { max-width: 720px; margin: 8px auto 0; font-size: 11px; line-height: 1.5; }
+.foot { background: var(--coal); color: var(--sage); padding: 26px 16px 40px;
+        text-align: center; font-size: 13px; }
+.foot .fineprint { max-width: 720px; margin: 10px auto 0; font-size: 11px; line-height: 1.5;
+                   color: rgba(245,241,232,.55); }
+.footnav { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 20px;
+           margin-bottom: 14px; }
+.footnav a { color: var(--cream); text-decoration: none; font-size: 13px; font-weight: 600; }
+.footnav a:hover { color: var(--amber); }
 
 /* ── shared bits ────────────────────────────────────────────────────────── */
 .banner { border-radius: 10px; padding: 12px 14px; margin: 0 0 12px; font-size: 14px; }

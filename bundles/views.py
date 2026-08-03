@@ -92,6 +92,10 @@ def _shell(request, store: str, ctx: dict) -> dict:
         "store": store,
         "store_label": store_label(store),
         "store_address": STORE_ADDRESS.get(store, ""),
+        # Logo, nav and footer links point back at the marketing site. Absolute, so
+        # they work both through the happytimeweed.com rewrite and when this host is
+        # opened directly.
+        "SITE_ORIGIN": getattr(settings, "SITE_ORIGIN", "https://happytimeweed.com"),
         "stores": [{"slug": s, "label": store_label(s)} for s in STORE_ADDRESS],
         **ctx,
     }
