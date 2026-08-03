@@ -70,15 +70,20 @@ services:
       - .env.dutchie
     expose:
       - "8000"
-    # Publicly expose ONLY the Bearer-gated /api paths at budtender-api.happytimeweed.com
+    # Publicly expose the Bearer-gated /api paths at budtender-api.happytimeweed.com
     # so the website (Vercel) can reach the margin+profile ranker — mirrors the voice-web
     # labels (host-mode traefik-a0hc + Let's Encrypt). /admin + /dashboard stay UNreachable
     # publicly (no route matches them) — keep them internal. DNS budtender-api → this VPS
     # already exists; this just gives Traefik a router + cert for it.
+    #
+    # /custom-order is the PUBLIC bundle storefront reached from marketing email — it is
+    # unauthenticated by design (the link's HMAC is the credential). /static/bundles is
+    # scoped deliberately: the bare /static prefix would also publish the POS's own JS/CSS
+    # on the customer-facing host, which has no reason to be there.
     labels:
       - traefik.enable=true
       - traefik.docker.network=happytime-budtender_default
-      - traefik.http.routers.budtender.rule=Host(`${BUDTENDER_HOST:-budtender-api.happytimeweed.com}`) && PathPrefix(`/api`)
+      - traefik.http.routers.budtender.rule=Host(`${BUDTENDER_HOST:-budtender-api.happytimeweed.com}`) && (PathPrefix(`/api`) || PathPrefix(`/custom-order`) || PathPrefix(`/static/bundles`))
       - traefik.http.routers.budtender.entrypoints=web,websecure
       - traefik.http.routers.budtender.tls=true
       - traefik.http.routers.budtender.tls.certresolver=letsencrypt
