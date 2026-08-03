@@ -64,7 +64,11 @@ services:
     # Then warm the questionnaire facet cache BEFORE serving so the steps are instant on the first
     # request (Redis is flushed on restart). `|| true` keeps a hiccup from blocking startup;
     # `exec` hands PID 1 to gunicorn.
-    command: sh -c "( python manage.py sync_inventory || true ) & python manage.py warm_facets || true; exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-5} --worker-class gthread --threads ${GUNICORN_THREADS:-4} --timeout 60 --keep-alive 5 --max-requests 1000 --max-requests-jitter 100"
+    # collectstatic runs FIRST and per-container (staticfiles/ is dockerignored and the one-shot
+    # migrate container's copy is discarded), mirroring pos-web. This service used to serve only
+    # JSON /api so it never needed it; it now also serves the public /custom-order storefront,
+    # which without this renders unstyled with no JS.
+    command: sh -c "python manage.py collectstatic --noinput || true; ( python manage.py sync_inventory || true ) & python manage.py warm_facets || true; exec gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers ${GUNICORN_WORKERS:-5} --worker-class gthread --threads ${GUNICORN_THREADS:-4} --timeout 60 --keep-alive 5 --max-requests 1000 --max-requests-jitter 100"
     env_file:
       - .env
       - .env.dutchie
