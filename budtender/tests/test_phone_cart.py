@@ -173,8 +173,11 @@ def test_pos_queue_panel_lists_saved_phone_carts_for_budtenders(client):
 
     assert resp.status_code == 200
     body = resp.content.decode()
-    assert "Phone carts" in body
-    assert visible.draft_token in body
+    # Panel now carries online orders as well as phone calls, hence the label —
+    # and the raw draft token was dropped from the row in favour of the customer's
+    # name and contact, which is what staff actually calls out at the counter.
+    assert "Orders waiting" in body
+    assert visible.draft_token in body   # still posted by the Load form
     assert "Jane Phone" in body
     assert "$60.00" in body
     assert "Already Loaded" not in body

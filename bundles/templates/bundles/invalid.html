@@ -1,0 +1,15 @@
+{% extends "bundles/base.html" %}
+{% block title %}This bundle link didn't open{% endblock %}
+
+{% block body %}
+<main class="wrap narrow">
+  <h1>This link didn't open</h1>
+  <p class="lede">
+    Bundle links sometimes get shortened or rewritten by email apps, which breaks them.
+    Nothing is wrong with your account and no offer has been used up.
+  </p>
+  <p>Try opening the link directly from the original email — or just browse the menu and
+     mention your bundle at the counter. The discount is applied in store either way.</p>
+  <a class="primary block" href="{% url 'bundle_menu' %}?loc={{ store }}">Browse the menu</a>
+</main>
+{% endblock %}

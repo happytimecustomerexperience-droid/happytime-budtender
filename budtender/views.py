@@ -21,7 +21,7 @@ from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
                      CustomerProfile, Feedback, PhoneCartDraft, Product,
                      SuggestedProduct)
 from .pairing import pair_for
-from . import facets
+from . import facets, live_stock
 from .gemini_chat import GeminiChatUnavailable, generate_chat_reply
 from .intents import classify_intent, conversation_breakdown, intent_breakdown
 from .ranking import MIN_STOCK, W_ANON, W_KNOWN, rank_products
@@ -131,9 +131,21 @@ def _draft_lookup(data: dict):
     return None
 
 
-def _product_line(product: Product, qty: int) -> dict:
-    unit = float(product.price or 0)
-    was = float(product.price_was) if product.price_was else None
+def _product_line(product: Product, qty: int, live: dict | None = None) -> dict:
+    """One quoted cart line. Price and stock come from the live sales-floor pull
+    when we have it — quoting a customer off the beat-refreshed table is how a
+    held order turns into an argument at the register."""
+    if live:
+        unit = float(live.get("price") or 0)
+        was = live.get("price_was")
+        was = float(was) if was not in (None, "") else None
+        stock = int(live.get("quantity_on_hand") or 0)
+        source = "live_sales_floor"
+    else:
+        unit = float(product.price or 0)
+        was = float(product.price_was) if product.price_was else None
+        stock = product.quantity_on_hand
+        source = "budtender_product"
     discount_each = max((was or unit) - unit, 0)
     return {
         "sku": product.sku,
@@ -146,8 +158,8 @@ def _product_line(product: Product, qty: int) -> dict:
         "price_was": was,
         "discount_each": round(discount_each, 2),
         "line_total": round(unit * qty, 2),
-        "stock_on_hand": product.quantity_on_hand,
-        "quote_source": "budtender_product",
+        "stock_on_hand": stock,
+        "quote_source": source,
     }
 
 
@@ -164,12 +176,23 @@ def _recompute_quote(lines: list[dict]) -> dict:
         line["quantity"] = qty
         line["line_total"] = round(unit * qty, 2)
     total = max(subtotal - discount, 0)
+    # Report what actually priced these lines. The old fixed label claimed live
+    # public pricing regardless of source, which made a stale quote unfalsifiable.
+    sources = {str(line.get("quote_source") or "budtender_product") for line in lines}
+    if not sources:
+        source = "empty"
+    elif sources == {"live_sales_floor"}:
+        source = "live_sales_floor"
+    elif "live_sales_floor" in sources:
+        source = "mixed"
+    else:
+        source = "budtender_product"
     return {
         "subtotal": round(subtotal, 2),
         "discounts": round(discount, 2),
         "total": round(total, 2),
         "currency": "USD",
-        "source": "current_public_product_price",
+        "source": source,
         "generated_at": timezone.now().isoformat(),
         "final_total_note": "POS/register revalidates availability, discounts, taxes, and final total.",
     }
@@ -257,24 +280,36 @@ class InStockProductsView(APIView):
         valid = {s[0] for s in STORES}
         if location not in valid:
             return Response({"error": f"unknown store: {location}"}, status=400)
-        rows = (
-            Product.objects
-            .filter(location_slug=location, availability=True,
-                    quantity_on_hand__gte=MIN_STOCK)
-            .values_list("name", "quantity_on_hand")
-        )
+        # Stock comes from the live sales-floor pull, not the beat-refreshed table:
+        # this endpoint IS the website's in-stock guarantee, so a stale row here
+        # sends a customer to a product that isn't on the shelf.
+        live = live_stock.stock_map(location)
         stock: dict[str, int] = {}
+        if live.usable:
+            rows = ((r.get("name") or "", r.get("quantity_on_hand") or 0)
+                    for r in live.by_sku.values())
+        else:
+            rows = (
+                Product.objects
+                .filter(location_slug=location, availability=True,
+                        quantity_on_hand__gte=MIN_STOCK)
+                .values_list("name", "quantity_on_hand")
+            )
         for name, qty in rows:
+            qty = int(qty or 0)
+            if qty < MIN_STOCK:
+                continue
             slug = _slug_from_name(name)
             if not slug:
                 continue
-            stock[slug] = max(stock.get(slug, 0), int(qty or 0))
+            stock[slug] = max(stock.get(slug, 0), qty)
         slugs = sorted(stock.keys())
         return Response({
             "store": location,
             "count": len(slugs),
             "slugs": slugs,
             "stock": stock,
+            "stock_source": live.source,
             "generated_at": timezone.now().isoformat(),
         })
 
@@ -293,13 +328,22 @@ class ProductBySkuView(APIView):
         sku = (request.query_params.get("sku") or "").strip()
         if not sku:
             return Response({"error": "sku required"}, status=400)
-        p = (
-            Product.objects
-            .filter(location_slug=location, sku=sku, availability=True,
-                    quantity_on_hand__gte=MIN_STOCK)
-            .first()
-        )
-        return Response({"product": public_product(p)} if p else {})
+        # This is the voice agent's check_inventory — a caller is on the phone
+        # being told "yes, in stock, $X". The live sales-floor pull decides that,
+        # not the table. The DB row supplies name/strain/terpene/image only.
+        live = live_stock.stock_map(location)
+        qs = Product.objects.filter(location_slug=location, sku=sku)
+        if not live.usable:
+            # No live data — fall back to the table's own gate rather than
+            # answering with nothing.
+            qs = qs.filter(availability=True, quantity_on_hand__gte=MIN_STOCK)
+        p = qs.first()
+        if not p:
+            return Response({})
+        if not live.buyable(sku=p.sku, product_id=p.product_id, min_stock=MIN_STOCK):
+            return Response({"stock_source": live.source})
+        row = live.get(p.sku, p.product_id)
+        return Response({"product": public_product(p, live=row), "stock_source": live.source})
 
 
 RESUME_WINDOW = timedelta(days=30)
@@ -961,15 +1005,19 @@ class PhoneCartUpsertView(APIView):
         if action == "remove_item":
             lines = [line for line in lines if str(line.get("sku")) != sku]
         elif action in {"add_item", "set_quantity"}:
-            product = (
-                Product.objects
-                .filter(location_slug=draft.location_slug, sku=sku, availability=True,
-                        quantity_on_hand__gte=MIN_STOCK)
-                .first()
-            )
+            # in_stock and the quoted price are decided by the live sales-floor
+            # pull; the Product row only supplies name/brand/category.
+            live = live_stock.stock_map(draft.location_slug)
+            qs = Product.objects.filter(location_slug=draft.location_slug, sku=sku)
+            if not live.usable:
+                qs = qs.filter(availability=True, quantity_on_hand__gte=MIN_STOCK)
+            product = qs.first()
             if not product:
                 return Response({"ok": False, "error": "not_in_stock", "sku": sku}, status=409)
-            fresh = _product_line(product, qty)
+            if not live.buyable(sku=product.sku, product_id=product.product_id, min_stock=MIN_STOCK):
+                return Response({"ok": False, "error": "not_in_stock", "sku": sku,
+                                 "stock_source": live.source}, status=409)
+            fresh = _product_line(product, qty, live=live.get(product.sku, product.product_id))
             found = False
             for i, line in enumerate(lines):
                 if str(line.get("sku")) == sku:

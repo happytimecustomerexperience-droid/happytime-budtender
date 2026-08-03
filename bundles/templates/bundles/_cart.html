@@ -1,0 +1,67 @@
+<div class="cartbox" data-count="{{ cart_ctx.count|default:0 }}">
+  <div class="cart-head">
+    <h3>Your cart</h3>
+    <span class="pill">{{ cart_ctx.count|default:0 }}</span>
+  </div>
+
+  {% if cart_ctx.error %}<p class="err">{{ cart_ctx.error }}</p>{% endif %}
+
+  {% if cart_ctx.lines %}
+  <ul class="cart-lines">
+    {% for line in cart_ctx.lines %}
+    <li class="cart-line {% if not line.in_stock %}gone{% endif %}">
+      <div class="cl-thumb">
+        {% if line.image %}<img src="{{ line.image }}" alt="" loading="lazy">{% else %}<span class="ph"></span>{% endif %}
+      </div>
+      <div class="cl-meta">
+        <p class="pname">{{ line.name }}</p>
+        <p class="sub">{{ line.brand }}{% if line.size %} · {{ line.size }}{% endif %}</p>
+        {% if line.issue == "sold_out" %}
+          <p class="warnline">Sold out — remove to check out</p>
+        {% elif line.issue == "reduced" %}
+          <p class="warnline">Only {{ line.quantity }} left — quantity updated</p>
+        {% endif %}
+      </div>
+      <div class="cl-qty">
+        {% if line.in_stock %}
+        <form class="qtyform" data-url="{% url 'bundle_cart_update' %}">
+          <input type="hidden" name="loc" value="{{ store }}">
+          <input type="hidden" name="product_id" value="{{ line.product_id }}">
+          <button type="button" class="qbtn" data-delta="-1" aria-label="Decrease">−</button>
+          <input class="qty" name="qty" type="text" inputmode="numeric" value="{{ line.quantity }}" aria-label="Quantity">
+          <button type="button" class="qbtn" data-delta="1" aria-label="Increase">+</button>
+        </form>
+        <span class="amt">${{ line.line_total|floatformat:2 }}</span>
+        {% endif %}
+        <form class="rmform" data-url="{% url 'bundle_cart_remove' %}">
+          <input type="hidden" name="loc" value="{{ store }}">
+          <input type="hidden" name="product_id" value="{{ line.product_id }}">
+          <button type="button" class="linkbtn remove">Remove</button>
+        </form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+
+  <div class="cart-totals">
+    {% if cart_ctx.quote.bundle_name %}
+    <div class="row disc">
+      <span>{{ cart_ctx.quote.bundle_name }} ({{ cart_ctx.quote.bundle_discount_pct }}%)</span>
+      <span>applied in store</span>
+    </div>
+    {% endif %}
+    <div class="row grand"><span>Subtotal</span><span>${{ cart_ctx.quote.total|default:0|floatformat:2 }}</span></div>
+    <p class="fineprint">Taxes, discounts and the final total are calculated at the register.</p>
+  </div>
+
+  <a class="primary block {% if cart_ctx.issues %}is-disabled{% endif %}"
+     href="{% url 'bundle_checkout' %}?loc={{ store }}">
+    {% if cart_ctx.issues %}Review your cart{% else %}Check out{% endif %}
+  </a>
+  <a class="ghost block" href="{% url 'bundle_menu' %}?loc={{ store }}">Keep shopping</a>
+
+  {% else %}
+  <p class="muted">Your cart is empty.</p>
+  <a class="primary block" href="{% url 'bundle_menu' %}?loc={{ store }}">Browse the menu</a>
+  {% endif %}
+</div>

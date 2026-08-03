@@ -102,3 +102,25 @@ def get_store(name: str) -> Store:
     if name not in stores:
         raise KeyError(f"store {name!r} not configured (have: {list(stores)})")
     return stores[name]
+
+
+# ── store key ⇄ happytime location_slug ──────────────────────────────────────
+# Two vocabularies for the same three stores, and they disagree on exactly one:
+#   POS / Dutchie store key : yakima | mtvernon      | pullman   (DUTCHIE_STORES)
+#   happytime location_slug : yakima | mount-vernon  | pullman   (budtender.models.STORES)
+# Anything that joins a PhoneCartDraft / Product / CustomerProfile (keyed by
+# location_slug) to POS state (keyed by store key) MUST translate, or Mount Vernon
+# silently reads as a different store — or as no store at all.
+_KEY_TO_SLUG = {"yakima": "yakima", "mtvernon": "mount-vernon", "pullman": "pullman"}
+_SLUG_TO_KEY = {v: k for k, v in _KEY_TO_SLUG.items()}
+
+
+def location_slug(store_key: str) -> str:
+    """POS/Dutchie store key -> happytime location_slug."""
+    return _KEY_TO_SLUG.get((store_key or "").strip(), (store_key or "").strip())
+
+
+def store_key(location_slug_value: str) -> str:
+    """happytime location_slug -> POS/Dutchie store key."""
+    value = (location_slug_value or "").strip()
+    return _SLUG_TO_KEY.get(value, value)

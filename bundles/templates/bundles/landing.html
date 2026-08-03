@@ -1,0 +1,75 @@
+{% extends "bundles/base.html" %}
+{% block title %}{{ bundle.name }} — {{ store_label }}{% endblock %}
+
+{% block body %}
+<main class="wrap landing-page">
+  <header class="hdr">
+    <div>
+      <p class="eyebrow">Your bundle · in-store at</p>
+      <h1>{{ store_label }}</h1>
+      <p class="addr">{{ store_address }}</p>
+    </div>
+    <div class="badge"><span class="pct">{{ bundle.discount_pct }}%</span><span class="off">off</span></div>
+  </header>
+
+  <h2 class="bname">{{ bundle.name }}</h2>
+
+  {% if expired %}
+  <div class="banner warn">This offer has ended, but everything below is still in stock today at current prices.</div>
+  {% endif %}
+  {% if not result.inventory_live %}
+  <div class="banner warn">We couldn't reach the live menu just now — please double-check availability in store.</div>
+  {% endif %}
+  {% if result.substitutions %}
+  <div class="banner info">
+    {{ result.substitutions }} item{{ result.substitutions|pluralize }} from your email sold out. We picked the closest match still on the shelf — swap anything from the menu.
+  </div>
+  {% endif %}
+  {% if result.missing %}
+  <div class="banner warn">
+    {{ result.missing }} slot{{ result.missing|pluralize }} couldn't be filled automatically. Pick something from the menu to complete your bundle.
+  </div>
+  {% endif %}
+
+  <p class="lede">These are already in your cart. Add anything else you'd like, then check out — you pay in store.</p>
+
+  <ul class="lines">
+    {% for line in lines %}
+    <li class="line {{ line.status }}">
+      <div class="thumb">
+        {% if line.product.image %}<img src="{{ line.product.image }}" alt="" loading="lazy">
+        {% else %}<span class="ph"></span>{% endif %}
+      </div>
+      <div class="meta">
+        <p class="slot">{{ line.qty }}× {{ line.slot_label }}</p>
+        {% if line.product %}
+          <p class="pname">{{ line.product.name }}</p>
+          <p class="sub">{{ line.product.brand }}{% if line.product.size %} · {{ line.product.size }}{% endif %}{% if line.product.strain_type %} · {{ line.product.strain_type }}{% endif %}</p>
+          {% if line.status == "substituted" and line.replaces.name %}
+          <p class="swapped">Replaces <em>{{ line.replaces.name }}</em> — sold out</p>
+          {% endif %}
+        {% else %}
+          <p class="pname muted">Nothing in stock matched this slot</p>
+          <p class="sub">Pick one from the menu to complete your bundle.</p>
+        {% endif %}
+      </div>
+      <div class="price">
+        {% if line.product %}<span class="amt">${{ line.line_total|floatformat:2 }}</span>{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+
+  <div class="totals">
+    <div class="row"><span>Subtotal</span><span>${{ result.subtotal|floatformat:2 }}</span></div>
+    <div class="row disc"><span>Bundle discount ({{ bundle.discount_pct }}%)</span><span>−${{ result.discount|floatformat:2 }}</span></div>
+    <div class="row grand"><span>Your price</span><span>${{ result.total|floatformat:2 }}</span></div>
+    <p class="fineprint">The {{ bundle.discount_pct }}% comes off at the register — mention your bundle to the budtender. Taxes and the final total are calculated in store.</p>
+  </div>
+
+  <section class="cta">
+    <a class="primary block big" href="{% url 'bundle_checkout' %}?loc={{ store }}">Check out</a>
+    <a class="ghost block" href="{% url 'bundle_menu' %}?loc={{ store }}">Add more from the menu</a>
+  </section>
+</main>
+{% endblock %}

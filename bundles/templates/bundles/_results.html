@@ -1,0 +1,30 @@
+<p class="count">{{ total }} product{{ total|pluralize }} in stock</p>
+<div class="grid">
+  {% for p in products %}
+  <article class="card">
+    <div class="thumb">
+      {% if p.image %}<img src="{{ p.image }}" alt="" loading="lazy">{% else %}<span class="ph"></span>{% endif %}
+    </div>
+    <p class="pname">{{ p.name }}</p>
+    <p class="sub">{{ p.brand }}{% if p.size %} · {{ p.size }}{% endif %}</p>
+    <p class="sub">{% if p.strain_type %}{{ p.strain_type }}{% endif %}{% if p.thc %} · {{ p.thc|floatformat:1 }}% THC{% endif %}</p>
+    <p class="amt">${{ p.price|floatformat:2 }}</p>
+    <form class="addform" data-url="{% url 'bundle_cart_add' %}">
+      <input type="hidden" name="loc" value="{{ store }}">
+      <input type="hidden" name="product_id" value="{{ p.product_id }}">
+      <input type="hidden" name="qty" value="1">
+      <button type="button" class="primary add">Add to cart</button>
+    </form>
+  </article>
+  {% empty %}
+  <p class="muted">Nothing in stock matches those filters right now.</p>
+  {% endfor %}
+</div>
+
+{% if pages > 1 %}
+<div class="pager">
+  <button type="button" class="ghost page-btn" data-page="{{ page|add:'-1' }}" {% if not has_prev %}disabled{% endif %}>← Prev</button>
+  <span class="pg">Page {{ page }} of {{ pages }}</span>
+  <button type="button" class="ghost page-btn" data-page="{{ page|add:'1' }}" {% if not has_next %}disabled{% endif %}>Next →</button>
+</div>
+{% endif %}

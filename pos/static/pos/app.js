@@ -41,4 +41,77 @@
     var step = card ? (card.offsetWidth + 14) * 5 : rail.clientWidth;
     rail.scrollBy({ left: btn.hasAttribute("data-rail-prev") ? -step : step, behavior: "smooth" });
   });
+
+  /* New-order alert.
+   *
+   * The queue panel re-polls every 5s. An online order that nobody notices is a
+   * customer standing at the counter while their order sits in a list — so any
+   * token that wasn't in the previous poll rings a bell, flashes the panel, and
+   * marks the tab title. Tones are synthesised (no asset, and CSP-safe).
+   */
+  var knownOrders = null;   // null until the first poll, so page load is never "new"
+  var baseTitle = document.title;
+  var unseen = 0;
+
+  function chime() {
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      var ctx = new Ctx();
+      [880, 1174].forEach(function (freq, i) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        var t = ctx.currentTime + i * 0.16;
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.22, t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+        osc.start(t);
+        osc.stop(t + 0.16);
+      });
+      setTimeout(function () { ctx.close(); }, 600);
+    } catch (err) { /* audio blocked until first interaction — the flash still shows */ }
+  }
+
+  function tokensNow() {
+    var head = document.getElementById("orders-head");
+    if (!head) return null;
+    return (head.getAttribute("data-order-tokens") || "").trim().split(/\s+/).filter(Boolean);
+  }
+
+  function checkOrders() {
+    var now = tokensNow();
+    if (now === null) return;
+    if (knownOrders === null) { knownOrders = now; return; }   // first poll = baseline
+    var fresh = now.filter(function (t) { return knownOrders.indexOf(t) === -1; });
+    knownOrders = now;
+    if (!fresh.length) return;
+
+    chime();
+    var wrap = document.getElementById("queue");
+    if (wrap) {
+      wrap.classList.remove("neworder");
+      void wrap.offsetWidth;                  // restart the animation
+      wrap.classList.add("neworder");
+    }
+    unseen += fresh.length;
+    document.title = "(" + unseen + ") New order — " + baseTitle;
+  }
+
+  document.body.addEventListener("htmx:afterSwap", function (e) {
+    if (e.target && e.target.id === "queue") checkOrders();
+  });
+
+  // Clear the tab marker once a budtender is actually looking at the screen.
+  ["click", "keydown"].forEach(function (evt) {
+    document.addEventListener(evt, function () {
+      if (unseen) { unseen = 0; document.title = baseTitle; }
+    });
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden && unseen) { unseen = 0; document.title = baseTitle; }
+  });
 })();

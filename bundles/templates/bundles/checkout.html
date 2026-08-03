@@ -1,0 +1,73 @@
+{% extends "bundles/base.html" %}
+{% block title %}Checkout — {{ store_label }}{% endblock %}
+
+{% block body %}
+<main class="wrap narrow checkout-page">
+  {% if empty %}
+    <h1>Your cart is empty</h1>
+    <p class="lede">Add a few things and come back.</p>
+    <a class="primary block" href="{% url 'bundle_menu' %}?loc={{ store }}">Browse the menu</a>
+  {% else %}
+    <h1>Almost done</h1>
+    <p class="lede">
+      We'll hold these at <strong>{{ store_label }}</strong> for {{ draft_ttl|default:4 }} hours.
+      No payment now — you pay in store when you pick up.
+    </p>
+
+    {% if errors.cart %}<div class="banner warn">{{ errors.cart }}</div>{% endif %}
+
+    <section class="review">
+      <h2>Your order</h2>
+      <ul class="review-lines">
+        {% for line in cart_ctx.lines %}
+        <li class="{% if not line.in_stock %}gone{% endif %}">
+          <span class="q">{{ line.quantity }}×</span>
+          <span class="n">{{ line.name }}<small>{{ line.brand }}{% if line.size %} · {{ line.size }}{% endif %}</small></span>
+          <span class="a">{% if line.in_stock %}${{ line.line_total|floatformat:2 }}{% else %}sold out{% endif %}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      <div class="row grand"><span>Subtotal</span><span>${{ cart_ctx.quote.total|default:0|floatformat:2 }}</span></div>
+      {% if cart_ctx.quote.bundle_name %}
+      <p class="fineprint">Mention your <strong>{{ cart_ctx.quote.bundle_name }}</strong> at the counter so your {{ cart_ctx.quote.bundle_discount_pct }}% comes off.</p>
+      {% endif %}
+      <p class="fineprint">Taxes and the final total are calculated at the register.</p>
+      <a class="linkbtn" href="{% url 'bundle_menu' %}?loc={{ store }}">Edit cart</a>
+    </section>
+
+    <form method="post" class="orderform" novalidate>
+      {% csrf_token %}
+      <input type="hidden" name="loc" value="{{ store }}">
+      <h2>Who's picking up?</h2>
+
+      <label>
+        Full name
+        <input name="name" value="{{ form.name|default:'' }}" maxlength="120"
+               autocomplete="name" required aria-describedby="e-name">
+        {% if errors.name %}<span class="err" id="e-name">{{ errors.name }}</span>{% endif %}
+      </label>
+
+      <label>
+        Phone
+        <input name="phone" type="tel" inputmode="tel" maxlength="20"
+               autocomplete="tel" required aria-describedby="e-phone"
+               placeholder="509 555 1212">
+        {% if errors.phone %}<span class="err" id="e-phone">{{ errors.phone }}</span>{% endif %}
+        <small>So we can reach you if something sells out before you arrive.</small>
+      </label>
+
+      <label>
+        Email <span class="opt">optional</span>
+        <input name="email" type="email" value="{{ form.email|default:'' }}" maxlength="254"
+               autocomplete="email" aria-describedby="e-email">
+        {% if errors.email %}<span class="err" id="e-email">{{ errors.email }}</span>{% endif %}
+      </label>
+
+      <button type="submit" class="primary block big">Place order</button>
+      <p class="fineprint">
+        You must be 21+ with valid ID to pick up. We don't take payment online.
+      </p>
+    </form>
+  {% endif %}
+</main>
+{% endblock %}

@@ -182,10 +182,11 @@ class AnalyticsEvent(models.Model):
 
 
 class PhoneCartDraft(models.Model):
-    """A staged phone/cart handoff for POS staff.
+    """A staged cart handoff for POS staff — from a phone call or an online order.
 
-    Voice may create/update/release these rows, but it never writes a Dutchie order.
-    Staff must claim the draft into the normal POS session cart before checkout.
+    Voice and the public /custom-order page may create/update/release these rows,
+    but neither ever writes a Dutchie order. Staff must claim the draft into the
+    normal POS session cart before checkout.
     """
 
     class Status(models.TextChoices):
@@ -195,6 +196,10 @@ class PhoneCartDraft(models.Model):
         EXPIRED = "expired", "Expired"
         CANCELLED = "cancelled", "Cancelled"
 
+    class Source(models.TextChoices):
+        VOICE = "voice", "Phone call"
+        ONLINE = "online", "Online order"
+
     draft_token = models.CharField(max_length=64, unique=True, db_index=True, default=_phone_cart_token)
     call_id = models.CharField(max_length=80, blank=True, db_index=True)
     session_token = models.CharField(max_length=80, blank=True, db_index=True)
@@ -202,6 +207,26 @@ class PhoneCartDraft(models.Model):
     phone_hash = models.CharField(max_length=64, blank=True, db_index=True)
     phone_last4 = models.CharField(max_length=4, blank=True)
     pickup_name = models.CharField(max_length=120, blank=True)
+    # Online orders need real contact details — staff has to match the customer to a
+    # Dutchie guest and call them if something sold out between order and pickup.
+    # The voice path deliberately stores only hash+last4 and leaves these blank.
+    source = models.CharField(max_length=16, choices=Source.choices, default=Source.VOICE, db_index=True)
+    contact_phone = models.CharField(max_length=32, blank=True)
+    contact_email = models.EmailField(blank=True)
+    bundle_slug = models.CharField(max_length=32, blank=True)
+
+    class Customer(models.TextChoices):
+        MATCHED = "matched", "Matched existing account"
+        NEW = "new", "No account — create at claim"
+        UNRESOLVED = "unresolved", "Lookup unavailable"
+
+    # An order with no customer is a dead end: cart_submit requires an AcctId. We
+    # resolve by phone when the order is placed (read-only) and stamp the result;
+    # the POS claim then auto-selects the match, or creates the guest and selects
+    # it. `unresolved` means the lookup itself failed — staff must search by hand.
+    dutchie_acct_id = models.CharField(max_length=32, blank=True, db_index=True)
+    customer_status = models.CharField(max_length=16, choices=Customer.choices, blank=True)
+    customer_name = models.CharField(max_length=160, blank=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN, db_index=True)
     lines = models.JSONField(default=list, blank=True)
     quote = models.JSONField(default=dict, blank=True)

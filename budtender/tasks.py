@@ -16,7 +16,7 @@ from django.utils.text import slugify
 
 from customers.models import Customer as CachedCustomer
 
-from . import dutchie
+from . import dutchie, live_stock
 from .models import STORES, CustomerProfile, Product, SuggestedProduct, SyncState
 
 STORE_SLUGS = [s[0] for s in STORES]
@@ -53,6 +53,10 @@ EST_MARGIN_FRACTION = Decimal("0.72")  # slightly conservative vs the 0.74 obser
 @shared_task
 def sync_inventory(location_slug: str) -> int:
     rows = dutchie.fetch_inventory(location_slug)
+    # These rows ARE the live sales-floor snapshot the customer-facing endpoints
+    # read, so the beat sync doubles as the live_stock warmer at zero extra cost.
+    if rows:
+        live_stock.prime(location_slug, rows)
     seen = set()
     for r in rows:
         price = Decimal(str(r.get("price", 0) or 0))
@@ -331,6 +335,17 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
 @shared_task
 def sync_transactions_all() -> dict:
     return {s: sync_transactions(s) for s in STORE_SLUGS}
+
+
+@shared_task
+def calibrate_order_caps() -> dict:
+    """Re-derive the online-order cap per store from real basket totals.
+
+    Keeps the cap tracking the business instead of being a number someone guessed
+    once. See bundles/calibration.py for the percentile and the floor.
+    """
+    from bundles import calibration
+    return {s: calibration.calibrate(s) for s in STORE_SLUGS}
 
 
 @shared_task

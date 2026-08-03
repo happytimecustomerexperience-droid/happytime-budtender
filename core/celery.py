@@ -29,4 +29,10 @@ app.conf.beat_schedule = {
         "task": "budtender.tasks.build_copurchase_all",
         "schedule": 24 * 60 * 60.0,  # daily
     },
+    # Re-derive the online-order cap from real basket totals, so it tracks the
+    # business instead of staying a number someone guessed once.
+    "calibrate-order-caps-weekly": {
+        "task": "budtender.tasks.calibrate_order_caps",
+        "schedule": 7 * 24 * 60 * 60.0,  # weekly
+    },
 }

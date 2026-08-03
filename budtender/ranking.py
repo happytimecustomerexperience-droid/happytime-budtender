@@ -16,6 +16,16 @@ from .engine import (MIN_STOCK, _recent_affinity, _request_weights,
 from .engine import why as _engine_why
 from .engine import W_ANON, W_KNOWN  # noqa: F401 — re-exported for views._clean_ranking_weights
 from .models import CustomerProfile, Product
+from . import live_stock
+
+
+def _live_price(live, p: Product) -> float:
+    """Sales-floor price when we have one, else the enrichment row's."""
+    row = live.get(p.sku, p.product_id) if live.usable else None
+    if row and row.get("price"):
+        return float(row["price"])
+    return float(p.price or 0)
+
 
 CATEGORY_BY_SLOTKEY = {
     "flower": "flower",
@@ -404,16 +414,26 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
     # filter. WEIGHT always wins over price.
     premium_intent = (slots.get("price_tier") == "top") or (lo >= 100)
 
-    qs = Product.objects.filter(location_slug=location, availability=True, quantity_on_hand__gte=MIN_STOCK)
+    # Never recommend something that isn't on the sales floor right now. The
+    # table's own gate is only a fallback for when the live pull is unavailable —
+    # otherwise a sellout keeps getting suggested until the next beat sync.
+    live = live_stock.stock_map(location)
+    qs = Product.objects.filter(location_slug=location)
+    if not live.usable:
+        qs = qs.filter(availability=True, quantity_on_hand__gte=MIN_STOCK)
     if category:
         qs = qs.filter(category=category)
     candidates = [p for p in qs if p.sku not in exclude_skus]
+    if live.usable:
+        candidates = [p for p in candidates
+                      if live.buyable(sku=p.sku, product_id=p.product_id, min_stock=MIN_STOCK)]
     # Granular subtype (rosin / gummies / lollipops…) — a HARD filter when chosen.
     sub = slots.get("subcategory")
     if sub:
         candidates = [p for p in candidates if product_subtype(p.name, p.category) == sub]
     if not premium_intent:
-        candidates = [p for p in candidates if lo <= float(p.price) <= hi]
+        candidates = [p for p in candidates
+                      if lo <= _live_price(live, p) <= hi]
     if not candidates:
         return []
 

@@ -1,0 +1,38 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{% block title %}Order online — {{ store_label }}{% endblock %}</title>
+<link rel="stylesheet" href="{% static 'bundles/bundle.css' %}">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="{% url 'bundle_menu' %}?loc={{ store }}">
+    <span class="brand-mark"></span>
+    <span>
+      <strong>{{ store_label }}</strong>
+      <small>{{ store_address }}</small>
+    </span>
+  </a>
+  <a class="cartbtn" href="{% url 'bundle_checkout' %}?loc={{ store }}" id="cart-link">
+    Cart <span class="pill" id="cart-count">{{ cart_ctx.count|default:0 }}</span>
+  </a>
+</header>
+
+{% block body %}{% endblock %}
+
+<footer class="foot">
+  <p>Order online, pay in store. We hold your items at {{ store_label }}.</p>
+  <p class="fineprint">
+    This product has intoxicating effects and may be habit forming. Marijuana can impair
+    concentration, coordination and judgement — do not operate a vehicle or machinery under
+    its influence. There may be health risks associated with consumption of this product.
+    For use only by adults twenty-one and older. Keep out of reach of children.
+  </p>
+</footer>
+
+<script src="{% static 'bundles/bundle.js' %}" defer></script>
+</body>
+</html>

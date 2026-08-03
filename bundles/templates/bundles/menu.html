@@ -1,0 +1,49 @@
+{% extends "bundles/base.html" %}
+{% block title %}Menu — {{ store_label }}{% endblock %}
+
+{% block body %}
+<main class="wrap menu-page">
+  {% if not inventory_live %}
+  <div class="banner warn">We couldn't reach the live menu just now. Please try again in a moment.</div>
+  {% endif %}
+
+  <div class="menu-layout">
+    <section class="menu-main">
+      <form class="filters" id="menu-filters" autocomplete="off"
+            data-results-url="{% url 'bundle_results' %}">
+        <input type="hidden" name="loc" value="{{ store }}">
+        <input type="hidden" name="cat" id="f-cat" value="{{ f.cat }}">
+        <input class="search grow" name="q" value="{{ f.q }}" placeholder="Search {{ total_products }} products…" aria-label="Search products">
+        <input class="search" name="brand_q" value="{{ f.brand_q }}" placeholder="Brand…" aria-label="Brand">
+        <select name="strain_type" aria-label="Type">
+          <option value="">Any type</option>
+          {% for s in facets.strain_types %}<option value="{{ s }}" {% if f.strain_type == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+        </select>
+        <select name="sort" aria-label="Sort">
+          <option value="popular" {% if f.sort == 'popular' %}selected{% endif %}>Most popular</option>
+          <option value="price_asc" {% if f.sort == 'price_asc' %}selected{% endif %}>Price ↑</option>
+          <option value="price_desc" {% if f.sort == 'price_desc' %}selected{% endif %}>Price ↓</option>
+          <option value="thc_high" {% if f.sort == 'thc_high' %}selected{% endif %}>High THC</option>
+        </select>
+      </form>
+
+      <div class="tabs" id="cat-tabs">
+        <button type="button" class="tab {% if not f.cat %}active{% endif %}" data-cat="">All</button>
+        {% for c in cats %}
+        <button type="button" class="tab {% if f.cat == c.key %}active{% endif %}" data-cat="{{ c.key }}">
+          {{ c.label }} <span class="n">{{ c.count }}</span>
+        </button>
+        {% endfor %}
+      </div>
+
+      <div id="results" aria-live="polite">
+        <p class="muted">Loading the menu…</p>
+      </div>
+    </section>
+
+    <aside class="menu-aside">
+      <div id="cart-panel">{% include "bundles/_cart.html" %}</div>
+    </aside>
+  </div>
+</main>
+{% endblock %}

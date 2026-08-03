@@ -21,19 +21,33 @@ def _num(v):
     return float(v) if isinstance(v, Decimal) else v
 
 
-def public_product(p: Product, rank: int = 1, why_this: str | None = None) -> dict:
-    """Map a Product to the website's SearchResultPublic shape (NO cost/margin)."""
+def public_product(p: Product, rank: int = 1, why_this: str | None = None,
+                   live: dict | None = None) -> dict:
+    """Map a Product to the website's SearchResultPublic shape (NO cost/margin).
+
+    `live` is a row from `live_stock.StockMap` for this SKU. When present, its
+    price and stock WIN over the Product row's — the table is refreshed on a beat
+    and is the wrong thing to quote a customer. Everything else (strain, terpene,
+    image) legitimately comes from the enrichment row.
+    """
+    price = _num(p.price) or 0
+    price_was = _num(p.price_was) if p.price_was else None
+    stock = p.quantity_on_hand
+    if live:
+        price = live.get("price", price) or 0
+        price_was = live.get("price_was")
+        stock = int(live.get("quantity_on_hand") or 0)
     return {
         "rank": rank,
         "sku": p.sku,
         "name": p.name,
         "brand": p.brand or "",
         "strain": p.strain or None,
-        "price": _num(p.price) or 0,
-        "price_was": _num(p.price_was) if p.price_was else None,
+        "price": price,
+        "price_was": price_was,
         "thc_percent": p.thc_percent,
         "dominant_terpene": p.dominant_terpene or None,
-        "stock_on_hand": p.quantity_on_hand,
+        "stock_on_hand": stock,
         "dutchie_link": f"/catalog/product/{p.slug}" if p.slug else "/catalog",
         "image_url": p.image_url or None,
         "why_this": why_this,

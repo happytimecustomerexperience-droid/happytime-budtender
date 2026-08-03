@@ -1,0 +1,42 @@
+{% extends "bundles/base.html" %}
+{% block title %}Order placed — {{ store_label }}{% endblock %}
+
+{% block body %}
+<main class="wrap narrow success-page">
+  <div class="tick" aria-hidden="true">✓</div>
+  <h1>Order placed</h1>
+  <p class="lede">
+    Thanks {{ order.pickup_name }} — we're holding your order at <strong>{{ store_label }}</strong>.
+  </p>
+
+  <div class="ordercard">
+    <div class="row"><span>Pickup name</span><strong>{{ order.pickup_name }}</strong></div>
+    <div class="row"><span>Store</span><strong>{{ store_label }}</strong></div>
+    <div class="row"><span>Address</span><strong>{{ store_address }}</strong></div>
+    <div class="row"><span>Held until</span><strong>{{ order.expires_at|date:"g:i A, D j M" }}</strong></div>
+    <div class="row"><span>Order code</span><strong class="code">{{ order.draft_token|slice:"-6:"|upper }}</strong></div>
+  </div>
+
+  <ul class="review-lines">
+    {% for line in cart_ctx.lines %}
+    <li>
+      <span class="q">{{ line.quantity }}×</span>
+      <span class="n">{{ line.name }}<small>{{ line.brand }}{% if line.size %} · {{ line.size }}{% endif %}</small></span>
+      <span class="a">${{ line.line_total|floatformat:2 }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  <div class="row grand"><span>Subtotal</span><span>${{ cart_ctx.quote.total|default:0|floatformat:2 }}</span></div>
+
+  <div class="banner info">
+    <strong>What happens next:</strong> walk in and give your name at the counter.
+    {% if cart_ctx.quote.bundle_name %}
+    Mention your <strong>{{ cart_ctx.quote.bundle_name }}</strong> so your
+    {{ cart_ctx.quote.bundle_discount_pct }}% discount is applied.
+    {% endif %}
+    Bring valid ID — you must be 21+. Payment happens in store.
+  </div>
+
+  <a class="ghost block" href="{% url 'bundle_menu' %}?loc={{ store }}">Start another order</a>
+</main>
+{% endblock %}

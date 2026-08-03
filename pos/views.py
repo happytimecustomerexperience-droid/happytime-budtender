@@ -39,6 +39,8 @@ from budtender.product_similarity import similarity as product_similarity
 from dutchie.pos_read import PosReadClient
 from dutchie.pos_register_client import PosRegisterClient
 from dutchie.backoffice_customer_client import BackofficeCustomerClient
+from bundles import customers as bundle_customers
+from dutchie import stores as dutchie_stores
 from dutchie.stores import load_stores
 
 from . import catalog, education, imagemap, pairing, persona, ranking
@@ -917,12 +919,20 @@ def _store_queue(store_name):
 
 
 def _phone_cart_queue(store_name):
+    """Claimable drafts for this store.
+
+    `store_name` is a POS store key (yakima|mtvernon|pullman) but PhoneCartDraft is
+    keyed by happytime location_slug (yakima|mount-vernon|pullman) — so this MUST
+    translate, or Mount Vernon drafts are invisible to the Mount Vernon register.
+    Open carts are excluded: an `open` row is a shopper still browsing, and loading
+    a cart out from under them creates a phantom order nobody placed.
+    """
     if not store_name:
         return []
     return list(
         PhoneCartDraft.objects.filter(
-            location_slug=store_name,
-            status__in=[PhoneCartDraft.Status.OPEN, PhoneCartDraft.Status.RELEASED],
+            location_slug=dutchie_stores.location_slug(store_name),
+            status=PhoneCartDraft.Status.RELEASED,
         ).order_by("-released_at", "-updated_at")[:50]
     )
 
@@ -1611,7 +1621,10 @@ def phone_cart_claim(request):
         ctx["add_error"] = f"Phone cart is {draft.status}."
         return render(request, "pos/_cart.html", ctx)
 
-    request.session["store"] = draft.location_slug
+    # Translate to the POS store key. Assigning the raw location_slug meant
+    # "mount-vernon" was not in load_stores(), so _active_store silently fell back
+    # to the FIRST store — a Mount Vernon draft would load against Yakima stock.
+    request.session["store"] = dutchie_stores.store_key(draft.location_slug)
     store = _active_store(request)
     cart = request.session.get("cart", [])
     skipped = []
@@ -1640,18 +1653,40 @@ def phone_cart_claim(request):
     request.session["cart"] = cart
     draft.status = PhoneCartDraft.Status.CLAIMED
     draft.claimed_at = timezone.now()
+    # Attach the customer. cart_submit refuses to run without an AcctId, so a
+    # claimed order with nobody selected is a dead end at the register — the
+    # budtender would have to re-find them by hand with the shopper standing there.
+    customer_note = ""
+    if draft.contact_phone or draft.dutchie_acct_id:
+        acct_id, cust_name, how = bundle_customers.ensure_customer(draft)
+        if acct_id:
+            _set_session_customer(request, acct_id, cust_name or draft.pickup_name,
+                                  draft.contact_phone)
+            if how == "created":
+                customer_note = f"Created a new account for {cust_name or draft.pickup_name}."
+                draft.dutchie_acct_id = str(acct_id)
+                draft.customer_status = PhoneCartDraft.Customer.MATCHED
+        else:
+            customer_note = (f"No account found for {draft.contact_phone or 'this order'} "
+                             "and it couldn't be created — please look the customer up.")
+
     audit = draft.audit or []
     audit.append({
         "at": timezone.now().isoformat(),
         "action": "pos_claim",
         "loaded_lines": loaded,
         "skipped": skipped[:20],
+        "customer": draft.dutchie_acct_id or "unresolved",
     })
     draft.audit = audit[-100:]
-    draft.save(update_fields=["status", "claimed_at", "audit", "updated_at"])
+    draft.save(update_fields=["status", "claimed_at", "audit", "dutchie_acct_id",
+                              "customer_status", "updated_at"])
     ctx = _cart_ctx(cart)
+    notes = [n for n in (customer_note,) if n]
     if skipped:
-        ctx["add_error"] = "Some phone-cart items need manual review: " + ", ".join(skipped[:3])
+        notes.append("Some items need manual review: " + ", ".join(skipped[:3]))
+    if notes:
+        ctx["add_error"] = " ".join(notes)
     return render(request, "pos/_cart.html", ctx)
 
 

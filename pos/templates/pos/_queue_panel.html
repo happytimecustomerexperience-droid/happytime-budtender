@@ -13,14 +13,27 @@
 </div>
 {% else %}<p class="muted" style="padding:2px 0">Queue is empty.</p>{% endif %}
 
-<div class="active-head" style="margin-top:10px"><span class="livedot"></span> Phone carts <span class="muted">({{ phone_carts|length }})</span></div>
+{# data-order-tokens drives the new-order alert in app.js: the panel re-polls every
+   5s, and any token that wasn't in the previous set is a genuinely new order. #}
+<div class="active-head" style="margin-top:10px" id="orders-head"
+     data-order-tokens="{% for d in phone_carts %}{{ d.draft_token }} {% endfor %}">
+  <span class="livedot"></span> Orders waiting <span class="muted">({{ phone_carts|length }})</span>
+</div>
 {% if phone_carts %}
 <div class="vtable queue">
-  <div class="vrow vhead"><span>Token</span><span>Customer</span><span class="num">Items</span><span class="num">Total</span><span class="num">Load</span></div>
+  <div class="vrow vhead"><span>Customer</span><span>Contact</span><span class="num">Items</span><span class="num">Total</span><span class="num">Load</span></div>
   {% for draft in phone_carts %}
   <div class="vrow">
-    <span class="nm">{{ draft.draft_token }}</span>
-    <span>{% if draft.pickup_name %}{{ draft.pickup_name }}{% elif draft.phone_last4 %}***{{ draft.phone_last4 }}{% else %}Phone caller{% endif %}</span>
+    <span class="nm">
+      {% if draft.pickup_name %}{{ draft.pickup_name }}{% elif draft.phone_last4 %}***{{ draft.phone_last4 }}{% else %}Phone caller{% endif %}
+      {% if draft.source == "online" %}<span class="tag tag-online">ONLINE</span>{% endif %}
+      {# The discount is applied BY HAND at the register — if this isn't visible, the customer doesn't get it. #}
+      {% if draft.quote.bundle_discount_pct %}<span class="tag tag-bundle">{{ draft.quote.bundle_discount_pct }}% {{ draft.quote.bundle_name|default:"bundle" }}</span>{% endif %}
+      {# Loading auto-selects a matched account, or creates one. Flagged so staff isn't surprised. #}
+      {% if draft.customer_status == "new" %}<span class="tag tag-newcust">NEW CUSTOMER</span>
+      {% elif draft.customer_status == "unresolved" %}<span class="tag tag-newcust">LOOK UP</span>{% endif %}
+    </span>
+    <span>{% if draft.contact_phone %}{{ draft.contact_phone }}{% elif draft.phone_last4 %}***{{ draft.phone_last4 }}{% else %}—{% endif %}</span>
     <span class="num">{{ draft.lines|length }}</span>
     <span class="num">${{ draft.quote.total|default:0|floatformat:2 }}</span>
     <span class="num">
@@ -32,4 +45,4 @@
   </div>
   {% endfor %}
 </div>
-{% else %}<p class="muted" style="padding:2px 0">No saved phone carts.</p>{% endif %}
+{% else %}<p class="muted" style="padding:2px 0">No orders waiting.</p>{% endif %}
