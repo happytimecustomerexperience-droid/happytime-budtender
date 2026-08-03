@@ -39,7 +39,14 @@ DRAFT_TTL_HOURS = int(getattr(settings, "BUNDLE_DRAFT_TTL_HOURS", 4))
 MAX_ORDER_TOTAL = float(getattr(settings, "BUNDLE_MAX_ORDER_TOTAL", 300))
 DEFAULT_STORE = "yakima"
 
-_PHONE_RE = re.compile(r"\D+")
+# [^0-9] rather than \D: \D is Unicode-aware, so Arabic-Indic digits ("٥٠٩...")
+# survive the strip, pass the 10-character length check, and get stored as a
+# phone number nobody can dial — with phone_last4 in a script staff can't read.
+_PHONE_RE = re.compile(r"[^0-9]+")
+# Postgres text columns reject NUL, so a %00 anywhere in the form crashes the
+# INSERT with a 500 *after* the shopper thinks they've ordered. Strip the whole
+# C0 control range: none of it is meaningful in a name or an email.
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+\.[^@\s]+$")
 
 
@@ -270,9 +277,9 @@ def checkout(request):
                           _shell(request, store, {"cart_ctx": ctx}))
         return cart_mod.attach_cookie(response, draft)
 
-    name = str(request.POST.get("name") or "").strip()[:120]
+    name = _CONTROL_RE.sub("", str(request.POST.get("name") or "")).strip()[:120]
     phone = _clean_phone(request.POST.get("phone"))
-    email = str(request.POST.get("email") or "").strip()[:254]
+    email = _CONTROL_RE.sub("", str(request.POST.get("email") or "")).strip()[:254]
 
     errors = {}
     if len(name) < 2:

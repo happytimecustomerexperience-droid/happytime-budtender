@@ -166,6 +166,44 @@ def candidates_for(inventory: list[dict], target: dict, *, slot=None,
     return out
 
 
+# Bands in which the register's THCContent is unambiguously a PERCENTAGE for that
+# category. Outside them the number means something else and we must not print it
+# with a "%" after it.
+#
+# Why this exists: THCContent is not a consistent unit in this data. Live Yakima
+# inventory has "Athenry Flower Rainbow Runtz 14g" at 0.15 and the 28g of the same
+# strain at 22.0 — one is a fraction, one is a percent, for one product. Across all
+# flower the median is 0.49 and 98% sits under 5%, so the storefront was telling
+# shoppers that essentially every flower was ~0.5% THC. Potency is a regulated
+# claim in WA; printing a wrong one is worse than printing none.
+#
+# So: show a figure only where it reads as a credible percentage, otherwise omit it
+# rather than guess a conversion. Vapes and concentrates are already reliable here
+# (only 3% of vapes fall under 5%). Edibles, tinctures and topicals are dosed in mg,
+# never a percentage, so a "% THC" is meaningless for them at any value.
+#
+# The real fix is upstream — populate `budtender_product.thc_percent` from lab
+# results and prefer it in pos.catalog._normalize. This keeps the public page
+# honest until that lands. Staff-facing POS screens are untouched and still see the
+# raw value; budtenders know their products, customers don't.
+_THC_PERCENT_BANDS = {
+    "flower": (5.0, 45.0),
+    "pre-rolls": (5.0, 60.0),
+    "vapes": (30.0, 100.0),
+    "concentrate": (30.0, 100.0),
+}
+
+
+def public_thc(item: dict) -> float | None:
+    """THC% for a customer-facing card, or None when the source value isn't one."""
+    band = _THC_PERCENT_BANDS.get(canon_category(item.get("cat_key") or ""))
+    if not band:
+        return None
+    value = _f(item.get("thc"))
+    lo, hi = band
+    return value if lo <= value <= hi else None
+
+
 def _public(item: dict) -> dict:
     """Customer-safe projection of a live row.
 
@@ -182,7 +220,7 @@ def _public(item: dict) -> dict:
         "size": item.get("subcategory") or "",
         "strain": item.get("strain") or "",
         "strain_type": item.get("strain_type") or "",
-        "thc": _f(item.get("thc")) or None,
+        "thc": public_thc(item),
         "price": round(_f(item.get("price")), 2),
         "qty": int(_f(item.get("qty"))),
         "image": item.get("img") or item.get("image") or "",

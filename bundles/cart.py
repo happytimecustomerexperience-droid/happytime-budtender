@@ -15,6 +15,7 @@ counter. The client never sends a price — only a product id and a quantity.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import timedelta
 
 from django.conf import settings
@@ -29,6 +30,8 @@ from .catalog import store_key_for
 logger = logging.getLogger(__name__)
 
 COOKIE = "htco"
+# Shape of PhoneCartDraft.draft_token: "pc-" + secrets.token_urlsafe(18).
+_TOKEN_RE = re.compile(r"\Apc-[A-Za-z0-9_-]{16,61}\Z")
 COOKIE_MAX_AGE = 60 * 60 * 24 * 30          # 30 days of retention
 MAX_LINES = 30
 MAX_QTY = 12
@@ -57,7 +60,13 @@ def get_cart(request, location_slug: str, *, create: bool = False) -> PhoneCartD
     Scoped by store on purpose: a Yakima cart must not follow someone to the
     Pullman page and quote them product that store doesn't carry.
     """
-    token = (request.COOKIES.get(COOKIE) or "").strip()[:64]
+    # Exact match or nothing. The cookie IS the access control, so normalising it
+    # (the old .strip()) meant " <token>" and "<token>\x00" both resolved to the
+    # same cart — no bypass on its own, since you still need the 144-bit token, but
+    # a bearer credential should not have fuzzy edges, and a NUL byte reaching a
+    # text column raises DataError and 500s the page.
+    raw = request.COOKIES.get(COOKIE) or ""
+    token = raw if _TOKEN_RE.match(raw) else ""
     draft = None
     if token:
         draft = PhoneCartDraft.objects.filter(
@@ -203,6 +212,15 @@ def seed_from_bundle(draft: PhoneCartDraft, resolved: dict, bundle_slug: str) ->
     Only seeds when the cart is empty — a returning shopper's own cart must never
     be overwritten by re-opening the email.
     """
+    # Claim the bundle even when we don't seed. A shopper who added something
+    # before opening the email still came from that bundle, and without the slug
+    # the cart, checkout and success pages lose the "mention your X% at the
+    # counter" line — so the budtender is never told which discount to apply and
+    # the offer silently evaporates.
+    if not draft.bundle_slug and bundle_slug:
+        draft.bundle_slug = bundle_slug
+        draft.save(update_fields=["bundle_slug", "updated_at"])
+
     if draft.lines:
         return
     lines = []

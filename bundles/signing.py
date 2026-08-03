@@ -96,7 +96,9 @@ def customer_token(phone: str) -> str:
     exported them, and those must produce ONE token or personalization silently
     misses whenever the formats disagree.
     """
-    digits = "".join(c for c in str(phone or "") if c.isdigit())
+    # ASCII digits only: str.isdigit() is True for Arabic-Indic and other Unicode
+    # digit forms, which would mint a token for a phone number nobody can dial.
+    digits = "".join(c for c in str(phone or "") if c in "0123456789")
     if len(digits) == 11 and digits.startswith("1"):
         digits = digits[1:]
     if not digits:
