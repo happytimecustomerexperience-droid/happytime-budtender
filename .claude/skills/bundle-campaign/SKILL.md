@@ -19,6 +19,14 @@ Two repos are involved and they must agree on a secret:
 
 Live storefront: `https://budtender-api.happytimeweed.com/custom-order/`
 
+The sending half has its own skill in the other repo — `campaign-bundle-drop` in
+`alpine-automations/.claude/skills/`, which carries the AlpineIQ draft ids, the audience,
+and the CTA wiring. That one is **generated**: edit its entry in
+`audiences/management/commands/campaign_skill.py` and re-run
+`python manage.py campaign_skill bundle-drop --write`, because hand edits to its SKILL.md
+are overwritten. This file is the receiving half — the storefront, the resolver, the
+signature — and is hand-maintained.
+
 ## Two things that will waste your afternoon if you don't know them
 
 **The Dutchie cart cannot be pre-filled.** Not by API, not by URL parameter, not from
