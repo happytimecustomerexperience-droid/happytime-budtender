@@ -223,7 +223,7 @@ Everything the page needs arrives in the query string. Nothing is looked up from
 ### Format
 
 ```
-https://happytimeweed.com/custom-order
+https://budtender-api.happytimeweed.com/custom-order/
   ?b=<bundle_slug>
   &loc=<store_slug>
   &i=<sku>:<qty>          (repeated, one per bundle slot)
@@ -260,7 +260,7 @@ Repeated `i` values sort lexicographically among themselves. Signature = `hmac_s
 ### Worked example
 
 ```
-https://happytimeweed.com/custom-order?b=roll-relax&loc=yakima
+https://budtender-api.happytimeweed.com/custom-order/?b=roll-relax&loc=yakima
   &i=3483543:1&i=3554685:2&i=3601122:1
   &c=a3f91c88de4b7205ff31c0a9e7b6d412
   &exp=1755302400
@@ -429,8 +429,20 @@ The `bundles` app owns **no models of its own** — the cart and the resulting o
 | `GET\|POST /custom-order/checkout` | order form → released draft → success |
 
 **Hosting:** Django serves these, mounted in `core/urls.py` *before* the POS root include so
-a POS route can never shadow them. Point `happytimeweed.com/custom-order` at it with a
-Next.js rewrite to keep the customer-facing URL on-brand.
+a POS route can never shadow them. Live at:
+
+```
+https://budtender-api.happytimeweed.com/custom-order/
+```
+
+Keep the trailing slash — without it Django's `APPEND_SLASH` answers 301 and the recipient
+takes an extra hop.
+
+`happytimeweed.com/custom-order` (the apex, Next.js marketing site) **does not exist** —
+there is no such route and no rewrite. Emailing that URL sends every recipient to a 404, so
+`alpine-automations` defaults to the budtender host and pins it with a test. A Next.js
+rewrite would put the link back on-brand; until one lands, the budtender host is the only
+address that works.
 
 ---
 

@@ -374,6 +374,14 @@ class CartIsolationTests(PublicSurfaceTestCase):
         self.assertEqual(self.a_draft.lines[0]["quantity"], 1)
         self.assertEqual(self.a_draft.status, PhoneCartDraft.Status.OPEN)
 
+    def test_alice_can_see_her_own_cart(self):
+        # The positive control for this whole class. Every other test here asserts
+        # a stranger does NOT see "Blue Dream 3.5g"; if the cart page never printed
+        # that string, all of them would pass while proving nothing.
+        with self._patch_inv():
+            r = self.alice.get("/custom-order/cart?loc=yakima")
+        self.assertContains(r, "Blue Dream 3.5g")
+
     def test_a_stranger_sees_an_empty_cart_not_alices(self):
         with self._patch_inv():
             r = self.bob.get("/custom-order/cart?loc=yakima")
