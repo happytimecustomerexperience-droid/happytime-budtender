@@ -30,7 +30,8 @@ from pos_core.ratelimit import _client_ip, rate_limit
 
 from . import cart as cart_mod
 from . import calibration, customers, emails, resolver, signing
-from .catalog import STORE_ADDRESS, get_bundle, store_label
+from .catalog import (STORE_ADDRESS, all_stores, get_bundle, store_info,
+                      store_label)
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +58,33 @@ def _int(value, default=None):
         return default
 
 
+STORE_COOKIE = "htco_loc"
+
+
 def _store_from(request) -> str:
+    """Which store the shopper is browsing.
+
+    Order matters: an explicit `loc` always wins (a bundle link names its store and
+    must not be overridden by a stale cookie), then the last store they chose, then
+    Yakima — by far the largest, so it is the right default for anyone arriving
+    without a preference.
+    """
     store = (request.GET.get("loc") or request.POST.get("loc") or "").strip()[:32]
     if store in STORE_ADDRESS:
         return store
+    remembered = (request.COOKIES.get(STORE_COOKIE) or "").strip()[:32]
+    if remembered in STORE_ADDRESS:
+        return remembered
     return DEFAULT_STORE
+
+
+def _remember_store(response, store: str):
+    """Keep the choice across pages so a Pullman shopper isn't bounced to Yakima
+    on every navigation. Not HttpOnly — it is a preference, not a credential."""
+    if store in STORE_ADDRESS:
+        response.set_cookie(STORE_COOKIE, store, max_age=60 * 60 * 24 * 90,
+                            samesite="Lax", secure=not getattr(settings, "DEBUG", False))
+    return response
 
 
 def _filters(request) -> dict:
@@ -96,7 +119,9 @@ def _shell(request, store: str, ctx: dict) -> dict:
         # they work both through the happytimeweed.com rewrite and when this host is
         # opened directly.
         "SITE_ORIGIN": getattr(settings, "SITE_ORIGIN", "https://happytimeweed.com"),
-        "stores": [{"slug": s, "label": store_label(s)} for s in STORE_ADDRESS],
+        # Full pickup detail for the current store, and the list for the picker.
+        "store_info": store_info(store),
+        "stores": all_stores(),
         **ctx,
     }
 
@@ -137,7 +162,9 @@ def landing(request):
         "cart_ctx": cart_ctx,
         "draft_ttl": DRAFT_TTL_HOURS,
     }))
-    return cart_mod.attach_cookie(response, draft)
+    # The bundle link names its store; remember THAT, so a Pullman bundle doesn't
+    # leave the shopper browsing Yakima afterwards.
+    return _remember_store(cart_mod.attach_cookie(response, draft), req.store)
 
 
 # ── the menu ─────────────────────────────────────────────────────────────────
@@ -162,7 +189,7 @@ def menu(request):
         "total_products": len(sellable),
         "inventory_live": bool(inventory),
     }))
-    return cart_mod.attach_cookie(response, draft)
+    return _remember_store(cart_mod.attach_cookie(response, draft), store)
 
 
 @require_GET
@@ -205,7 +232,7 @@ def _cart_response(request, store: str, draft, *, error: str = "", status: int =
     ctx["error"] = error
     response = render(request, "bundles/_cart.html", _shell(request, store, {"cart_ctx": ctx}),
                       status=status)
-    return cart_mod.attach_cookie(response, draft)
+    return _remember_store(cart_mod.attach_cookie(response, draft), store)
 
 
 @require_GET
@@ -279,7 +306,7 @@ def checkout(request):
     if request.method == "GET":
         response = render(request, "bundles/checkout.html",
                           _shell(request, store, {"cart_ctx": ctx}))
-        return cart_mod.attach_cookie(response, draft)
+        return _remember_store(cart_mod.attach_cookie(response, draft), store)
 
     name = _CONTROL_RE.sub("", str(request.POST.get("name") or "")).strip()[:120]
     phone = _clean_phone(request.POST.get("phone"))
@@ -306,7 +333,7 @@ def checkout(request):
                           _shell(request, store, {"cart_ctx": ctx, "errors": errors,
                                                   "form": {"name": name, "email": email}}),
                           status=400)
-        return cart_mod.attach_cookie(response, draft)
+        return _remember_store(cart_mod.attach_cookie(response, draft), store)
 
     draft.pickup_name = name
     draft.contact_phone = phone

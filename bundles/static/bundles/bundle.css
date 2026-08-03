@@ -51,12 +51,46 @@ a { color: var(--brand-dark); }
 .pill { background: var(--amber); color: var(--coal); border-radius: 999px; min-width: 22px;
         padding: 1px 7px; text-align: center; font-size: 12px; font-weight: 700; }
 
-/* Which store you're shopping — the one fact the site header can't carry. */
+/* Which store you're shopping — the one fact the site header can't carry, and the
+   thing that decides stock, price and which door they drive to. */
 .storebar { background: var(--card); border-bottom: 1px solid var(--line); padding: 10px 16px; }
-.brand { display: block; text-decoration: none; color: var(--ink);
-         max-width: 1100px; margin: 0 auto; }
+.storebar-in { max-width: 1100px; margin: 0 auto; display: flex; align-items: center;
+               justify-content: space-between; gap: 12px; }
+.brand { display: block; text-decoration: none; color: var(--ink); min-width: 0; }
 .brand strong { display: block; font-size: 15px; line-height: 1.2; }
 .brand small { display: block; font-size: 12px; color: var(--muted); }
+
+.storepick { position: relative; flex: 0 0 auto; }
+.storepick summary { list-style: none; cursor: pointer; font-size: 13px; font-weight: 600;
+                     color: var(--brand-dark); padding: 6px 10px; border: 1px solid var(--line);
+                     border-radius: 8px; background: #fff; white-space: nowrap; }
+.storepick summary::-webkit-details-marker { display: none; }
+.storepick[open] summary { border-color: var(--brand); }
+.storepick-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+                  width: min(300px, 78vw); background: var(--card); border: 1px solid var(--line);
+                  border-radius: var(--radius); box-shadow: 0 12px 28px rgba(20,33,15,.14);
+                  padding: 6px; }
+.storeopt { display: block; padding: 10px; border-radius: 10px; text-decoration: none;
+            color: var(--ink); }
+.storeopt:hover { background: var(--info-bg); }
+.storeopt.on { background: var(--info-bg); box-shadow: inset 0 0 0 1px var(--brand); }
+.storeopt strong { display: block; font-size: 14px; }
+.storeopt small { display: block; font-size: 12px; color: var(--muted); }
+.storepick-menu .fineprint { padding: 4px 10px 6px; margin: 0; }
+
+/* ── pickup card (checkout) ───────────────────────────────────────────────────
+   Where to walk in. Above the form on purpose: it's the last point at which
+   someone notices they're ordering from the wrong store. */
+.pickupcard { background: var(--card); border: 1px solid var(--line);
+              border-radius: var(--radius); padding: 16px; margin: 0 0 18px; }
+.pickupcard h2 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase;
+                 letter-spacing: .07em; color: var(--muted); }
+.pu-name { margin: 0; font-size: 17px; font-weight: 700; }
+.pu-addr { margin: 4px 0 0; font-size: 15px; line-height: 1.45; }
+.pu-meta { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap;
+           gap: 4px 16px; font-size: 14px; color: var(--muted); }
+.pu-meta a { color: var(--brand-dark); }
+.pu-actions { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
 
 @media (min-width: 760px) {
   .sitenav { display: flex; }

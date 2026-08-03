@@ -13,6 +13,7 @@ See CATEGORY_ALIASES for the bridge.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from urllib.parse import quote_plus
 
 # ── stores ───────────────────────────────────────────────────────────────────
 # The URL's `loc` is the happytime location_slug (what the website and
@@ -24,11 +25,34 @@ STORE_LABELS = {
     "mount-vernon": "Happy Time — Mount Vernon",
     "pullman": "Happy Time — Pullman",
 }
-STORE_ADDRESS = {
-    "yakima": "Yakima, WA",
-    "mount-vernon": "Mount Vernon, WA",
-    "pullman": "Pullman, WA",
+# Street addresses and phones, taken from happytimeweed.com's own content
+# (data/author.json + the location pages) rather than retyped — a shopper is being
+# told where to drive and who to call, so these must match the marketing site
+# exactly. Yakima is the default store; the other two are opt-in via the picker.
+STORES = {
+    "yakima": {
+        "street": "1315 N 1st St",
+        "city": "Yakima, WA 98901",
+        "phone": "(509) 571-1106",
+        "hours": "8 AM – 11:30 PM daily",
+    },
+    "mount-vernon": {
+        "street": "200 Suzanne Ln",
+        "city": "Mt Vernon, WA 98273",
+        "phone": "(360) 488-2923",
+        "hours": "9 AM – 10 PM daily",
+    },
+    "pullman": {
+        "street": "5602 WA-270",
+        "city": "Pullman, WA 99163",
+        "phone": "(509) 334-2788",
+        "hours": "9 AM – 10 PM daily",
+    },
 }
+
+# Kept as the one-line form the rest of the app already renders. STORES is the
+# detail; this stays the short label so existing templates don't change meaning.
+STORE_ADDRESS = {slug: f"{s['street']}, {s['city']}" for slug, s in STORES.items()}
 
 
 def store_key_for(location_slug: str) -> str:
@@ -37,6 +61,33 @@ def store_key_for(location_slug: str) -> str:
 
 def store_label(location_slug: str) -> str:
     return STORE_LABELS.get(location_slug, location_slug.replace("-", " ").title())
+
+
+def store_info(location_slug: str) -> dict:
+    """Everything a pickup card needs: label, street, city, phone, hours, map link."""
+    s = STORES.get(location_slug) or {}
+    street, city = s.get("street", ""), s.get("city", "")
+    full = ", ".join(p for p in (street, city) if p)
+    return {
+        "slug": location_slug,
+        "label": store_label(location_slug),
+        "street": street,
+        "city": city,
+        "address": full,
+        "phone": s.get("phone", ""),
+        "hours": s.get("hours", ""),
+        # Query-based so it resolves without us pinning a place id that can rot.
+        "map_url": (
+            "https://www.google.com/maps/search/?api=1&query="
+            + quote_plus(f"Happy Time Dispensary {full}")
+        ) if full else "",
+    }
+
+
+def all_stores() -> list[dict]:
+    """Every store, Yakima first — it is the default and the largest by far."""
+    order = ["yakima"] + [s for s in STORES if s != "yakima"]
+    return [store_info(s) for s in order]
 
 
 # `budtender.dutchie._norm_category` slug -> `pos.imagemap.category_key` slug.

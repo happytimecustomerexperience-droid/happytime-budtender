@@ -10,9 +10,35 @@
   {% else %}
     <h1>Almost done</h1>
     <p class="lede">
-      We'll hold these at <strong>{{ store_label }}</strong> for {{ draft_ttl|default:4 }} hours.
-      No payment now — you pay in store when you pick up.
+      This is a <strong>reservation for in-store pickup</strong> — no payment now, and
+      nothing ships. Washington doesn't allow cannabis delivery.
     </p>
+
+    {# The one thing a shopper must not get wrong is which door to walk through, so
+       the full address, phone and hours sit above the form rather than in the
+       footer. Stock and price are per store, so this is also the last chance to
+       notice they're ordering from the wrong one. #}
+    <section class="pickupcard">
+      <h2>Picking up at</h2>
+      <p class="pu-name">{{ store_info.label }}</p>
+      <p class="pu-addr">
+        {{ store_info.street }}<br>
+        {{ store_info.city }}
+      </p>
+      <ul class="pu-meta">
+        {% if store_info.hours %}<li>{{ store_info.hours }}</li>{% endif %}
+        {% if store_info.phone %}<li><a href="tel:{{ store_info.phone }}">{{ store_info.phone }}</a></li>{% endif %}
+      </ul>
+      <div class="pu-actions">
+        {% if store_info.map_url %}
+        <a class="ghost" href="{{ store_info.map_url }}" target="_blank" rel="noopener">Directions</a>
+        {% endif %}
+        <a class="linkbtn" href="{% url 'bundle_menu' %}?loc={{ store }}">Wrong store?</a>
+      </div>
+      <p class="fineprint">
+        Held for {{ draft_ttl|default:4 }} hours under the name you give below.
+      </p>
+    </section>
 
     {% if errors.cart %}<div class="banner warn">{{ errors.cart }}</div>{% endif %}
 

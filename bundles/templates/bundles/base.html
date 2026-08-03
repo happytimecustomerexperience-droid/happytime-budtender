@@ -81,11 +81,32 @@
   </a>
 </header>
 
+{# Which store you're shopping, and how to change it. Yakima is the default for
+   anyone arriving without a preference; the choice is remembered in a cookie so a
+   Pullman shopper isn't bounced back to Yakima on every navigation. Stock, prices
+   and pickup all follow this, so it stays visible on every page rather than being
+   buried in a menu. #}
 <div class="storebar">
-  <a class="brand" href="{% url 'bundle_menu' %}?loc={{ store }}">
-    <strong>{{ store_label }}</strong>
-    <small>{{ store_address }} · order online, pay in store</small>
-  </a>
+  <div class="storebar-in">
+    <a class="brand" href="{% url 'bundle_menu' %}?loc={{ store }}">
+      <strong>Pickup at {{ store_label }}</strong>
+      <small>{{ store_info.address }}{% if store_info.hours %} · {{ store_info.hours }}{% endif %}</small>
+    </a>
+    <details class="storepick">
+      <summary>Change store</summary>
+      <div class="storepick-menu">
+        {% for s in stores %}
+        <a class="storeopt{% if s.slug == store %} on{% endif %}"
+           href="{% url 'bundle_menu' %}?loc={{ s.slug }}">
+          <strong>{{ s.label }}</strong>
+          <small>{{ s.address }}</small>
+          {% if s.hours %}<small>{{ s.hours }}</small>{% endif %}
+        </a>
+        {% endfor %}
+        <p class="fineprint">Changing store reloads the menu — stock and prices are per store.</p>
+      </div>
+    </details>
+  </div>
 </div>
 
 {% block body %}{% endblock %}

@@ -9,13 +9,25 @@
     Thanks {{ order.pickup_name }} — we're holding your order at <strong>{{ store_label }}</strong>.
   </p>
 
+  {# This page is what they'll have open in the car park, so the address, phone and
+     directions link matter more here than anywhere else. #}
   <div class="ordercard">
     <div class="row"><span>Pickup name</span><strong>{{ order.pickup_name }}</strong></div>
-    <div class="row"><span>Store</span><strong>{{ store_label }}</strong></div>
-    <div class="row"><span>Address</span><strong>{{ store_address }}</strong></div>
+    <div class="row"><span>Store</span><strong>{{ store_info.label }}</strong></div>
+    <div class="row"><span>Address</span><strong>{{ store_info.address }}</strong></div>
+    {% if store_info.hours %}<div class="row"><span>Open</span><strong>{{ store_info.hours }}</strong></div>{% endif %}
+    {% if store_info.phone %}
+    <div class="row"><span>Phone</span><strong><a href="tel:{{ store_info.phone }}">{{ store_info.phone }}</a></strong></div>
+    {% endif %}
     <div class="row"><span>Held until</span><strong>{{ order.expires_at|date:"g:i A, D j M" }}</strong></div>
     <div class="row"><span>Order code</span><strong class="code">{{ order.draft_token|slice:"-6:"|upper }}</strong></div>
   </div>
+
+  {% if store_info.map_url %}
+  <a class="primary block" href="{{ store_info.map_url }}" target="_blank" rel="noopener">
+    Directions to {{ store_info.label }}
+  </a>
+  {% endif %}
 
   <ul class="review-lines">
     {% for line in cart_ctx.lines %}
