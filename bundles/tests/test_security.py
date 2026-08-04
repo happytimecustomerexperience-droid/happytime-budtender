@@ -451,17 +451,18 @@ class CartIsolationTests(PublicSurfaceTestCase):
         for guess in guesses:
             with self.subTest(guess=guess):
                 mallory = Client()
+                mallory.cookies[cart_mod.COOKIE] = guess
                 try:
-                    mallory.cookies[cart_mod.COOKIE] = guess
+                    with self._patch_inv():
+                        r = mallory.get("/custom-order/cart?loc=yakima")
                 except CookieError:
-                    # Python's cookie layer refuses to SERIALISE control characters
-                    # (a raw tab, say). A browser can't send that value either, so
-                    # it isn't a reachable attack — skip rather than fail on the
-                    # test client's own encoder.
+                    # http.cookies refuses to SERIALISE control characters (a raw
+                    # tab, say) — and it raises at request time, not on assignment.
+                    # A browser cannot send that value either, so it is not a
+                    # reachable attack; skip rather than fail on the test client's
+                    # own encoder.
                     self.skipTest(f"not transmittable as a cookie: {guess!r}")
                 attempted += 1
-                with self._patch_inv():
-                    r = mallory.get("/custom-order/cart?loc=yakima")
                 self.assertNotContains(r, "Blue Dream 3.5g")
         # Guard the guard: if the encoder started rejecting everything, the loop
         # above would pass by skipping its way through.
