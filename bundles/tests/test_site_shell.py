@@ -155,6 +155,19 @@ class SiteChromeTests(TestCase):
         body = self._pages()["menu"].content.decode()
         self.assertIn("bundles/fonts/inter-latin.woff2", body, "no preload — the page paints twice")
 
+    def test_the_menu_grid_can_shrink_to_a_phone(self):
+        """A grid item's default min-width: auto is what broke the menu on mobile.
+
+        The category strip is eight nowrap buttons (~1030px). Without min-width: 0
+        the 1fr track could not shrink below that, so the whole document scrolled
+        sideways on a 375px screen and the strip's own overflow-x never engaged.
+        Most of this traffic is a mail app on a phone, so that was the common case.
+        """
+        from django.contrib.staticfiles import finders
+
+        css = open(finders.find("bundles/bundle.css"), encoding="utf-8").read()
+        self.assertIn(".menu-layout > * { min-width: 0; }", css)
+
     def test_site_origin_is_configurable(self):
         with override_settings(SITE_ORIGIN="https://staging.example.com"):
             body = self._pages()["menu"].content.decode()

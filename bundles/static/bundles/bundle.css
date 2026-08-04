@@ -205,6 +205,12 @@ button:disabled, .is-disabled { opacity: .45; pointer-events: none; }
 
 /* ── menu ─────────────────────────────────────────────────────────────────── */
 .menu-layout { display: grid; grid-template-columns: 1fr; gap: 22px; align-items: start; }
+/* A grid item defaults to min-width: auto, so the track cannot shrink below its
+ * widest content. The category strip below is eight nowrap buttons — ~1030px — so
+ * without this the whole page grew to 1030px on a 375px phone and scrolled
+ * sideways, and .tabs' own overflow-x never engaged because nothing ever clipped
+ * it. This is what makes the strip scroll instead of the document. */
+.menu-layout > * { min-width: 0; }
 .menu-aside { position: static; }
 @media (min-width: 1000px) {
   .menu-layout { grid-template-columns: 1fr 330px; }
