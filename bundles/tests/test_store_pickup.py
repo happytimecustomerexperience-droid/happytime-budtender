@@ -30,6 +30,15 @@ EXPECTED = {
     "pullman": ("5602 WA-270", "Pullman, WA 99163", "(509) 334-2788"),
 }
 
+# The site's footer, verbatim. Yakima and Pullman are the same seven days a week;
+# Mount Vernon is not, and it shipped here as "9 AM – 10 PM daily" — telling a
+# Friday shopper we shut an hour before we do.
+EXPECTED_HOURS = {
+    "yakima": ("8 AM", "11:30 PM"),
+    "mount-vernon": ("Sun–Thu", "11 PM"),
+    "pullman": ("9 AM", "10 PM"),
+}
+
 
 def inventory():
     return [
@@ -63,6 +72,16 @@ class StoreDataTests(TestCase):
             url = store_info(slug)["map_url"]
             self.assertTrue(url.startswith("https://www.google.com/maps/"), slug)
             self.assertIn("Happy+Time", url)
+
+    def test_hours_match_the_marketing_site(self):
+        for slug, needles in EXPECTED_HOURS.items():
+            hours = store_info(slug)["hours"]
+            for needle in needles:
+                self.assertIn(needle, hours, f"{slug}: {hours!r}")
+
+    def test_mount_vernon_is_not_described_as_the_same_every_day(self):
+        # The specific regression: a flat "daily" line hides the Fri–Sat late close.
+        self.assertNotIn("daily", store_info("mount-vernon")["hours"].lower())
 
     def test_yakima_is_listed_first(self):
         self.assertEqual(all_stores()[0]["slug"], "yakima")

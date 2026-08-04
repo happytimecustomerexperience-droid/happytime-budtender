@@ -6,6 +6,13 @@
 <meta name="robots" content="noindex, nofollow">
 <title>{% block title %}Order online — {{ store_label }}{% endblock %}</title>
 <link rel="icon" href="{{ SITE_ORIGIN }}/tab_logo.png">
+{% comment %}
+  Preload the latin subset the way next/font does on the rest of the site. Without
+  it the face is only discovered after the stylesheet parses, and the page paints
+  once in metric-adjusted Arial and again in Inter.
+{% endcomment %}
+<link rel="preload" href="{% static 'bundles/fonts/inter-latin.woff2' %}" as="font"
+      type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{% static 'bundles/bundle.css' %}">
 </head>
 <body>
@@ -142,33 +149,93 @@
 
 {% block body %}{% endblock %}
 
+{% comment %}
+  The site's footer, reproduced: three store cards, then Shop / Top Brands /
+  Locations / Learn, then the state warning, socials and copyright. Headings,
+  link text and hrefs were read off the live footer rather than invented, so a
+  shopper who scrolls to the bottom here lands on the same pages they would from
+  anywhere else on happytimeweed.com.
+
+  `stores` comes from bundles.catalog, which is also what the pickup card reads —
+  one source for the addresses, so the footer and the "drive here" card can never
+  disagree.
+{% endcomment %}
 <footer class="foot">
   <div class="foot-in">
     <div class="foot-stores">
       {% for s in stores %}
       <div class="foot-store">
-        <a href="{{ SITE_ORIGIN }}/{{ s.slug }}">{{ s.label|cut:"Happy Time — " }}</a>
-        <p>{{ s.street }}<br>{{ s.city }}</p>
+        <a class="fs-name" href="{{ SITE_ORIGIN }}/{{ s.slug }}">{{ s.label|cut:"Happy Time — " }}</a>
+        <p><a href="{{ s.map_url }}" target="_blank" rel="noopener">{{ s.street }}, {{ s.city }}</a></p>
         {% if s.phone %}<p><a href="tel:{{ s.phone }}">{{ s.phone }}</a></p>{% endif %}
+        <p><a href="mailto:happytimeyak509@gmail.com">happytimeyak509@gmail.com</a></p>
         {% if s.hours %}<p class="muted">{{ s.hours }}</p>{% endif %}
+        <p><a href="{{ SITE_ORIGIN }}/{{ s.slug }}-menu">Order Online</a></p>
       </div>
       {% endfor %}
     </div>
-    <nav class="footnav">
-      <a href="{{ SITE_ORIGIN }}/specials">Specials</a>
-      <a href="{{ SITE_ORIGIN }}/brands">Brands</a>
-      <a href="{{ SITE_ORIGIN }}/catalog">Catalog</a>
-      <a href="{{ SITE_ORIGIN }}/education">Education</a>
-      <a href="{{ SITE_ORIGIN }}/locations">Locations</a>
-      <a href="{{ SITE_ORIGIN }}/faq">FAQ</a>
-      <a href="{{ SITE_ORIGIN }}/contact">Contact</a>
-    </nav>
+
+    <div class="foot-cols">
+      <div class="foot-col">
+        <h2>Shop</h2>
+        <a href="{{ SITE_ORIGIN }}/specials">Cannabis Deals &amp; Specials</a>
+        <a href="{{ SITE_ORIGIN }}/strain-finder">Strain Finder</a>
+        <a href="{{ SITE_ORIGIN }}/strains">Cannabis Strains A–Z</a>
+        <a href="{{ SITE_ORIGIN }}/events">Events &amp; Pop-Ups</a>
+        <a href="{{ SITE_ORIGIN }}/brands">All Cannabis Brands</a>
+        <a href="{{ SITE_ORIGIN }}/catalog">Full Product Catalog</a>
+      </div>
+      <div class="foot-col">
+        <h2>Top Brands</h2>
+        <a href="{{ SITE_ORIGIN }}/brands/phat-panda/flower">Phat Panda Flower</a>
+        <a href="{{ SITE_ORIGIN }}/brands/phat-panda/pre-rolls">Phat Panda Pre-Rolls</a>
+        <a href="{{ SITE_ORIGIN }}/brands/dabstract/concentrates">Dabstract Concentrates</a>
+        <a href="{{ SITE_ORIGIN }}/brands/rocket-cannabis/flower">Rocket Cannabis Flower</a>
+        <a href="{{ SITE_ORIGIN }}/brands/mama-j-s/flower">Mama J's Flower</a>
+        <a href="{{ SITE_ORIGIN }}/brands/royal-tree-gardens/flower">Royal Tree Gardens Flower</a>
+      </div>
+      <div class="foot-col">
+        <h2>Locations</h2>
+        <a href="{{ SITE_ORIGIN }}/yakima">Yakima Cannabis Dispensary</a>
+        <a href="{{ SITE_ORIGIN }}/mount-vernon">Mount Vernon Cannabis Dispensary</a>
+        <a href="{{ SITE_ORIGIN }}/pullman">Pullman Cannabis Dispensary</a>
+        <a href="{{ SITE_ORIGIN }}/locations">Find a Happy Time dispensary near you</a>
+        <a href="{{ SITE_ORIGIN }}/contact">Contact Happy Time Dispensary</a>
+      </div>
+      <div class="foot-col">
+        <h2>Learn</h2>
+        <a href="{{ SITE_ORIGIN }}/faq">Cannabis Dispensary FAQ</a>
+        <a href="{{ SITE_ORIGIN }}/about">About Happy Time</a>
+        <a href="{{ SITE_ORIGIN }}/education">Cannabis Education</a>
+        <a href="{{ SITE_ORIGIN }}/reviews">Customer Reviews</a>
+        <a href="{{ SITE_ORIGIN }}/education/cannabis-delivery-washington-state">WA Delivery Law</a>
+        <a href="{{ SITE_ORIGIN }}/blog">Cannabis Blog</a>
+      </div>
+    </div>
+
+    {% comment %}
+      The site's wording, plus the "intoxicating effects and may be habit forming"
+      sentence the site's footer omits. That sentence is the WAC 314-55-155(7)
+      warning and it was already on this page; matching the site is not a reason to
+      drop a required disclosure, so this carries both.
+    {% endcomment %}
     <p class="fineprint">
-      This product has intoxicating effects and may be habit forming. Marijuana can impair
-      concentration, coordination and judgement — do not operate a vehicle or machinery under
-      its influence. There may be health risks associated with consumption of this product.
-      For use only by adults twenty-one and older. Keep out of reach of children.
+      This product has intoxicating effects and may be habit forming. For use only by
+      adults 21 and older. Keep out of reach of children. Marijuana can impair
+      concentration, coordination, and judgment. Do not operate a vehicle or machinery
+      under the influence of this drug. There may be health risks associated with
+      consumption of this product.
     </p>
+
+    <div class="foot-end">
+      <div class="foot-social">
+        <span>Follow Us</span>
+        <a href="https://www.facebook.com/happytimeyak509" target="_blank" rel="noopener">Facebook</a>
+        <a href="https://x.com/509happytime" target="_blank" rel="noopener">X (Twitter)</a>
+      </div>
+      {% comment %}Rendered, not pinned — a hardcoded year is wrong every January.{% endcomment %}
+      <p class="muted">© {% now "Y" %} HAPPYTIME | All Rights Reserved</p>
+    </div>
   </div>
 </footer>
 

@@ -40,7 +40,11 @@ STORES = {
         "street": "200 Suzanne Ln",
         "city": "Mt Vernon, WA 98273",
         "phone": "(360) 488-2923",
-        "hours": "9 AM – 10 PM daily",
+        # Mount Vernon is the one store that is NOT the same seven days a week. It
+        # read "9 AM – 10 PM daily" here while happytimeweed.com said Fri–Sat runs
+        # to 11 — an hour in which someone holding a reservation would have been
+        # told by this page that we were already shut.
+        "hours": "Sun–Thu 9 AM – 10 PM · Fri–Sat 9 AM – 11 PM",
     },
     "pullman": {
         "street": "5602 WA-270",

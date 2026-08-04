@@ -112,6 +112,49 @@ class SiteChromeTests(TestCase):
             self.assertIn("intoxicating effects", r.content.decode(),
                           f"{name}: WAC 314-55-155(7) warning missing")
 
+    def test_footer_carries_the_sites_own_sections(self):
+        """"Exactly the same" means the same way out of this page as any other.
+
+        Headings and hrefs were read off the live footer. A shopper who scrolls
+        past the reservation form should reach the same pages they would from the
+        marketing site, not a stub nav.
+        """
+        body = self._pages()["checkout"].content.decode()
+        for heading in ("Shop", "Top Brands", "Locations", "Learn"):
+            self.assertIn(f"<h2>{heading}</h2>", body, f"footer column {heading} missing")
+        for href in ("/strain-finder", "/strains", "/catalog", "/reviews", "/about",
+                     "/blog", "/brands/phat-panda/flower",
+                     "/education/cannabis-delivery-washington-state"):
+            self.assertIn(f"{SITE}{href}", body, f"footer link {href} missing")
+        self.assertIn("facebook.com/happytimeyak509", body)
+        self.assertIn("HAPPYTIME | All Rights Reserved", body)
+
+    def test_the_footer_and_the_pickup_card_cannot_disagree(self):
+        # Both read bundles.catalog. Pinning a store's street in the footer proves
+        # the footer is not a second, hand-maintained copy of the addresses.
+        body = self._pages()["checkout"].content.decode()
+        for street in ("1315 N 1st St", "200 Suzanne Ln", "5602 WA-270"):
+            self.assertIn(street, body)
+
+    def test_the_page_ships_the_site_typeface(self):
+        """happytimeweed.com is set in Inter; the system stack is a visible mismatch.
+
+        Self-hosted rather than linked: next/font emits content-hashed filenames
+        that change on every marketing deploy, so a link into /_next would break
+        the next time the site shipped.
+        """
+        from django.contrib.staticfiles import finders
+
+        css = open(finders.find("bundles/bundle.css"), encoding="utf-8").read()
+        self.assertIn("font-family: Inter", css)
+        self.assertIn('font-family: "Inter Fallback"', css)
+        self.assertIn("Inter, \"Inter Fallback\"", css, "body should actually USE Inter")
+        for subset in ("inter-latin.woff2", "inter-latin-ext.woff2"):
+            self.assertIsNotNone(finders.find(f"bundles/fonts/{subset}"),
+                                 f"{subset} is referenced but not shipped")
+        body = self._pages()["menu"].content.decode()
+        self.assertIn("bundles/fonts/inter-latin.woff2", body, "no preload — the page paints twice")
+
     def test_site_origin_is_configurable(self):
         with override_settings(SITE_ORIGIN="https://staging.example.com"):
             body = self._pages()["menu"].content.decode()
