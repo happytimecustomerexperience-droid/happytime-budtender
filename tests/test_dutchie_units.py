@@ -36,11 +36,19 @@ def test_headers_self_consistent():
 
 
 def test_stores_loader(tmp_path, monkeypatch):
+    """The stores.json fallback, which is what a dev box without store env uses.
+
+    load_stores() prefers DUTCHIE_STORES and only falls back to JSON when it is
+    empty, so this has to clear it — otherwise the test silently asserts against
+    whatever real stores the environment happens to define, and passes or fails
+    on where it was run rather than on the loader.
+    """
     p = tmp_path / "stores.json"
     p.write_text(json.dumps({"yak": {
         "org_id": 1, "lsp_id": 2, "loc_id": 3, "register_id": 4,
         "username": "u", "password": "p"}}))
     monkeypatch.setenv("BUDTENDER_STORES", str(p))
+    monkeypatch.setenv("DUTCHIE_STORES", "")
     stores = load_stores()
     assert "yak" in stores
     s = stores["yak"]
