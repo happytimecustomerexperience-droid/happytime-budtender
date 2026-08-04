@@ -24,6 +24,7 @@ Nothing here may touch the network: `pos.catalog.get_inventory` is patched per
 test and `bundles.customers._client` (the Dutchie `PosRegisterClient`) is patched
 for every test in this file, in the base class.
 """
+from http.cookies import CookieError
 from unittest.mock import patch
 
 from django.core.cache import cache
@@ -446,13 +447,26 @@ class CartIsolationTests(PublicSurfaceTestCase):
             " " + self.a_token, self.a_token + " ", self.a_token + "\t",
             self.a_token + "; x=1", "pc-" + "%00" + self.a_token[3:],
         ]
+        attempted = 0
         for guess in guesses:
             with self.subTest(guess=guess):
                 mallory = Client()
-                mallory.cookies[cart_mod.COOKIE] = guess
+                try:
+                    mallory.cookies[cart_mod.COOKIE] = guess
+                except CookieError:
+                    # Python's cookie layer refuses to SERIALISE control characters
+                    # (a raw tab, say). A browser can't send that value either, so
+                    # it isn't a reachable attack — skip rather than fail on the
+                    # test client's own encoder.
+                    self.skipTest(f"not transmittable as a cookie: {guess!r}")
+                attempted += 1
                 with self._patch_inv():
                     r = mallory.get("/custom-order/cart?loc=yakima")
                 self.assertNotContains(r, "Blue Dream 3.5g")
+        # Guard the guard: if the encoder started rejecting everything, the loop
+        # above would pass by skipping its way through.
+        self.assertGreaterEqual(attempted, len(guesses) - 2,
+                                "too many guesses were skipped to call this a test")
         self.assertAliceUntouched()
 
     def test_the_cookie_token_is_not_guessable(self):
