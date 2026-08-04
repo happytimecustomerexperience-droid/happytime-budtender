@@ -20,8 +20,8 @@ something the shopper does not get.
 Deepest stock first, because that is what makes a link survive its own campaign.
 """
 import csv
+import io
 import json
-import sys
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -127,8 +127,13 @@ class Command(BaseCommand):
                 f"= ${r['total']:.2f} before tax")
             self.stdout.write(f"  {r['url']}")
 
+    # Both of these build the whole payload and hand it to self.stdout in one write.
+    # Writing to sys.stdout directly bypasses the stream call_command injects, so the
+    # output vanishes under test while looking fine in a terminal — and csv.writer on
+    # an OutputWrapper doubles every newline, because OutputWrapper.write appends one.
     def _out_csv(self, rows):
-        w = csv.writer(self.stdout)
+        buf = io.StringIO()
+        w = csv.writer(buf, lineterminator="\n")
         w.writerow(["store", "bundle", "discount_pct", "subtotal", "discount", "total",
                     "product_ids", "url"])
         for r in rows:
@@ -136,7 +141,7 @@ class Command(BaseCommand):
                         r["discount"], r["total"],
                         " ".join(f"{x['product_id']}:{x['qty']}" for x in r["lines"]),
                         r["url"]])
+        self.stdout.write(buf.getvalue(), ending="")
 
     def _out_json(self, rows):
-        json.dump(rows, sys.stdout, indent=2)
-        self.stdout.write("")
+        self.stdout.write(json.dumps(rows, indent=2))
