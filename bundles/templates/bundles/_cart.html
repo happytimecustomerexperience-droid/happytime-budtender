@@ -11,7 +11,8 @@
     {% for line in cart_ctx.lines %}
     <li class="cart-line {% if not line.in_stock %}gone{% endif %}">
       <div class="cl-thumb">
-        {% if line.image %}<img src="{{ line.image }}" alt="" loading="lazy">{% else %}<span class="ph"></span>{% endif %}
+        {% if line.image %}<img src="{{ line.image }}" alt="" loading="lazy"
+               class="{% if line.image_is_category %}cat{% endif %}">{% else %}<span class="ph"></span>{% endif %}
       </div>
       <div class="cl-meta">
         <p class="pname">{{ line.name }}</p>

@@ -9,8 +9,10 @@
     Thanks {{ order.pickup_name }} — we're holding your order at <strong>{{ store_label }}</strong>.
   </p>
 
-  {# This page is what they'll have open in the car park, so the address, phone and
-     directions link matter more here than anywhere else. #}
+  {% comment %}
+    This page is what they'll have open in the car park, so the address, phone and
+    directions link matter more here than anywhere else.
+  {% endcomment %}
   <div class="ordercard">
     <div class="row"><span>Pickup name</span><strong>{{ order.pickup_name }}</strong></div>
     <div class="row"><span>Store</span><strong>{{ store_info.label }}</strong></div>

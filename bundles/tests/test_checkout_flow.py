@@ -180,20 +180,30 @@ class CheckoutGetTests(CheckoutFlowTestCase):
 
 # ── 2. POST validation ───────────────────────────────────────────────────────
 class CheckoutValidationTests(CheckoutFlowTestCase):
-    def test_missing_name_is_a_field_error(self):
+    def test_a_phone_alone_places_the_order(self):
+        # Phone is the identity, exactly as it is for an order placed by calling the
+        # shop: it resolves to a Dutchie guest, so the budtender finds it the same
+        # way. Requiring a name as well was friction with nothing behind it.
         self._add("1")
         r = self._checkout(name="")
-        self.assertEqual(r.status_code, 400)
-        self.assertIn("Please enter your full name.", r.content.decode())
-        self.assertNoOrderPlaced(r)
+        self.assertEqual(r.status_code, 200, r.content[:300])
+        self.assertEqual(PhoneCartDraft.objects.filter(
+            status=PhoneCartDraft.Status.RELEASED).count(), 1)
 
-    def test_name_too_short_is_rejected(self):
-        # A single character is not a name a budtender can call out.
+    def test_an_unnamed_order_still_gets_a_callable_label(self):
+        # A blank row in the pickup queue is one nobody can call out, so fall back
+        # to the number when Dutchie has no name for it either.
         self._add("1")
-        r = self._checkout(name="S")
-        self.assertEqual(r.status_code, 400)
-        self.assertIn("Please enter your full name.", r.content.decode())
-        self.assertNoOrderPlaced(r)
+        self._checkout(name="")
+        draft = PhoneCartDraft.objects.get(status=PhoneCartDraft.Status.RELEASED)
+        self.assertTrue(draft.pickup_name.strip(), "pickup_name must never be blank")
+        self.assertIn(draft.contact_phone[-4:], draft.pickup_name)
+
+    def test_a_supplied_name_is_kept(self):
+        self._add("1")
+        self._checkout(name="Sam Reyes")
+        self.assertEqual(PhoneCartDraft.objects.get(
+            status=PhoneCartDraft.Status.RELEASED).pickup_name, "Sam Reyes")
 
     def test_missing_phone_is_a_field_error(self):
         self._add("1")
@@ -239,13 +249,13 @@ class CheckoutValidationTests(CheckoutFlowTestCase):
     def test_a_rejected_checkout_never_touches_dutchie_or_email(self):
         self._add("1")
         with override_settings(**SMTP):
-            self._checkout(name="")
+            self._checkout(phone="")   # phone is the only required field now
         self.dutchie_factory.assert_not_called()
         self.assertEqual(len(mail.outbox), 0)
 
     def test_the_error_page_never_leaks_staff_signals(self):
         self._add("1")
-        body = self._checkout(name="").content.decode().lower()
+        body = self._checkout(phone="").content.decode().lower()
         for word in FORBIDDEN:
             self.assertNotIn(word, body)
 

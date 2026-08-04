@@ -194,6 +194,50 @@ _THC_PERCENT_BANDS = {
 }
 
 
+# Category art, served by the marketing site at /media/*.png. Absolute so it
+# resolves on BOTH hosts — through the rewrite it is same-origin anyway, and someone
+# opening budtender-api directly still gets a picture.
+#
+# We do NOT use pos.imagemap.product_image() here. That returns a static BRAND logo
+# under /static/pos/, which is a deliberate POS choice ("consistent branded catalog,
+# not mixed product photos") but wrong for a customer storefront twice over: only
+# /static/bundles is proxied, so those 404 on happytimeweed.com, and a brand logo
+# tells a shopper nothing about what they're buying.
+_CATEGORY_ART = {
+    "flower": "flower.png",
+    "pre-rolls": "pre-roll.png",
+    "vapes": "vape.png",
+    "concentrate": "concentrate.png",
+    "edibles": "edibles.png",
+    "tinctures": "tinctures.png",
+    "topicals": "topicals.png",
+}
+
+
+def public_image(item: dict) -> tuple[str, bool]:
+    """(url, is_category_art) for a product card.
+
+    A real Dutchie photo when the register carries one; the category illustration
+    otherwise. The flag lets the template style them differently — a photo fills the
+    tile, an illustration is contained with padding, and mixing the two without that
+    distinction looks broken.
+    """
+    photo = str(item.get("image") or "").strip()
+    if photo.startswith(("http://", "https://")):
+        return photo, False
+    origin = (getattr(settings, "SITE_ORIGIN", "") or "https://happytimeweed.com").rstrip("/")
+    art = _CATEGORY_ART.get(canon_category(item.get("cat_key") or ""))
+    return (f"{origin}/media/{art}", True) if art else ("", False)
+
+
+def _img_url(item: dict) -> str:
+    return public_image(item)[0]
+
+
+def _img_is_cat(item: dict) -> bool:
+    return public_image(item)[1]
+
+
 def public_thc(item: dict) -> float | None:
     """THC% for a customer-facing card, or None when the source value isn't one."""
     band = _THC_PERCENT_BANDS.get(canon_category(item.get("cat_key") or ""))
@@ -223,8 +267,8 @@ def _public(item: dict) -> dict:
         "thc": public_thc(item),
         "price": round(_f(item.get("price")), 2),
         "qty": int(_f(item.get("qty"))),
-        "image": item.get("img") or item.get("image") or "",
-        "image_static": bool(item.get("img_static")),
+        "image": _img_url(item),
+        "image_is_category": _img_is_cat(item),
     }
 
 

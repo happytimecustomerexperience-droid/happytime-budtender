@@ -14,10 +14,15 @@
       nothing ships. Washington doesn't allow cannabis delivery.
     </p>
 
-    {# The one thing a shopper must not get wrong is which door to walk through, so
-       the full address, phone and hours sit above the form rather than in the
-       footer. Stock and price are per store, so this is also the last chance to
-       notice they're ordering from the wrong one. #}
+    {% comment %}
+      Django's {# #} is SINGLE-LINE ONLY — a multi-line one renders as visible page
+      text. Use {% comment %} for anything longer than a line.
+
+      The one thing a shopper must not get wrong is which door to walk through, so
+      the full address, phone and hours sit above the form rather than in the
+      footer. Stock and price are per store, so this is also the last chance to
+      notice they're ordering from the wrong one.
+    {% endcomment %}
     <section class="pickupcard">
       <h2>Picking up at</h2>
       <p class="pu-name">{{ store_info.label }}</p>
@@ -67,29 +72,31 @@
       <h2>Who's picking up?</h2>
 
       <label>
-        Full name
-        <input name="name" value="{{ form.name|default:'' }}" maxlength="120"
-               autocomplete="name" required aria-describedby="e-name">
-        {% if errors.name %}<span class="err" id="e-name">{{ errors.name }}</span>{% endif %}
-      </label>
-
-      <label>
-        Phone
+        Phone number
         <input name="phone" type="tel" inputmode="tel" maxlength="20"
                autocomplete="tel" required aria-describedby="e-phone"
                placeholder="509 555 1212">
         {% if errors.phone %}<span class="err" id="e-phone">{{ errors.phone }}</span>{% endif %}
-        <small>So we can reach you if something sells out before you arrive.</small>
+        <small>That's all we need — we'll find you by number at the counter, same as a phone order.</small>
       </label>
 
-      <label>
-        Email <span class="opt">optional</span>
-        <input name="email" type="email" value="{{ form.email|default:'' }}" maxlength="254"
-               autocomplete="email" aria-describedby="e-email">
-        {% if errors.email %}<span class="err" id="e-email">{{ errors.email }}</span>{% endif %}
-      </label>
+      <details class="moredetails">
+        <summary>Add a name or email (optional)</summary>
+        <label>
+          Name
+          <input name="name" value="{{ form.name|default:'' }}" maxlength="120"
+                 autocomplete="name">
+        </label>
 
-      <button type="submit" class="primary block big">Place order</button>
+        <label>
+          Email
+          <input name="email" type="email" value="{{ form.email|default:'' }}" maxlength="254"
+                 autocomplete="email" aria-describedby="e-email">
+          {% if errors.email %}<span class="err" id="e-email">{{ errors.email }}</span>{% endif %}
+        </label>
+      </details>
+
+      <button type="submit" class="primary block big">Reserve for pickup</button>
       <p class="fineprint">
         You must be 21+ with valid ID to pick up. We don't take payment online.
       </p>

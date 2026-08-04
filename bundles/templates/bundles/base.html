@@ -1,32 +1,36 @@
 {% load static %}<!doctype html>
-{# Served at happytimeweed.com/custom-order via a Next.js rewrite (next.config.ts).
-   A rewrite proxies HTML — it does NOT run the site's React layout — so this page
-   carries the site's chrome itself rather than inheriting Header/Footer. That is
-   deliberate: one document, no iframe, no double header, and the storefront still
-   renders server-side against live inventory.
-
-   Site assets are absolute so they resolve on BOTH hosts: through the proxy they
-   are same-origin anyway, and someone opening budtender-api directly still gets
-   the logo instead of a broken image. #}
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-{# Per-shopper and cart-bearing; keep it out of the index. #}
 <meta name="robots" content="noindex, nofollow">
 <title>{% block title %}Order online — {{ store_label }}{% endblock %}</title>
 <link rel="icon" href="{{ SITE_ORIGIN }}/tab_logo.png">
 <link rel="stylesheet" href="{% static 'bundles/bundle.css' %}">
 </head>
 <body>
+{% comment %}
+  Served at happytimeweed.com/custom-order via a Next.js rewrite (next.config.ts).
+  A rewrite proxies HTML but does NOT run the site's React layout, so this page
+  carries the chrome itself. It is reproduced from the site's own tokens
+  (lib/constants.ts NAVIGATION, app/globals.css colours) rather than importing the
+  Tailwind bundle, which Next hashes per build and would 404 the moment it rebuilt.
 
-{# ── Age gate ────────────────────────────────────────────────────────────────
-   Every other page on happytimeweed.com is gated by a React component that records
-   the result in sessionStorage/localStorage. A rewrite bypasses React, so without
-   this the storefront would be the one un-gated page on a cannabis site. Same
-   origin under the proxy, so these are the SAME keys the site uses and a shopper
-   who already verified is not asked twice.
-   Inline and blocking, so the page never flashes before the gate appears. #}
+  Site assets are absolute so they resolve on BOTH hosts — through the proxy they
+  are same-origin anyway, and opening budtender-api directly still gets the logo
+  instead of a broken image.
+
+  NOTE: Django's {# #} is single-line ONLY. A multi-line one renders as visible
+  page text — that shipped once and appeared as body copy above the header.
+{% endcomment %}
+
+{% comment %}
+  Age gate. Every other page on the site is gated by a React component that records
+  the result in sessionStorage/localStorage; a rewrite skips React, so without this
+  the storefront would be the one un-gated page on a cannabis site. Same origin under
+  the proxy, so these are the SAME keys and a shopper who verified is not asked
+  twice. Inline and blocking, so the page never flashes before the gate appears.
+{% endcomment %}
 <div id="htco-age" hidden>
   <div class="agebox">
     <img src="{{ SITE_ORIGIN }}/media/logo-happy-time.png" alt="Happy Time Dispensary" class="agelogo">
@@ -49,7 +53,7 @@
       if (!raw) return false;
       var s = JSON.parse(raw);
       return !!(s && (s.verified || s.isVerified));
-    } catch (e) { return false; }   // storage blocked -> gate rather than assume
+    } catch (e) { return false; }
   }
   if (verified()) return;
   var gate = document.getElementById('htco-age');
@@ -67,25 +71,52 @@
 </script>
 
 <header class="sitebar">
-  <a class="sitelogo" href="{{ SITE_ORIGIN }}/">
-    <img src="{{ SITE_ORIGIN }}/media/logo-happy-time.png" alt="Happy Time Dispensary">
-  </a>
-  <nav class="sitenav">
-    <a href="{{ SITE_ORIGIN }}/specials">Specials</a>
-    <a href="{{ SITE_ORIGIN }}/brands">Brands</a>
-    <a href="{{ SITE_ORIGIN }}/strain-finder">Strain finder</a>
-    <a href="{{ SITE_ORIGIN }}/locations">Locations</a>
-  </nav>
-  <a class="cartbtn" href="{% url 'bundle_checkout' %}?loc={{ store }}" id="cart-link">
-    Cart <span class="pill" id="cart-count">{{ cart_ctx.count|default:0 }}</span>
-  </a>
+  <div class="sitebar-in">
+    <a class="sitelogo" href="{{ SITE_ORIGIN }}/">
+      <img src="{{ SITE_ORIGIN }}/media/logo-happy-time.png" alt="Happy Time Dispensary">
+    </a>
+
+    {% comment %}
+      Nav mirrors lib/constants.ts NAVIGATION exactly, dropdowns included. Rendered
+      with <details> rather than JS so it works without the site's React runtime.
+    {% endcomment %}
+    <nav class="sitenav">
+      <a href="{{ SITE_ORIGIN }}/specials">Specials</a>
+      <details class="navdrop">
+        <summary>Order Online</summary>
+        <div class="navmenu">
+          <a href="{{ SITE_ORIGIN }}/yakima-menu">Yakima Menu</a>
+          <a href="{{ SITE_ORIGIN }}/mount-vernon-menu">Mount Vernon Menu</a>
+          <a href="{{ SITE_ORIGIN }}/pullman-menu">Pullman Menu</a>
+        </div>
+      </details>
+      <a href="{{ SITE_ORIGIN }}/events">Events</a>
+      <details class="navdrop">
+        <summary>About</summary>
+        <div class="navmenu">
+          <a href="{{ SITE_ORIGIN }}/catalog">Catalog</a>
+          <a href="{{ SITE_ORIGIN }}/education">Education</a>
+          <a href="{{ SITE_ORIGIN }}/locations">Locations</a>
+          <a href="{{ SITE_ORIGIN }}/brands">Featured Brands</a>
+          <a href="{{ SITE_ORIGIN }}/blog">Blog</a>
+        </div>
+      </details>
+      <a href="{{ SITE_ORIGIN }}/faq">FAQs</a>
+      <a href="{{ SITE_ORIGIN }}/contact">Contact</a>
+    </nav>
+
+    <a class="cartbtn" href="{% url 'bundle_checkout' %}?loc={{ store }}" id="cart-link">
+      Cart <span class="pill" id="cart-count">{{ cart_ctx.count|default:0 }}</span>
+    </a>
+  </div>
 </header>
 
-{# Which store you're shopping, and how to change it. Yakima is the default for
-   anyone arriving without a preference; the choice is remembered in a cookie so a
-   Pullman shopper isn't bounced back to Yakima on every navigation. Stock, prices
-   and pickup all follow this, so it stays visible on every page rather than being
-   buried in a menu. #}
+{% comment %}
+  Which store you're shopping, and how to change it. Yakima is the default for
+  anyone arriving without a preference; the choice is remembered in a cookie so a
+  Pullman shopper isn't bounced back on every navigation. Stock, prices and pickup
+  all follow this, so it stays visible on every page.
+{% endcomment %}
 <div class="storebar">
   <div class="storebar-in">
     <a class="brand" href="{% url 'bundle_menu' %}?loc={{ store }}">
@@ -112,20 +143,33 @@
 {% block body %}{% endblock %}
 
 <footer class="foot">
-  <nav class="footnav">
-    <a href="{{ SITE_ORIGIN }}/yakima">Yakima</a>
-    <a href="{{ SITE_ORIGIN }}/mount-vernon">Mount Vernon</a>
-    <a href="{{ SITE_ORIGIN }}/pullman">Pullman</a>
-    <a href="{{ SITE_ORIGIN }}/faq">FAQ</a>
-    <a href="{{ SITE_ORIGIN }}/contact">Contact</a>
-  </nav>
-  <p>We hold your items at {{ store_label }}. Pay in store.</p>
-  <p class="fineprint">
-    This product has intoxicating effects and may be habit forming. Marijuana can impair
-    concentration, coordination and judgement — do not operate a vehicle or machinery under
-    its influence. There may be health risks associated with consumption of this product.
-    For use only by adults twenty-one and older. Keep out of reach of children.
-  </p>
+  <div class="foot-in">
+    <div class="foot-stores">
+      {% for s in stores %}
+      <div class="foot-store">
+        <a href="{{ SITE_ORIGIN }}/{{ s.slug }}">{{ s.label|cut:"Happy Time — " }}</a>
+        <p>{{ s.street }}<br>{{ s.city }}</p>
+        {% if s.phone %}<p><a href="tel:{{ s.phone }}">{{ s.phone }}</a></p>{% endif %}
+        {% if s.hours %}<p class="muted">{{ s.hours }}</p>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <nav class="footnav">
+      <a href="{{ SITE_ORIGIN }}/specials">Specials</a>
+      <a href="{{ SITE_ORIGIN }}/brands">Brands</a>
+      <a href="{{ SITE_ORIGIN }}/catalog">Catalog</a>
+      <a href="{{ SITE_ORIGIN }}/education">Education</a>
+      <a href="{{ SITE_ORIGIN }}/locations">Locations</a>
+      <a href="{{ SITE_ORIGIN }}/faq">FAQ</a>
+      <a href="{{ SITE_ORIGIN }}/contact">Contact</a>
+    </nav>
+    <p class="fineprint">
+      This product has intoxicating effects and may be habit forming. Marijuana can impair
+      concentration, coordination and judgement — do not operate a vehicle or machinery under
+      its influence. There may be health risks associated with consumption of this product.
+      For use only by adults twenty-one and older. Keep out of reach of children.
+    </p>
+  </div>
 </footer>
 
 <script src="{% static 'bundles/bundle.js' %}" defer></script>

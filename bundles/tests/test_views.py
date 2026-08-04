@@ -216,9 +216,9 @@ class CheckoutTests(StorefrontTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(PhoneCartDraft.objects.get().contact_email, "")
 
-    def test_name_and_phone_are_required(self):
+    def test_only_phone_is_required(self):
+        # Name became optional: the phone IS the identity, same as a phone order.
         self._add("1")
-        self.assertEqual(self._checkout(name="").status_code, 400)
         self.assertEqual(self._checkout(phone="123").status_code, 400)
         self.assertEqual(PhoneCartDraft.objects.get().status, PhoneCartDraft.Status.OPEN)
 

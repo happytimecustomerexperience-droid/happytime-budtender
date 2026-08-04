@@ -154,6 +154,10 @@ def landing(request):
     cart_mod.seed_from_bundle(draft, result, bundle.slug)
     cart_ctx = cart_mod.reprice(draft, inventory)
 
+    # The emailed link IS the order: the products are already chosen and priced from
+    # live register stock, so the shopper lands on the checkout holding all of it and
+    # only has to give a phone number. Browsing is still one tap away, but it is no
+    # longer a step between them and placing the order.
     response = render(request, "bundles/landing.html", _shell(request, req.store, {
         "bundle": bundle,
         "lines": lines,
@@ -161,6 +165,9 @@ def landing(request):
         "expired": req.expired,
         "cart_ctx": cart_ctx,
         "draft_ttl": DRAFT_TTL_HOURS,
+        "checkout_inline": True,
+        "form": {},
+        "errors": {},
     }))
     # The bundle link names its store; remember THAT, so a Pullman bundle doesn't
     # leave the shopper browsing Yakima afterwards.
@@ -313,8 +320,12 @@ def checkout(request):
     email = _CONTROL_RE.sub("", str(request.POST.get("email") or "")).strip()[:254]
 
     errors = {}
-    if len(name) < 2:
-        errors["name"] = "Please enter your full name."
+    # Phone is the ONLY required field — it is the identity, exactly as it is when a
+    # customer orders by calling the shop. It resolves to a Dutchie guest
+    # (customers.attach), so the budtender finds the order the same way they would a
+    # phone order. A name is welcome but optional; when it is blank we fall back to
+    # whatever Dutchie already has on that number, and only then to the number
+    # itself, so the pickup queue always shows something a human can call out.
     if len(phone) != 10:
         errors["phone"] = "Please enter a 10-digit phone number."
     if email and not _EMAIL_RE.match(email):
@@ -342,6 +353,11 @@ def checkout(request):
     # Wire the order to a Dutchie customer. Read-only here; if there's no account
     # the POS creates one when a budtender claims it (bundles/customers.py).
     customers.attach(draft)
+    # Name is optional, so fill the pickup label from whatever Dutchie knows about
+    # this number, and last-resort from the number itself. An unnamed row in the
+    # staff queue is one nobody can call out across the counter.
+    if not draft.pickup_name:
+        draft.pickup_name = (draft.customer_name or "").strip() or f"Phone {phone[-4:]}"
     draft.phone_hash = signing.customer_token(phone) if getattr(settings, "BUNDLE_URL_SECRET", "") else ""
     draft.source = PhoneCartDraft.Source.ONLINE
     draft.status = PhoneCartDraft.Status.RELEASED
