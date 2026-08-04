@@ -104,12 +104,13 @@ class SuggestBundleLinksTests(SimpleTestCase):
 
     def test_min_stock_filters_before_picking(self):
         import json
-        # At 60, the thin flower (3) and thin pre-roll (4) are gone but every slot can
-        # still be filled: f1=90, p1=140, v1=70, e1=50 — except the edible, at 50.
-        rows = json.loads(run(store=["yakima"], bundle=["vape-munch"], min_stock=60,
-                              format="json"))
-        self.assertEqual([line["product_id"] for line in rows[0]["lines"]], ["v1", "p1"]
-                         if len(rows[0]["lines"]) == 2 else ["v1", "p1", "e1"])
+        # Floor of 40 drops the thin flower (3) and thin pre-roll (4) while leaving every
+        # slot fillable: f1=90, p1=140, v1=70, e1=50 all clear it.
+        rows = json.loads(run(store=["yakima"], min_stock=40, format="json"))
+        picked = {line["product_id"] for row in rows for line in row["lines"]}
+        self.assertEqual(picked, {"f1", "p1", "v1", "e1"})
+        self.assertNotIn("f2", picked)
+        self.assertNotIn("p2", picked)
 
     def test_an_unfillable_slot_skips_the_bundle_instead_of_shipping_a_short_one(self):
         # A three-slot bundle that emits two lines is worse than no link: the email
