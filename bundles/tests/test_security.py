@@ -24,8 +24,19 @@ Nothing here may touch the network: `pos.catalog.get_inventory` is patched per
 test and `bundles.customers._client` (the Dutchie `PosRegisterClient`) is patched
 for every test in this file, in the base class.
 """
-from http.cookies import CookieError
+from http.cookies import CookieError, SimpleCookie
 from unittest.mock import patch
+
+
+def _is_sendable_cookie(value: str) -> bool:
+    """Can a real client actually put this in a Cookie header?"""
+    try:
+        c = SimpleCookie()
+        c["probe"] = value
+        c.output()
+        return True
+    except CookieError:
+        return False
 
 from django.core.cache import cache
 from django.http import HttpResponse
@@ -447,27 +458,22 @@ class CartIsolationTests(PublicSurfaceTestCase):
             " " + self.a_token, self.a_token + " ", self.a_token + "\t",
             self.a_token + "; x=1", "pc-" + "%00" + self.a_token[3:],
         ]
-        attempted = 0
-        for guess in guesses:
+        # Drop values a client physically cannot send. http.cookies refuses to
+        # serialise control characters (a raw tab), raising at request time — which
+        # killed the whole test on its own encoder rather than on the app. A browser
+        # cannot transmit those either, so they are not reachable attacks. Filtered
+        # here rather than deleted so the intent stays visible.
+        sendable = [g for g in guesses if _is_sendable_cookie(g)]
+        self.assertGreaterEqual(len(sendable), len(guesses) - 2,
+                                "too many guesses dropped as unsendable to call this a test")
+
+        for guess in sendable:
             with self.subTest(guess=guess):
                 mallory = Client()
                 mallory.cookies[cart_mod.COOKIE] = guess
-                try:
-                    with self._patch_inv():
-                        r = mallory.get("/custom-order/cart?loc=yakima")
-                except CookieError:
-                    # http.cookies refuses to SERIALISE control characters (a raw
-                    # tab, say) — and it raises at request time, not on assignment.
-                    # A browser cannot send that value either, so it is not a
-                    # reachable attack; skip rather than fail on the test client's
-                    # own encoder.
-                    self.skipTest(f"not transmittable as a cookie: {guess!r}")
-                attempted += 1
+                with self._patch_inv():
+                    r = mallory.get("/custom-order/cart?loc=yakima")
                 self.assertNotContains(r, "Blue Dream 3.5g")
-        # Guard the guard: if the encoder started rejecting everything, the loop
-        # above would pass by skipping its way through.
-        self.assertGreaterEqual(attempted, len(guesses) - 2,
-                                "too many guesses were skipped to call this a test")
         self.assertAliceUntouched()
 
     def test_the_cookie_token_is_not_guessable(self):
