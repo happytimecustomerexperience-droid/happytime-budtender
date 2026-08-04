@@ -24,7 +24,7 @@ import logging
 
 from django.conf import settings
 from django.http import HttpResponse
-from django.test import SimpleTestCase, override_settings
+from django.test import Client, SimpleTestCase, override_settings
 from django.urls import path
 
 log = logging.getLogger(__name__)
@@ -50,8 +50,14 @@ class UnhandledExceptionIsLoggedTests(SimpleTestCase):
         # raise_request_exception=False makes the client behave like a real server:
         # Django catches the exception, logs it, and returns 500 — rather than
         # re-raising into the test and never exercising the logging path at all.
+        #
+        # It is a CONSTRUCTOR argument. Passed to .get() it lands in **extra and
+        # becomes a WSGI environ key, silently doing nothing — which is how the
+        # first version of this test failed with the very traceback it was meant
+        # to be asserting on.
+        client = Client(raise_request_exception=False)
         with self.assertLogs("django.request", level="ERROR") as caught:
-            r = self.client.get("/boom", raise_request_exception=False)
+            r = client.get("/boom")
 
         self.assertEqual(r.status_code, 500)
         self.assertEqual(len(caught.records), 1)
