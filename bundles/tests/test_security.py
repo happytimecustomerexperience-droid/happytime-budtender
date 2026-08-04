@@ -205,7 +205,7 @@ class LeakGuardTests(PublicSurfaceTestCase):
         # And positively: the wire shape is exactly `resolver._public`, no more.
         self.assertEqual(
             sorted(r.json()["products"][0]),
-            ["brand", "category", "category_label", "image", "image_static", "name",
+            ["brand", "category", "category_label", "image", "image_is_category", "name",
              "price", "product_id", "qty", "size", "strain", "strain_type", "thc"])
 
     def test_cart_body_is_clean(self):
