@@ -41,12 +41,32 @@ curl -s -o /dev/null -w "%{http_code}\n" \
 ```
 
 404 confirms it. The `web` service runs `collectstatic` at boot in
-`docker-compose.yml`; if that line is missing or the container didn't restart:
+`docker-compose.yml`; if that line is missing or the container didn't restart, redeploy
+with the repo's own script and then check the log:
 
 ```bash
-ssh root@<vps> 'cd ~/happytime-budtender && docker compose up -d web && \
-  docker compose logs web | grep -i "static files copied"'
+ssh root@<vps> 'cd ~/happytime-budtender && bash deploy-vps.sh'
 ```
+
+```bash
+ssh root@<vps> 'cd ~/happytime-budtender && docker compose logs web | grep -i "static files copied"'
+```
+
+**Deploy the whole stack, not one service.** `web`, `pos-web`, `celery-worker`, `celery-beat`,
+`warmer` and `migrate` all build from the same root Dockerfile, and the source is baked into
+the image — there is no bind mount for `/app`. `docker compose build web && up -d web` leaves
+the other five on the previous image, and nothing surfaces it: every container still reports
+healthy. That is how the staff-facing POS ended up a day behind the storefront. `deploy-vps.sh`
+does `docker compose up -d --build`, which keeps them in step.
+
+To check for drift:
+
+```bash
+ssh root@<vps> 'cd ~/happytime-budtender && for c in $(docker compose ps --format "{{.Name}}"); do docker inspect -f "{{.Name}} {{.Created}}" $c; done'
+```
+
+App containers should share one build timestamp. `postgres` and `redis` being weeks old is
+correct — those are third-party images.
 
 ## The whole path 404s at the edge
 
