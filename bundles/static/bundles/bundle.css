@@ -129,11 +129,11 @@ a { color: var(--amber); }
  * at the smaller size rather than dropping the nav for a viewport that has room. */
 @media (min-width: 900px) {
   .sitenav { display: flex; }
-  .sitebar-in { padding: 10px 24px; }   /* md:px-6 */
+  .sitebar-in { padding: 24px; }        /* md:px-6, and the site's vertical rhythm */
   .sitelogo img { height: 64px; }
 }
 @media (min-width: 1120px) {
-  .sitelogo img { height: 80px; }
+  .sitelogo img { height: 80px; }       /* 80 + 2×24 = the site's 128px bar */
 }
 @media (min-width: 900px) and (max-width: 1119.98px) {
   .sitenav > a, .navdrop > summary { font-size: 15px; padding: 8px 10px; }
