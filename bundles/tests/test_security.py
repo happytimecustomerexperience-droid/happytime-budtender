@@ -24,19 +24,7 @@ Nothing here may touch the network: `pos.catalog.get_inventory` is patched per
 test and `bundles.customers._client` (the Dutchie `PosRegisterClient`) is patched
 for every test in this file, in the base class.
 """
-from http.cookies import CookieError, SimpleCookie
 from unittest.mock import patch
-
-
-def _is_sendable_cookie(value: str) -> bool:
-    """Can a real client actually put this in a Cookie header?"""
-    try:
-        c = SimpleCookie()
-        c["probe"] = value
-        c.output()
-        return True
-    except CookieError:
-        return False
 
 from django.core.cache import cache
 from django.http import HttpResponse
@@ -70,6 +58,21 @@ FORBIDDEN_VALUES = (
     "canarypackage", "canarycannabis", "canarydesc", "2029-12-25",
     "7.77", "0.6161", "1.2323", "99.91", "99.92",
 )
+
+
+def _is_sendable_cookie(value: str) -> bool:
+    """Can a real client actually put this in a Cookie header?
+
+    Control characters cannot appear in a cookie value (RFC 6265 cookie-octet), and
+    http.cookies enforces it by raising — inside the test client, at request time,
+    where subTest reports it as a failure of the app rather than of the fixture.
+    Checked directly rather than by probing the encoder: Django reaches the header
+    through a different path than SimpleCookie.output(), and the two disagree.
+
+    Spaces deliberately still pass: " " + token is exactly the near-miss that used
+    to resolve to someone else's cart, and it must stay covered.
+    """
+    return not any(ord(ch) < 32 or ord(ch) == 127 for ch in str(value))
 
 
 def leaky(**kw):

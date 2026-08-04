@@ -137,8 +137,12 @@ def landing(request):
     try:
         req = signing.parse(request.GET)
     except signing.BundleUrlError as exc:
+        # Through _shell like every other full page: this one renders base.html too,
+        # and without the shell context it came out with "Pickup at ." and an empty
+        # footer — a broken-looking page shown to someone whose link already failed.
+        store = _store_from(request)
         return render(request, "bundles/invalid.html",
-                      {"reason": str(exc), "store": DEFAULT_STORE}, status=400)
+                      _shell(request, store, {"reason": str(exc)}), status=400)
 
     bundle = get_bundle(req.bundle)
     if not bundle:

@@ -56,6 +56,10 @@ class SiteChromeTests(TestCase):
         /cart and /results are deliberately excluded — they return HTMX fragments
         that get swapped into a page that already has the chrome. Asserting chrome
         on them would be asserting a bug.
+
+        The broken-link page IS included. It renders base.html like the rest, and it
+        once shipped without the shell context — "Pickup at ." and an empty footer,
+        shown to the one visitor whose link already failed.
         """
         url = signing.build_url("/custom-order/", bundle="roll-relax", store="yakima",
                                 items=[("1", 1), ("10", 2), ("20", 1)])
@@ -64,7 +68,17 @@ class SiteChromeTests(TestCase):
                 "landing": self.client.get(url),
                 "menu": self.client.get("/custom-order/menu?loc=yakima"),
                 "checkout": self.client.get("/custom-order/checkout?loc=yakima"),
+                "invalid": self.client.get("/custom-order/?b=roll-relax&sig=nope"),
             }
+
+    def test_the_broken_link_page_is_a_finished_page(self):
+        r = self._pages()["invalid"]
+        body = r.content.decode()
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("This link didn't open", body)
+        self.assertIn("Pickup at Happy Time — Yakima", body)
+        self.assertIn("1315 N 1st St", body)
+        self.assertNotIn("Pickup at </strong>", body)
 
     def test_the_htmx_fragments_stay_fragments(self):
         """Guard the exclusion above: if /cart ever grows a <html> it is being
