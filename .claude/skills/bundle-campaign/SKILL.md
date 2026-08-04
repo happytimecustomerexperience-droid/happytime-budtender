@@ -17,7 +17,19 @@ Two repos are involved and they must agree on a secret:
 | `alpine-automations` | **signs** links, builds the AlpineIQ campaign |
 | `happytime-budtender` | **verifies** links, serves `/custom-order`, resolves inventory |
 
-Live storefront: `https://budtender-api.happytimeweed.com/custom-order/`
+Live storefront, two addresses for the same app:
+
+| URL | Use |
+|---|---|
+| `https://happytimeweed.com/custom-order/` | **put this in a creative** — on-brand, and the page carries the site's header, footer and age gate |
+| `https://budtender-api.happytimeweed.com/custom-order/` | the origin behind the Next.js rewrite; what scripts fetch |
+
+The apex is a `rewrites()` entry in the happytimeweed repo's `next.config.ts`. If links ever go
+dead, check that entry before anything else.
+
+**Verify the apex in a browser, never with curl.** Vercel answers scripted requests with a bot
+checkpoint — HTTP 429 and a "Vercel Security Checkpoint" HTML body — which reads exactly like a
+broken page. `preflight.py` targets the origin host for that reason.
 
 The sending half has its own skill in the other repo — `campaign-bundle-drop` in
 `alpine-automations/.claude/skills/`, which carries the AlpineIQ draft ids, the audience,

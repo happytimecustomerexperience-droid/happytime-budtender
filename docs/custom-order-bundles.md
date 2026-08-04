@@ -429,20 +429,46 @@ The `bundles` app owns **no models of its own** — the cart and the resulting o
 | `GET\|POST /custom-order/checkout` | order form → released draft → success |
 
 **Hosting:** Django serves these, mounted in `core/urls.py` *before* the POS root include so
-a POS route can never shadow them. Live at:
+a POS route can never shadow them. Two addresses reach the same app:
 
 ```
-https://budtender-api.happytimeweed.com/custom-order/
+https://happytimeweed.com/custom-order        ← email this one
+https://budtender-api.happytimeweed.com/custom-order/   ← the origin
 ```
 
-Keep the trailing slash — without it Django's `APPEND_SLASH` answers 301 and the recipient
-takes an extra hop.
+The apex is a Next.js `rewrites()` entry ([`next.config.ts`](../../happytimeweed/next.config.ts))
+proxying `/custom-order*` and `/static/bundles/*` to the VPS. A rewrite forwards HTML but
+does **not** run the site's React layout, which has two consequences the storefront handles
+itself:
 
-`happytimeweed.com/custom-order` (the apex, Next.js marketing site) **does not exist** —
-there is no such route and no rewrite. Emailing that URL sends every recipient to a 404, so
-`alpine-automations` defaults to the budtender host and pins it with a test. A Next.js
-rewrite would put the link back on-brand; until one lands, the budtender host is the only
-address that works.
+* **Chrome.** Header, store bar and footer are reproduced in `bundles/templates/bundles/base.html`
+  from the site's own `lib/constants.ts` NAVIGATION and `app/globals.css` tokens — not by
+  importing the site's Tailwind bundle, which Next content-hashes per build and would 404
+  the first time the marketing site redeployed. Same reason Inter is self-hosted under
+  `bundles/static/bundles/fonts/` with next/font's metric-adjusted `Inter Fallback`.
+* **The age gate.** The site gates every page with a React component; a rewrite skips React,
+  so `base.html` carries an inline gate reading the *same* `happytime-age-session` /
+  `happytime-age-verified` keys. Same origin under the proxy, so a shopper who already
+  verified is not asked twice.
+
+Deliberately **not** reproduced: the specials ribbon under the site header. It renders the
+current month's deals from the marketing site's own calendar; a second copy in a second repo
+would eventually advertise an offer the shop no longer runs.
+
+On the budtender host, keep the trailing slash — without it Django's `APPEND_SLASH` answers
+301 and the recipient takes an extra hop. Through the apex, the rewrite handles it.
+
+### Product imagery
+
+Category illustrations, not photos, and that is not a shortcut: **the Dutchie POS register
+API returns no product images at all** — 0 of 4,672 live Yakima rows carry one. `resolver.public_image()`
+prefers a real photo when a row ever has one, then falls back to the category art on
+`SITE_ORIGIN/media/`. `image_is_category` rides along on every public row so the template can
+letterbox an illustration (`object-fit: contain`) instead of cropping it like a photo.
+
+The POS's own `pos.imagemap` uses brand logos instead. That is a deliberate difference: only
+25% of live rows match a brand logo, and a brand mark tells a shopper less about what they
+are buying than the category does.
 
 ---
 
@@ -552,9 +578,33 @@ failure must never surface as a failed checkout.
 Plus, on the operational side: cap calibrated from real sales, chime + flash + tab marker
 on a new order, and a confirmation email that degrades silently when unconfigured.
 
-**393 tests pass** in `happytime-budtender`, **12** in `alpine-automations`. Django system
-check clean, migrations apply from empty, ruff clean on every file touched, and the
+**466 tests pass** under `manage.py test` and **279** under pytest (different collection
+roots; together they cover the repo), run on the VPS against the deployed image. Django
+system check clean, migrations apply from empty, ruff clean on every file touched, and the
 production guard verified both ways.
+
+### Verified on the live site
+
+Run against `https://happytimeweed.com/custom-order` after deploy, in a real browser —
+`curl` cannot be used for the apex because Vercel answers scripted requests with a bot
+checkpoint (429).
+
+| Check | Result |
+|---|---|
+| Emailed link → live-priced bundle | 3 lines from live register stock, `quote_source: live_register` |
+| Discount arithmetic | $78.00 subtotal → −$15.60 (20%) → $62.40 |
+| Phone-only checkout (`5094206999`) | released draft #46, order code `FZSNUK`, held 4 h |
+| Order reaches the register queue | visible in the Yakima `RELEASED` query as `Phone 6999` |
+| Typeface matches the site | `Inter` loaded from `/static/bundles/fonts/`, not the system stack |
+| Header matches the site | 128px bar, 80px logo, nav 20px/500, Specials in amber |
+| Footer matches the site | Shop / Top Brands / Locations / Learn, 23 links, socials, copyright |
+| Category art renders | `flower.png`, `pre-roll.png`, `edibles.png` all 200 and decoded |
+| Menu runs on live Dutchie data | 24 cards, category counts (Flower 401, Vapes 767, …) |
+| No horizontal scroll at 375px | document `scrollWidth == clientWidth`; the category strip scrolls itself |
+| Broken link is still a finished page | full chrome, keeps the link's store, 400 |
+
+The test reservation was cancelled after verification (status `cancelled`, not deleted) so
+staff are not left chasing a phantom order.
 
 ---
 

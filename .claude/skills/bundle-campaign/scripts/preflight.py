@@ -36,6 +36,11 @@ from urllib.parse import urlencode
 
 DEFAULT_BUDTENDER = pathlib.Path.home() / "OneDrive/Desktop/happytime-budtender"
 DEFAULT_ALPINE = pathlib.Path.home() / "OneDrive/Desktop/alpine-automations"
+# The ORIGIN, not the apex, and deliberately so: this script fetches the page with
+# urllib, and Vercel answers scripted requests to happytimeweed.com with a bot
+# checkpoint (HTTP 429 + a "Vercel Security Checkpoint" HTML body). Pointing this
+# at the apex would report every healthy deploy as broken. Creatives still link the
+# apex — verify that one in a browser.
 DEFAULT_BASE = "https://budtender-api.happytimeweed.com/custom-order/"
 
 SIGNED_PARAMS = ("b", "loc", "i", "c", "exp")
