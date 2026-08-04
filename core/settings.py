@@ -228,6 +228,46 @@ DUTCHIE = {
     },
 }
 
+# ── Logging ──────────────────────────────────────────────────────────────────
+# Without this, a 500 in production is reported to NOBODY, and it is not obvious why.
+# Django's DEFAULT_LOGGING gives the `django` logger two handlers: a console one behind
+# a require_debug_true filter (dead when DEBUG=0) and mail_admins, which opens with
+# `if not settings.ADMINS: return` — and ADMINS is empty. Python's lastResort handler
+# does not save us either: it only fires when a record finds NO handler anywhere in its
+# chain, and `django.request` propagates to `django`, which HAS handlers. So the record
+# counts as handled and vanishes. Measured on this box: web returned two 400s and logged
+# nothing, while voice-web — the one project that already configured logging — printed
+# `Not Found: /` for the same class of event.
+#
+# gunicorn runs with no --access-logfile and Traefik with no --accesslog, so there is no
+# second copy anywhere. This is the only thing standing between a broken checkout and
+# silence.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"},
+    },
+    "handlers": {
+        # stderr, so it lands in `docker compose logs` like every other service.
+        "console": {"class": "logging.StreamHandler", "formatter": "standard"},
+    },
+    # Root catches application loggers. django.* is re-pointed below because it is the
+    # namespace whose default handlers are the problem.
+    "root": {"handlers": ["console"], "level": "INFO"},
+    "loggers": {
+        # propagate=False, or every record is emitted twice — once here, once at root.
+        "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        # Unhandled view exceptions (500) and 404s land here. ERROR keeps 404 noise out
+        # while still surfacing every 500 with its traceback.
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        # DisallowedHost, suspicious operations. Quiet until it isn't.
+        "django.security": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        # Every SQL statement at DEBUG. Left at WARNING deliberately.
+        "django.db.backends": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+    },
+}
+
 # ── Production hardening (only when not DEBUG) ────────────────────────────────
 if not DEBUG:
     # ponytail: pytest imports settings before per-test env overrides; real DEBUG=0 processes fail closed.
