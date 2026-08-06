@@ -16,6 +16,13 @@
       <input type="hidden" name="qty" value="1">
       <button type="button" class="primary add">Add to cart</button>
     </form>
+    {% comment %}
+      On-demand only — see product_lab() in views.py. Fetched the first time this
+      is opened, then toggled shut/open from the DOM afterward without re-fetching.
+    {% endcomment %}
+    <button type="button" class="ghost labbtn"
+            data-url="{% url 'bundle_product_lab' p.product_id %}?loc={{ store }}">Lab data</button>
+    <div class="labslot" hidden></div>
   </article>
   {% empty %}
   <p class="muted">Nothing in stock matches those filters right now.</p>

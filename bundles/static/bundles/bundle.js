@@ -111,6 +111,31 @@
       loadResults(parseInt(pageBtn.getAttribute("data-page"), 10) || 1);
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
+
+    // Lab data: fetched once per tile, then just toggled shut/open — the
+    // endpoint is one Dutchie request per batch, so re-fetching on every click
+    // would cost the same as never caching it client-side at all.
+    var labBtn = e.target.closest(".labbtn");
+    if (labBtn) {
+      var slot = labBtn.parentElement.querySelector(".labslot");
+      if (!slot) return;
+      if (slot.getAttribute("data-loaded")) {
+        slot.hidden = !slot.hidden;
+        return;
+      }
+      slot.hidden = false;
+      slot.innerHTML = '<p class="muted">Loading…</p>';
+      fetch(labBtn.getAttribute("data-url"), { credentials: "same-origin" })
+        .then(function (r) { return r.text(); })
+        .then(function (html) {
+          slot.innerHTML = html;
+          slot.setAttribute("data-loaded", "1");
+        })
+        .catch(function () {
+          slot.innerHTML = '<p class="muted">Couldn\'t load lab data.</p>';
+        });
+      return;
+    }
   });
 
   // Typing a quantity directly.

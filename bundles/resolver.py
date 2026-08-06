@@ -241,35 +241,62 @@ def _img_is_cat(item: dict) -> bool:
 def public_thc(item: dict) -> float | None:
     """THC% for a customer-facing card, or None when the source value isn't one.
 
-    `THCContent` on a product_SearchV2 row is supplier-entered per batch, and the
-    2026-08-06 register capture (4,743 rows) shows two conventions in use under the
-    SAME `THCContentUnitId` of 2 — a fraction of one, and whole percent:
+    CORRECTED. A previous version of this function scaled any value <= 1.0 up by
+    100x, on the theory that it was a fraction written in place of a percentage.
+    That theory does not survive a ground-truth check: `THCContent` on a
+    product_SearchV2 row was cross-referenced against a real lab panel for the
+    SAME batch (2026-08-06 capture, `dutchie/fixtures/`) and it matched the lab's
+    **THC** field exactly (2.9 = 2.9) — not THCA (48) and not TotalCannabinoids
+    (44.996). So this field is decarbed/active THC, not total potency, and its
+    small values for raw flower are frequently CORRECT, not mis-scaled — a raw,
+    undecarbed sample legitimately has little active THC. Scaling it up was
+    inventing a false potency number, which is worse than showing none.
 
-        Happy Buds "Syrup Soaked"  batch 7577655/6 -> 0.4187   (7g and 28g agree)
-                                   batch 7571073/4 -> 18.85    (7g and 28g agree)
+    So: no transform. The sanity band below exists because a menu row can still
+    carry frank nonsense (a 1g rosin at "1.258", which is neither a believable
+    percentage nor a believable fraction for a concentrate) — anything outside it
+    is dropped rather than guessed at.
 
-    Note it is stable WITHIN a batch — this is data entry, not a package-size bug.
-
-    So a value at or below 1.0 in a THC-bearing category is read as a fraction and
-    scaled. Nobody sells 0.42%-THC flower as flower, whereas 42% infused flower is
-    ordinary, and without this the band below hid 1,097 products that had perfectly
-    good numbers (flower showed potency on 16 of 645 rows).
-
-    Anything still outside the band is dropped rather than shown: the capture also
-    contains frank nonsense, like a 1g rosin at 1.258 — 125.8% as a fraction and
-    1.258% as a percentage, both impossible.
-
-    The authoritative source is the lab endpoint (`dutchie/lab.py`), whose units are
-    verified rather than inferred. Use this only for a menu tile.
+    This number is NOT what a shopper means by "25% THC" on a label — that is
+    THCA, and it does not exist on a menu row at all. See `public_potency()` and
+    `dutchie/lab.py` for the number people actually want, sourced per-batch from
+    the register's own lab panel.
     """
     band = _THC_PERCENT_BANDS.get(canon_category(item.get("cat_key") or ""))
     if not band:
         return None
     value = _f(item.get("thc"))
-    if 0 < value <= 1.0:
-        value = round(value * 100, 2)
     lo, hi = band
     return value if lo <= value <= hi else None
+
+
+def public_potency(lab: dict | None) -> dict:
+    """THCA and Total, from a `dutchie.lab.lab_result()` dict. Both, not one.
+
+    THCA is the number a shopper means by "25% THC" — the raw, undecarbed reading
+    a COA reports as potency, and what dispensary labels are built around. Total
+    (Dutchie's own `total_cannabinoids`, the standard THCA*0.877 + THC formula) is
+    a second, smaller number, and the two are not interchangeable: on the one
+    batch this was checked against, THCA read 48% and Total read 44.996% while the
+    menu-row THCContent read 2.9% — showing only the last of those under a "THC"
+    label would understate potency by more than 15x.
+
+    Returns `{"thca": None, "total": None}` when there is no lab data — a large
+    share of inventory, and a completely normal state; the caller renders nothing.
+    """
+    if not lab:
+        return {"thca": None, "total": None}
+    thca = next((c.get("value") for c in lab.get("cannabinoids") or ()
+                if c.get("name") == "THCA"), None)
+    total = (lab.get("total_cannabinoids") or {}).get("value")
+
+    def num(v):
+        try:
+            return round(float(v), 2)
+        except (TypeError, ValueError):
+            return None
+
+    return {"thca": num(thca), "total": num(total)}
 
 
 def _public(item: dict) -> dict:

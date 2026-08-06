@@ -1,0 +1,43 @@
+{% comment %}
+  Fetched on demand by a "Lab data" tap, one product at a time — see product_lab()
+  in views.py for why this is never called for a whole grid page.
+
+  THCA and Total are shown as TWO figures, not collapsed into one "THC %". They are
+  different measurements: THCA is the raw, undecarbed reading a COA reports as
+  potency — what a shopper means by "25% THC" — and Total (THCA*0.877 + THC) is a
+  second, smaller number. Showing only one under a plain "THC" label understates
+  potency by double digits on some products; see resolver.public_potency().
+{% endcomment %}
+{% if potency.thca or potency.total %}
+<div class="labpanel">
+  <div class="labrow labtotal">
+    {% if potency.thca %}<span><strong>{{ potency.thca }}%</strong> THCA</span>{% endif %}
+    {% if potency.total %}<span><strong>{{ potency.total }}%</strong> Total</span>{% endif %}
+  </div>
+  {% if lab.cannabinoids %}
+  <p class="labhead">Cannabinoids</p>
+  <ul class="lablist">
+    {% for c in lab.cannabinoids %}
+    <li>{{ c.name }} <span>{{ c.value }}{{ c.unit }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if lab.terpenes %}
+  <p class="labhead">Terpenes {% if lab.total_terpenes %}<span>{{ lab.total_terpenes.value }}{{ lab.total_terpenes.unit }} total</span>{% endif %}</p>
+  <ul class="lablist">
+    {% for t in lab.terpenes %}
+    <li>{{ t.name }} <span>{{ t.value }}{{ t.unit }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <p class="fineprint">
+    {% if lab.lab_name %}Tested by {{ lab.lab_name }}{% endif %}
+    {% if lab.tested_date %} · {{ lab.tested_date|slice:":10" }}{% endif %}
+  </p>
+  {% if lab.coa_url %}
+  <a class="linkbtn" href="{{ lab.coa_url }}" target="_blank" rel="noopener">Full lab report (COA)</a>
+  {% endif %}
+</div>
+{% else %}
+<p class="muted labpanel">No lab data available for this batch yet.</p>
+{% endif %}

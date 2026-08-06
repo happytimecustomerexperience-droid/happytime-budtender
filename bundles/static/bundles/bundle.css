@@ -242,6 +242,21 @@ button:disabled, .is-disabled { opacity: .45; pointer-events: none; }
 .card .amt { display: block; margin: 9px 0; font-size: 17px; }
 .card .addform { margin-top: auto; }
 .card .add { width: 100%; padding: 10px; font-size: 14px; }
+.card .labbtn { width: 100%; padding: 8px; font-size: 12.5px; margin-top: 6px; }
+
+/* ── lab data panel ───────────────────────────────────────────────────────── */
+.labpanel { margin-top: 8px; padding: 10px; background: var(--fog);
+            border: 1px solid var(--line); border-radius: 10px; font-size: 12.5px; }
+.labrow.labtotal { display: flex; gap: 14px; margin: 0 0 6px; font-size: 13px; }
+.labrow.labtotal strong { color: var(--amber); font-size: 15px; }
+.labhead { margin: 8px 0 4px; font-size: 11px; font-weight: 700; text-transform: uppercase;
+           letter-spacing: .03em; color: var(--sage); }
+.labhead span { text-transform: none; letter-spacing: normal; font-weight: 400; }
+.lablist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.lablist li { display: flex; justify-content: space-between; color: var(--cream); }
+.lablist li span { color: var(--sage); }
+.labpanel .fineprint { margin: 8px 0 0; }
+.labpanel .linkbtn { margin-top: 4px; display: inline-block; }
 
 .pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 20px; }
 .pg { font-size: 13px; color: var(--sage); }

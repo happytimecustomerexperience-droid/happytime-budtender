@@ -26,13 +26,14 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from budtender.models import PhoneCartDraft
+from dutchie import lab as dutchie_lab
 from pos import catalog as pos_catalog
 from pos_core.ratelimit import _client_ip, rate_limit
 
 from . import cart as cart_mod
 from . import calibration, customers, emails, resolver, signing, tax
 from .catalog import (STORE_ADDRESS, all_stores, get_bundle, store_info,
-                      store_label)
+                      store_key_for, store_label)
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +218,12 @@ def menu(request):
     inventory = cart_mod.inventory_for(store)
     sellable = _in_stock(inventory)
     draft = cart_mod.get_cart(request, store, create=True)
-    cart_ctx = cart_mod.reprice(draft, inventory, confirm=True)
+    # NOT confirm=True. This is pure browsing — an earlier automated edit matched
+    # this call along with landing()'s (identical source line) and confirmed every
+    # cart line's price on every menu page load. That would fire a price-check per
+    # line each time someone opens the menu with items already in their cart, which
+    # is exactly the register load the browse/checkout split exists to avoid.
+    cart_ctx = cart_mod.reprice(draft, inventory)
 
     response = render(request, "bundles/menu.html", _shell(request, store, {
         "cats": pos_catalog.categories(sellable),
@@ -262,6 +268,34 @@ def results(request):
     if request.GET.get("format") == "json":
         return JsonResponse({"products": products, "total": total, "page": page})
     return render(request, "bundles/_results.html", ctx)
+
+
+@require_GET
+def product_lab(request, product_id):
+    """GET /custom-order/lab/<product_id> — potency (THCA + Total) and terpenes.
+
+    On demand, one product at a time — never called for a whole grid page. The
+    lab endpoint is one Dutchie request PER BATCH (`dutchie/lab.py`); firing it for
+    every tile on a 24-item page would multiply register load 24x for numbers most
+    shoppers never look at. A shopper who wants the detail asks for it here.
+
+    `product_id` is public (it is what's already in every cart link); the BatchId
+    that keys the lab lookup is resolved server-side from live inventory and never
+    reaches the client — same rule as SerialNo in `cart.confirm_live_price`.
+    """
+    store = _store_from(request)
+    inventory = cart_mod.inventory_for(store)
+    live = resolver.find_live(inventory, str(product_id))
+    result = None
+    if live:
+        batch_id = live.get("BatchId")
+        try:
+            result = dutchie_lab.lab_result(store_key_for(store), batch_id)
+        except Exception:
+            logger.warning("lab lookup failed for product %s", product_id, exc_info=True)
+    return render(request, "bundles/_lab.html", {
+        "lab": result, "potency": resolver.public_potency(result),
+    })
 
 
 # ── cart ─────────────────────────────────────────────────────────────────────

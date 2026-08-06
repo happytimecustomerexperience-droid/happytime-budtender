@@ -269,6 +269,53 @@ class LeakGuardTests(PublicSurfaceTestCase):
         self.assertEqual(r.status_code, 400)
         self.assertNoLeak(r, "invalid link")
 
+    def test_lab_body_is_clean_and_never_shows_the_internal_batch_id(self):
+        # The fixture's live row carries BatchId=9 (bundles/tests/test_resolver.py) —
+        # that is what keys the lookup server-side and must never reach the client,
+        # same rule as SerialNo in cart.confirm_live_price. lab_name/coa_url are
+        # deliberately NOT poisoned with a canary here — they are legitimate
+        # customer-facing fields the template is supposed to render, and the leak
+        # guard's job is the staff-only key, not these.
+        poisoned = {
+            "cannabinoids": [{"name": "THCA", "value": 48.0, "unit": "%"}],
+            "total_cannabinoids": {"name": "Total Cannabinoids", "value": 44.996, "unit": "%"},
+            "lab_name": "Confidence Analytics", "coa_url": "https://example.com/coa/sample",
+            "batch_id": 9,
+        }
+        with self._patch_inv(), patch("bundles.views.dutchie_lab.lab_result", return_value=poisoned):
+            r = self.client.get("/custom-order/lab/1?loc=yakima")
+        self.assertEqual(r.status_code, 200)
+        self.assertNoLeak(r, "lab")
+        self.assertNotIn("batch_id", r.content.decode())
+        self.assertNotIn("BatchId", r.content.decode())
+        self.assertContains(r, "48.0")   # THCA IS meant to render — this is the point
+        self.assertContains(r, "Confidence Analytics")  # so is the lab name
+
+    def test_lab_shows_both_thca_and_total_not_one_collapsed_number(self):
+        poisoned = {
+            "cannabinoids": [{"name": "THCA", "value": 48.0, "unit": "%"}],
+            "total_cannabinoids": {"name": "Total Cannabinoids", "value": 44.996, "unit": "%"},
+        }
+        with self._patch_inv(), patch("bundles.views.dutchie_lab.lab_result", return_value=poisoned):
+            body = self.client.get("/custom-order/lab/1?loc=yakima").content.decode()
+        self.assertIn("48.0", body)
+        self.assertIn("THCA", body)
+        self.assertIn("45.0", body)   # round(44.996, 2), via public_potency
+        self.assertIn("Total", body)
+
+    def test_lab_with_no_data_says_so_rather_than_leaking_or_erroring(self):
+        with self._patch_inv(), patch("bundles.views.dutchie_lab.lab_result", return_value=None):
+            r = self.client.get("/custom-order/lab/1?loc=yakima")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "No lab data")
+        self.assertNoLeak(r, "lab (no data)")
+
+    def test_lab_for_an_unknown_product_is_graceful(self):
+        with self._patch_inv():
+            r = self.client.get("/custom-order/lab/does-not-exist?loc=yakima")
+        self.assertEqual(r.status_code, 200)
+        self.assertNoLeak(r, "lab (unknown product)")
+
     def test_stock_on_hand_is_not_printed(self):
         # `_public` carries `qty` so the add button can reason about stock; the
         # templates must not print it. A public "3 left" is a fine product

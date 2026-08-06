@@ -11,6 +11,7 @@ urlpatterns = [
     path("", views.landing, name="bundle_landing"),
     path("menu", views.menu, name="bundle_menu"),
     path("results", views.results, name="bundle_results"),
+    path("lab/<str:product_id>", views.product_lab, name="bundle_product_lab"),
     path("cart", views.cart_view, name="bundle_cart"),
     path("cart/add", views.cart_add, name="bundle_cart_add"),
     path("cart/update", views.cart_update, name="bundle_cart_update"),

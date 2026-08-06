@@ -18,46 +18,47 @@ from bundles.tests.test_resolver import live
 
 
 class ImplausibleValuesAreSuppressed(TestCase):
-    """Superseded in part by the 2026-08-06 register capture (see resolver.py
-    public_thc). Sub-1.0 readings were assumed to be unrecoverable garbage and
-    hidden; the capture proved most of them are a real value written as a fraction
-    — the SAME strain, SAME batch, agreeing across package sizes once scaled:
+    """CORRECTED TWICE. First version: hide any sub-1.0 reading as garbage. Second
+    version (one turn of this session): scale it x100 as a mis-entered fraction,
+    on the theory that 0.15 meant "15%". THAT theory was tested against a real lab
+    panel for the SAME batch (2026-08-06 capture) and failed — the menu-row
+    THCContent (2.9) matched the lab's decarbed **THC** field (2.9) exactly, not
+    THCA (48) and not TotalCannabinoids (44.996). So a small THCContent is very
+    often just a small amount of ALREADY-ACTIVE THC in a raw, undecarbed sample —
+    a real number, not a scaling bug. Multiplying it by 100 was inventing a false
+    potency figure, on a regulated claim, which is worse than showing none.
 
-        Happy Buds "Syrup Soaked"  batch 7577655/6 -> 0.4187
-                                   batch 7571073/4 -> 18.85
-
-    So these are rewritten to assert the scaled value rather than a hidden one. What
-    is UNCHANGED and still tested here: genuinely impossible values (negative, over
-    100% once scaled, mg-dosed categories) are still dropped, not guessed.
+    Back to showing the raw value only where it reads as credible for its
+    category; nothing is transformed. The number people actually mean by
+    "25% THC" is THCA, which does not exist on a menu row — see
+    `public_potency()` and `dutchie/lab.py` for that, sourced per-batch from the
+    register's own lab panel, not guessed from this field.
     """
 
-    def test_the_exact_live_values_that_were_wrong_are_now_scaled_up(self):
-        # Real THCContent readings from the Yakima floor, all sub-1.0 on flower —
-        # fractions, scaled to the percentages they actually represent.
-        cases = {0.154: 15.4, 0.271: 27.1, 0.15: 15.0, 0.411: 41.1,
-                 # 0.459 and 0.49 scale to 45.9% / 49.0% — over the flower band's 45%
-                 # ceiling, so still hidden. Scaling doesn't mean every value survives.
-                 0.459: None, 0.371: 37.1, 0.556: None, 0.49: None}
-        for raw, want in cases.items():
+    def test_the_exact_live_values_that_were_wrong_stay_hidden(self):
+        # Real THCContent readings from the Yakima floor, all under 5% on flower.
+        # No longer scaled — shown to be decarbed-THC, not a fraction of THCA.
+        for raw in (0.154, 0.271, 0.15, 0.411, 0.459, 0.371, 0.556, 0.49):
             row = live(cat_key="flower", thc=raw)
-            self.assertEqual(public_thc(row), want, f"{raw} -> {want}")
+            self.assertIsNone(public_thc(row),
+                              f"{raw} would render as '{raw}% THC' on a flower card")
 
     def test_a_credible_flower_percentage_is_kept(self):
         for raw in (20.1256, 22.0, 18.5, 31.0):
             self.assertEqual(public_thc(live(cat_key="flower", thc=raw)), raw)
 
-    def test_the_same_strain_in_two_sizes_now_agrees_once_scaled(self):
-        # 14g read 0.15 (a fraction), 28g read 22.0 (already whole percent). Both
-        # are now shown; they no longer look like one right answer and one hidden.
-        self.assertEqual(public_thc(live(cat_key="flower", thc=0.15)), 15.0)
+    def test_the_same_strain_in_two_sizes_disagreeing_is_visible_not_averaged(self):
+        # 14g read 0.15, 28g read 22.0. Shown as-is: the low reading is plausibly
+        # correct (little active THC in a raw sample) and is not inflated to match.
+        self.assertIsNone(public_thc(live(cat_key="flower", thc=0.15)))
         self.assertEqual(public_thc(live(cat_key="flower", thc=22.0)), 22.0)
 
     def test_vapes_and_concentrates_keep_their_reliable_readings(self):
         self.assertEqual(public_thc(live(cat_key="vapes", thc=80.91)), 80.91)
         self.assertEqual(public_thc(live(cat_key="concentrate", thc=93.0)), 93.0)
 
-    def test_a_vape_fraction_is_scaled_like_flower(self):
-        self.assertEqual(public_thc(live(cat_key="vapes", thc=0.32)), 32.0)
+    def test_a_vape_reading_that_looks_like_a_fraction_is_suppressed(self):
+        self.assertIsNone(public_thc(live(cat_key="vapes", thc=0.32)))
 
     def test_mg_dosed_categories_never_show_a_percentage(self):
         # Edibles/tinctures/topicals carry mg. Live medians were 10, 240 and 240 —
@@ -95,45 +96,71 @@ class ProjectionCarriesTheSuppression(TestCase):
 
 
 class UnitConventionTests(SimpleTestCase):
-    """`THCContent` arrives in two conventions under the same unit id.
+    """`THCContent` on a menu row is NOT a THCA-style potency figure.
 
-    From the 2026-08-06 register capture, one strain, two batches, both internally
-    consistent across package sizes:
+    Ground truth, not theory: the one batch present in BOTH the live inventory pull
+    and a real lab panel (2026-08-06 capture, `dutchie/fixtures/`) shows the
+    menu-row THCContent (2.9) matching the lab's **decarbed THC** field (2.9)
+    exactly — not THCA (48), not TotalCannabinoids (44.996). So `public_thc`
+    applies no transform: a small reading is often a real, small amount of
+    already-active THC in a raw sample, not a mis-entered fraction.
 
-        Happy Buds "Syrup Soaked"  batch 7577655/6 -> 0.4187
-                                   batch 7571073/4 -> 18.85
-
-    A sub-1.0 THC figure in a THC-bearing category is a fraction — nobody sells
-    0.42%-THC flower as flower. Before this, the band hid 1,097 products with usable
-    numbers; flower showed potency on 16 of 645 rows.
+    `public_potency()` is the function that answers "how strong is it" the way a
+    shopper means it — THCA and Total, sourced per-batch from the lab endpoint,
+    never guessed from this field.
     """
 
     def _thc(self, value, cat="flower"):
         return resolver.public_thc({"cat_key": cat, "thc": value})
 
-    def test_a_fraction_is_scaled_to_a_percentage(self):
-        self.assertEqual(self._thc(0.4187), 41.87)
-        self.assertEqual(self._thc(0.15), 15.0)
-
-    def test_a_whole_percentage_is_left_alone(self):
+    def test_no_transform_is_applied(self):
+        # A raw value is shown exactly, or not at all — never rescaled.
         self.assertEqual(self._thc(18.85), 18.85)
         self.assertEqual(self._thc(22), 22.0)
+        self.assertIsNone(self._thc(0.15))   # plausible, small, real — and hidden
 
-    def test_both_batches_of_one_strain_now_agree_within_a_few_points(self):
-        # The two conventions should land in the same neighbourhood once normalised;
-        # if they ever diverge wildly again, the convention has changed.
-        self.assertLess(abs(self._thc(0.4187) - 41.87), 0.01)
-        self.assertLess(abs(self._thc(18.85) - 18.85), 0.01)
+    def test_a_small_reading_below_the_category_floor_is_hidden_not_inflated(self):
+        # The one product present in both the search pull and the lab fixture reads
+        # THCContent 2.9 — the SAME value as the lab's decarbed THC field, not THCA
+        # (48) or Total (44.996); see dutchie/tests/test_lab.py for that ground
+        # truth. 2.9% is below the concentrate floor and correctly hidden here
+        # rather than scaled up to look like the 48% the label actually claims.
+        self.assertIsNone(self._thc(2.9, "concentrate"))
 
     def test_frank_nonsense_is_still_dropped(self):
-        # A 1g rosin at 1.258: 125.8% as a fraction, 1.258% as a percentage. The
-        # capture contains rows like this and neither reading is showable.
+        # A 1g rosin at 1.258%: not a believable concentrate reading either way.
         self.assertIsNone(self._thc(1.258, "concentrate"))
 
     def test_zero_and_missing_stay_none(self):
         for v in (0, 0.0, None, "", "abc"):
             self.assertIsNone(self._thc(v), v)
 
-    def test_a_vape_in_whole_percent_survives(self):
-        # 845 of 900 vape rows were already whole percent and must not be scaled.
+    def test_a_vape_in_whole_percent_is_shown_as_is(self):
         self.assertEqual(self._thc(80.32, "vapes"), 80.32)
+
+
+class PublicPotencyTests(SimpleTestCase):
+    """THCA and Total, from a dutchie.lab.lab_result() dict. Both, never one."""
+
+    def test_both_figures_surface_when_lab_data_has_them(self):
+        lab = {"cannabinoids": [{"name": "THCA", "value": 48.0, "unit": "%"},
+                                {"name": "THC", "value": 2.9, "unit": "%"}],
+              "total_cannabinoids": {"name": "Total Cannabinoids", "value": 44.996, "unit": "%"}}
+        got = resolver.public_potency(lab)
+        self.assertEqual(got["thca"], 48.0)
+        self.assertEqual(got["total"], 45.0)  # round(44.996, 2)
+
+    def test_no_lab_data_is_both_none(self):
+        self.assertEqual(resolver.public_potency(None), {"thca": None, "total": None})
+        self.assertEqual(resolver.public_potency({}), {"thca": None, "total": None})
+
+    def test_missing_thca_in_the_cannabinoid_list_is_none_not_zero(self):
+        lab = {"cannabinoids": [{"name": "CBD", "value": 1.0, "unit": "%"}],
+              "total_cannabinoids": {"value": 12.0}}
+        got = resolver.public_potency(lab)
+        self.assertIsNone(got["thca"])
+        self.assertEqual(got["total"], 12.0)
+
+    def test_a_garbage_total_value_does_not_raise(self):
+        got = resolver.public_potency({"total_cannabinoids": {"value": "n/a"}})
+        self.assertIsNone(got["total"])
