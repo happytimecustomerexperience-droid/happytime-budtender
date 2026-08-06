@@ -1,0 +1,419 @@
+{
+ "Result": true,
+ "Message": null,
+ "Data": [
+  {
+   "LabDataFieldMappingId": 1,
+   "FriendlyName": "CBD",
+   "ValueField": "CBDValue",
+   "UnitField": "CBDUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 2,
+   "FriendlyName": "THC",
+   "ValueField": "THCValue",
+   "UnitField": "THCUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 3,
+   "FriendlyName": "Total Cannabinoids",
+   "ValueField": "TotalCannabinoidsValue",
+   "UnitField": "TotalCannabinoidsUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 4,
+   "FriendlyName": "Cannabinoid",
+   "ValueField": "CannabanoidValue",
+   "UnitField": "CannabanoidUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 5,
+   "FriendlyName": "CBC",
+   "ValueField": "CBCValue",
+   "UnitField": "CBCUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 6,
+   "FriendlyName": "CBCA",
+   "ValueField": "CBCAValue",
+   "UnitField": "CBCAUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 7,
+   "FriendlyName": "CBCV",
+   "ValueField": "CBCVValue",
+   "UnitField": "CBCVUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 8,
+   "FriendlyName": "CBDA",
+   "ValueField": "CBDAValue",
+   "UnitField": "CBDAUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 9,
+   "FriendlyName": "CBDML",
+   "ValueField": "CBDML",
+   "UnitField": "",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 10,
+   "FriendlyName": "CBDV",
+   "ValueField": "CBDVValue",
+   "UnitField": "CBDVUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 11,
+   "FriendlyName": "CBDVA",
+   "ValueField": "CBDVAValue",
+   "UnitField": "CBDVAUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 12,
+   "FriendlyName": "CBG",
+   "ValueField": "CBGValue",
+   "UnitField": "CBGUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 13,
+   "FriendlyName": "CBGA",
+   "ValueField": "CBGAValue",
+   "UnitField": "CBGAUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 14,
+   "FriendlyName": "CBL",
+   "ValueField": "CBLValue",
+   "UnitField": "CBLUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 15,
+   "FriendlyName": "CBLA",
+   "ValueField": "CBLAValue",
+   "UnitField": "CBLAUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 16,
+   "FriendlyName": "CBN",
+   "ValueField": "CBNValue",
+   "UnitField": "CBNUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 17,
+   "FriendlyName": "CBNA",
+   "ValueField": "CBNAValue",
+   "UnitField": "CBNAUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 18,
+   "FriendlyName": "CBT",
+   "ValueField": "CBTValue",
+   "UnitField": "CBTUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 19,
+   "FriendlyName": "TAC",
+   "ValueField": "TACValue",
+   "UnitField": "TACUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 20,
+   "FriendlyName": "THCA",
+   "ValueField": "THCAValue",
+   "UnitField": "THCAUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 21,
+   "FriendlyName": "THC-D8",
+   "ValueField": "THC8Value",
+   "UnitField": "THC8Unit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 22,
+   "FriendlyName": "THC-D9",
+   "ValueField": "THC9Value",
+   "UnitField": "THC9Unit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 23,
+   "FriendlyName": "THCML",
+   "ValueField": "THCML",
+   "UnitField": "",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 24,
+   "FriendlyName": "THCV",
+   "ValueField": "THCVValue",
+   "UnitField": "THCVUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 25,
+   "FriendlyName": "THCVA",
+   "ValueField": "THCVAValue",
+   "UnitField": "THCVAUnit",
+   "IsCannabinoid": true
+  },
+  {
+   "LabDataFieldMappingId": 26,
+   "FriendlyName": "Total Terpenes",
+   "ValueField": "TotalTerpenesValue",
+   "UnitField": "TotalTerpenesUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 27,
+   "FriendlyName": "3-Carene",
+   "ValueField": "ThreeCareneValue",
+   "UnitField": "ThreeCareneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 28,
+   "FriendlyName": "Alpha Pinene",
+   "ValueField": "AlphaPineneValue",
+   "UnitField": "AlphaPineneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 29,
+   "FriendlyName": "Alpha Terpinene",
+   "ValueField": "AlphaTerpineneValue",
+   "UnitField": "AlphaTerpineneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 30,
+   "FriendlyName": "Beta Caryophyllene",
+   "ValueField": "BetaCaryphylleneValue",
+   "UnitField": "BetaCaryphylleneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 31,
+   "FriendlyName": "Beta Eudesmol",
+   "ValueField": "BetaEudesmolValue",
+   "UnitField": "BetaEudesmolUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 32,
+   "FriendlyName": "Beta Myrcene",
+   "ValueField": "BetaMyrceneValue",
+   "UnitField": "BetaMyrceneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 33,
+   "FriendlyName": "Beta Pinene",
+   "ValueField": "BetaPineneValue",
+   "UnitField": "BetaPineneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 34,
+   "FriendlyName": "Bisabolol",
+   "ValueField": "BisabololValue",
+   "UnitField": "BisabololUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 35,
+   "FriendlyName": "Camphene",
+   "ValueField": "CampheneValue",
+   "UnitField": "CampheneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 36,
+   "FriendlyName": "Caryophyllene Oxide",
+   "ValueField": "CaryophylleneOxideValue",
+   "UnitField": "CaryophylleneOxideUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 37,
+   "FriendlyName": "Eucalyptol",
+   "ValueField": "EucalyptolValue",
+   "UnitField": "EucalyptolUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 38,
+   "FriendlyName": "Geraniol",
+   "ValueField": "GeraniolValue",
+   "UnitField": "GeraniolUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 39,
+   "FriendlyName": "Guaiol",
+   "ValueField": "GuaiolValue",
+   "UnitField": "GuaiolUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 40,
+   "FriendlyName": "Humulene",
+   "ValueField": "HumuleneValue",
+   "UnitField": "HumuleneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 41,
+   "FriendlyName": "Isopulegol",
+   "ValueField": "IsopulegolValue",
+   "UnitField": "IsopulegolUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 42,
+   "FriendlyName": "Limonene",
+   "ValueField": "LimoneneValue",
+   "UnitField": "LimoneneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 43,
+   "FriendlyName": "Linalool",
+   "ValueField": "LinaloolValue",
+   "UnitField": "LinaloolUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 44,
+   "FriendlyName": "Nerolidol",
+   "ValueField": "NerolidolValue",
+   "UnitField": "NerolidolUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 45,
+   "FriendlyName": "Nerolidol-2",
+   "ValueField": "NerolidolTwoValue",
+   "UnitField": "NerolidolTwoUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 46,
+   "FriendlyName": "Ocimene",
+   "ValueField": "OcimeneValue",
+   "UnitField": "OcimeneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 47,
+   "FriendlyName": "Ocimene-1",
+   "ValueField": "OcimeneOneValue",
+   "UnitField": "OcimeneOneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 48,
+   "FriendlyName": "Ocimene-2",
+   "ValueField": "OcimeneTwoValue",
+   "UnitField": "OcimeneTwoUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 49,
+   "FriendlyName": "p-Cymene",
+   "ValueField": "pCymeneValue",
+   "UnitField": "pCymeneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 50,
+   "FriendlyName": "p-Isopropyltouluene",
+   "ValueField": "pIsopropyltoulueneValue",
+   "UnitField": "pIsopropyltoulueneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 51,
+   "FriendlyName": "Terpinene",
+   "ValueField": "TerpineneValue",
+   "UnitField": "TerpineneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 52,
+   "FriendlyName": "Terpinolene",
+   "ValueField": "TerpinoleneValue",
+   "UnitField": "TerpinoleneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 53,
+   "FriendlyName": "Trans-Nerolidol",
+   "ValueField": "TransNerolidolValue",
+   "UnitField": "TransNerolidolUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 54,
+   "FriendlyName": "Fenchol",
+   "ValueField": "FencholValue",
+   "UnitField": "FencholUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 55,
+   "FriendlyName": "Geraniol Acetate",
+   "ValueField": "GeraniolAcetateValue",
+   "UnitField": "GeraniolAcetateUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 56,
+   "FriendlyName": "Nerol",
+   "ValueField": "NerolValue",
+   "UnitField": "NerolUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 57,
+   "FriendlyName": "Sabinene",
+   "ValueField": "SabineneValue",
+   "UnitField": "SabineneUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 58,
+   "FriendlyName": "Terpineol",
+   "ValueField": "TerpineolValue",
+   "UnitField": "TerpineolUnit",
+   "IsCannabinoid": false
+  },
+  {
+   "LabDataFieldMappingId": 59,
+   "FriendlyName": "Valencene",
+   "ValueField": "ValenceneValue",
+   "UnitField": "ValenceneUnit",
+   "IsCannabinoid": false
+  }
+ ]
+}
