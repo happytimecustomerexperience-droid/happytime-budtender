@@ -719,7 +719,7 @@ class EmptyAndDegradedTests(CartTestCase):
         self._add("1")
         with self._patch_inv_down():
             r = self.client.post("/custom-order/checkout",
-                                 {"loc": "yakima", "name": "Sam Reyes", "phone": "5095551212"})
+                                 {"loc": "yakima", "first_name": "Sam", "last_name": "Reyes", "phone": "5095551212"})
         self.assertEqual(r.status_code, 400)
         self.assertEqual(PhoneCartDraft.objects.get().status, PhoneCartDraft.Status.OPEN)
 

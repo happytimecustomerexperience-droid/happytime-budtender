@@ -30,7 +30,7 @@ from pos import catalog as pos_catalog
 from pos_core.ratelimit import _client_ip, rate_limit
 
 from . import cart as cart_mod
-from . import calibration, customers, emails, resolver, signing
+from . import calibration, customers, emails, resolver, signing, tax
 from .catalog import (STORE_ADDRESS, all_stores, get_bundle, store_info,
                       store_label)
 
@@ -110,6 +110,15 @@ def _in_stock(inventory: list[dict]) -> list[dict]:
     return [p for p in inventory if resolver.in_stock(p)]
 
 
+def _totals(ctx: dict, store: str) -> dict:
+    """How the cart total decomposes for display.
+
+    Prices here are Dutchie menu prices, and this account sells tax-inclusive — the
+    total IS the menu total, nothing is added. See bundles/tax.py.
+    """
+    return tax.quote((ctx.get("quote") or {}).get("total") or 0, store)
+
+
 def _shell(request, store: str, ctx: dict) -> dict:
     """Context every page of the storefront needs."""
     return {
@@ -177,6 +186,7 @@ def landing(request):
         "result": result,
         "expired": req.expired,
         "cart_ctx": cart_ctx,
+        "totals": _totals(cart_ctx, req.store),
         "draft_ttl": DRAFT_TTL_HOURS,
         "checkout_inline": True,
         "form": {},
@@ -325,22 +335,29 @@ def checkout(request):
 
     if request.method == "GET":
         response = render(request, "bundles/checkout.html",
-                          _shell(request, store, {"cart_ctx": ctx}))
+                          _shell(request, store, {"cart_ctx": ctx, "totals": _totals(ctx, store)}))
         return _remember_store(cart_mod.attach_cookie(response, draft), store)
 
-    name = _CONTROL_RE.sub("", str(request.POST.get("name") or "")).strip()[:120]
+    def _clean(field, limit):
+        return _CONTROL_RE.sub("", str(request.POST.get(field) or "")).strip()[:limit]
+
+    first_name, last_name = _clean("first_name", 60), _clean("last_name", 60)
+    name = f"{first_name} {last_name}".strip()[:120]
     phone = _clean_phone(request.POST.get("phone"))
-    email = _CONTROL_RE.sub("", str(request.POST.get("email") or "")).strip()[:254]
+    email = _clean("email", 254)
 
     errors = {}
-    # Phone is the ONLY required field — it is the identity, exactly as it is when a
-    # customer orders by calling the shop. It resolves to a Dutchie guest
-    # (customers.attach), so the budtender finds the order the same way they would a
-    # phone order. A name is welcome but optional; when it is blank we fall back to
-    # whatever Dutchie already has on that number, and only then to the number
-    # itself, so the pickup queue always shows something a human can call out.
+    # Phone, first and last name — the same three Dutchie's own pickup checkout makes
+    # required, so a shopper who has ordered there before meets no new questions. Name
+    # is split rather than one free-text field because `customers.ensure_customer`
+    # feeds `create_guest(first_name=, last_name=)`; splitting a single string is
+    # guesswork on anyone with two surnames or a middle name.
     if len(phone) != 10:
         errors["phone"] = "Please enter a 10-digit phone number."
+    if not first_name:
+        errors["first_name"] = "Please enter your first name."
+    if not last_name:
+        errors["last_name"] = "Please enter your last name."
     if email and not _EMAIL_RE.match(email):
         errors["email"] = "That email doesn't look right."
     if ctx["issues"]:
@@ -354,8 +371,10 @@ def checkout(request):
 
     if errors:
         response = render(request, "bundles/checkout.html",
-                          _shell(request, store, {"cart_ctx": ctx, "errors": errors,
-                                                  "form": {"name": name, "email": email}}),
+                          _shell(request, store, {
+                              "cart_ctx": ctx, "totals": _totals(ctx, store), "errors": errors,
+                              "form": {"first_name": first_name, "last_name": last_name,
+                                       "phone": phone, "email": email}}),
                           status=400)
         return _remember_store(cart_mod.attach_cookie(response, draft), store)
 
@@ -366,9 +385,8 @@ def checkout(request):
     # Wire the order to a Dutchie customer. Read-only here; if there's no account
     # the POS creates one when a budtender claims it (bundles/customers.py).
     customers.attach(draft)
-    # Name is optional, so fill the pickup label from whatever Dutchie knows about
-    # this number, and last-resort from the number itself. An unnamed row in the
-    # staff queue is one nobody can call out across the counter.
+    # The name is required now, so this only fires if it somehow arrived blank — the
+    # staff queue must never show a row nobody can call out across the counter.
     if not draft.pickup_name:
         draft.pickup_name = (draft.customer_name or "").strip() or f"Phone {phone[-4:]}"
     draft.phone_hash = signing.customer_token(phone) if getattr(settings, "BUNDLE_URL_SECRET", "") else ""

@@ -235,7 +235,7 @@ class LeakGuardTests(PublicSurfaceTestCase):
         self._add("1")
         with self._patch_inv():
             r = self.client.post("/custom-order/checkout",
-                                 {"loc": "yakima", "name": "", "phone": "1"})
+                                 {"loc": "yakima", "first_name": "", "last_name": "", "phone": "1"})
         self.assertEqual(r.status_code, 400)
         self.assertNoLeak(r, "checkout errors")
 
@@ -243,7 +243,7 @@ class LeakGuardTests(PublicSurfaceTestCase):
         self._add("1")
         with self._patch_inv():
             r = self.client.post("/custom-order/checkout",
-                                 {"loc": "yakima", "name": "Sam Reyes", "phone": "5095551212"})
+                                 {"loc": "yakima", "first_name": "Sam", "last_name": "Reyes", "phone": "5095551212"})
         self.assertContains(r, "Order placed")
         self.assertNoLeak(r, "success")
 
@@ -441,7 +441,7 @@ class CartIsolationTests(PublicSurfaceTestCase):
     def test_a_stranger_cannot_check_alices_cart_out(self):
         with self._patch_inv():
             r = self.bob.post("/custom-order/checkout",
-                              {"loc": "yakima", "name": "Mallory Vane", "phone": "5095550000"})
+                              {"loc": "yakima", "first_name": "Mallory", "last_name": "Vane", "phone": "5095550000"})
         self.assertContains(r, "Your cart is empty")
         self.assertAliceUntouched()
         self.assertEqual(self.a_draft.pickup_name, "")
@@ -523,7 +523,7 @@ class CartIsolationTests(PublicSurfaceTestCase):
         # the order sitting in the staff queue.
         with self._patch_inv():
             self.alice.post("/custom-order/checkout",
-                            {"loc": "yakima", "name": "Alice Adams", "phone": "5095551212"})
+                            {"loc": "yakima", "first_name": "Alice", "last_name": "Adams", "phone": "5095551212"})
         self.a_draft.refresh_from_db()
         self.assertEqual(self.a_draft.status, PhoneCartDraft.Status.RELEASED)
 
@@ -581,19 +581,19 @@ CART_ABUSE = [
 CHECKOUT_ABUSE = [
     {},
     {"loc": "yakima"},
-    {"loc": "yakima", "name": "S"},
-    {"loc": "yakima", "name": "Sam", "phone": ""},
-    {"loc": "yakima", "name": "Sam", "phone": "abc"},
-    {"loc": "yakima", "name": "Sam", "phone": "-" + "9" * 40},
-    {"loc": "yakima", "name": "Sam", "phone": "5095551212", "email": "not-an-email"},
-    {"loc": "yakima", "name": "Sam", "phone": "5095551212", "email": "a@b@c.com"},
-    {"loc": "yakima", "name": "Sam", "phone": "5095551212", "email": "x" * 400 + "@x.com"},
-    {"loc": "yakima", "name": "A" * 20000, "phone": "1"},
-    {"loc": "yakima", "name": "🌿🔥" * 300, "phone": "1"},
-    {"loc": "yakima", "name": "Robert'); DROP TABLE customers;--", "phone": "1"},
-    {"loc": "yakima", "name": "<script>alert(1)</script>", "phone": "1"},
+    {"loc": "yakima", "first_name": "S", "last_name": "S"},
+    {"loc": "yakima", "first_name": "Sam", "last_name": "Sam", "phone": ""},
+    {"loc": "yakima", "first_name": "Sam", "last_name": "Sam", "phone": "abc"},
+    {"loc": "yakima", "first_name": "Sam", "last_name": "Sam", "phone": "-" + "9" * 40},
+    {"loc": "yakima", "first_name": "Sam", "last_name": "Sam", "phone": "5095551212", "email": "not-an-email"},
+    {"loc": "yakima", "first_name": "Sam", "last_name": "Sam", "phone": "5095551212", "email": "a@b@c.com"},
+    {"loc": "yakima", "first_name": "Sam", "last_name": "Sam", "phone": "5095551212", "email": "x" * 400 + "@x.com"},
+    {"loc": "yakima", "first_name": "A", "last_name": "A" * 20000, "phone": "1"},
+    {"loc": "yakima", "first_name": "🌿🔥", "last_name": "🌿🔥" * 300, "phone": "1"},
+    {"loc": "yakima", "first_name": "Robert');", "last_name": "DROP TABLE customers;--", "phone": "1"},
+    {"loc": "yakima", "first_name": "<script>alert(1)</script>", "last_name": "<script>alert(1)</script>", "phone": "1"},
     {"loc": "yakima", "name": ["Sam", "Mallory"], "phone": ["1", "notaphone"]},
-    {"loc": "yakima", "name": "{{7*7}}", "phone": "{% raw %}", "email": "{{7*7}}@x.com"},
+    {"loc": "yakima", "first_name": "{{7*7}}", "last_name": "{{7*7}}", "phone": "{% raw %}", "email": "{{7*7}}@x.com"},
 ]
 
 
@@ -684,7 +684,7 @@ class InputAbuseTests(PublicSurfaceTestCase):
         self._add("1")
         with self._patch_inv():
             r = self.client.post("/custom-order/checkout",
-                                 {"loc": "yakima", "name": "<script>alert(1)</script>",
+                                 {"loc": "yakima", "first_name": "<script>alert(1)</script>", "last_name": "<script>alert(1)</script>",
                                   "phone": "123"})
         body = r.content.decode()
         self.assertEqual(r.status_code, 400)
@@ -695,7 +695,7 @@ class InputAbuseTests(PublicSurfaceTestCase):
         self._add("1")
         with self._patch_inv():
             r = self.client.post("/custom-order/checkout",
-                                 {"loc": "yakima", "name": "<img src=x onerror=alert(1)>",
+                                 {"loc": "yakima", "first_name": "<img", "last_name": "src=x onerror=alert(1)>",
                                   "phone": "5095551212"})
         body = r.content.decode()
         self.assertContains(r, "Order placed")
@@ -740,7 +740,7 @@ class InputAbuseTests(PublicSurfaceTestCase):
         self._add("1")
         with self._patch_inv():
             r = self.client.post("/custom-order/checkout",
-                                 {"loc": "yakima", "name": "Sam\x00Reyes", "phone": "5095551212"})
+                                 {"loc": "yakima", "first_name": "Sam\x00Reyes", "last_name": "Sam\x00Reyes", "phone": "5095551212"})
         self.assertLess(r.status_code, 500, "a NUL byte in `name` crashed checkout")
         draft = PhoneCartDraft.objects.get()
         self.assertNotIn("\x00", draft.pickup_name)
@@ -750,7 +750,7 @@ class InputAbuseTests(PublicSurfaceTestCase):
         self._add("1")
         with self._patch_inv():
             r = self.client.post("/custom-order/checkout",
-                                 {"loc": "yakima", "name": "Sam Reyes", "phone": "5095551212",
+                                 {"loc": "yakima", "first_name": "Sam", "last_name": "Reyes", "phone": "5095551212",
                                   "email": "sa\x00m@example.com"})
         self.assertLess(r.status_code, 500, "a NUL byte in `email` crashed checkout")
         self.assertNotIn("\x00", PhoneCartDraft.objects.get().contact_email)
@@ -762,13 +762,14 @@ class InputAbuseTests(PublicSurfaceTestCase):
         self._add("1")
         with self._patch_inv():
             r = self.client.post("/custom-order/checkout",
-                                 {"loc": "yakima", "name": f"Sam{controls}Reyes",
+                                 {"loc": "yakima", "first_name": f"Sa{controls}m",
+                                  "last_name": f"Rey{controls}es",
                                   "phone": "5095551212",
                                   "email": "sam\x00\x01\x7f@example.com"})
         self.assertEqual(r.status_code, 200)
         draft = PhoneCartDraft.objects.get()
         self.assertEqual(draft.status, PhoneCartDraft.Status.RELEASED)
-        self.assertEqual(draft.pickup_name, "SamReyes")
+        self.assertEqual(draft.pickup_name, "Sam Reyes")
         self.assertEqual(draft.contact_email, "sam@example.com")
         for char in controls:
             self.assertNotIn(char, draft.pickup_name)
@@ -782,7 +783,7 @@ class InputAbuseTests(PublicSurfaceTestCase):
         self._add("1")
         with self._patch_inv():
             r = self.client.post("/custom-order/checkout",
-                                 {"loc": "yakima", "name": "Sam Reyes", "phone": "٥٠٩٥٥٥١٢١٢"})
+                                 {"loc": "yakima", "first_name": "Sam", "last_name": "Reyes", "phone": "٥٠٩٥٥٥١٢١٢"})
         self.assertEqual(r.status_code, 400)
         draft = PhoneCartDraft.objects.get()
         self.assertEqual(draft.status, PhoneCartDraft.Status.OPEN)
@@ -798,7 +799,7 @@ class InputAbuseTests(PublicSurfaceTestCase):
                 self._add("1", client=shopper)
                 with self._patch_inv():
                     shopper.post("/custom-order/checkout",
-                                 {"loc": "yakima", "name": "Sam Reyes", "phone": typed})
+                                 {"loc": "yakima", "first_name": "Sam", "last_name": "Reyes", "phone": typed})
                 draft = PhoneCartDraft.objects.filter(
                     status=PhoneCartDraft.Status.RELEASED).order_by("-id").first()
                 self.assertEqual(draft.contact_phone, "5095551212")
@@ -866,7 +867,7 @@ class RateLimitTests(PublicSurfaceTestCase):
             for _ in range(20):
                 self.client.get("/custom-order/checkout?loc=yakima")
             r = self.client.post("/custom-order/checkout",
-                                 {"loc": "yakima", "name": "Sam Reyes", "phone": "5095551212"})
+                                 {"loc": "yakima", "first_name": "Sam", "last_name": "Reyes", "phone": "5095551212"})
         self.assertEqual(r.status_code, 429)
         self.assertEqual(PhoneCartDraft.objects.get().status, PhoneCartDraft.Status.OPEN)
 
@@ -938,7 +939,7 @@ class MethodAndAuthBoundaryTests(PublicSurfaceTestCase):
             pages.append(self.client.post("/custom-order/cart/add",
                                           {"loc": "yakima", "product_id": "1", "qty": 1}))
             pages.append(self.client.post("/custom-order/checkout",
-                                          {"loc": "yakima", "name": "", "phone": ""}))
+                                          {"loc": "yakima", "first_name": "", "last_name": "", "phone": ""}))
         for r in pages:
             path = r.request["PATH_INFO"]
             self.assertNotEqual(r.status_code, 302, f"{path} redirected")

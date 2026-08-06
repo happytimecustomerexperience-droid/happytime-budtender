@@ -65,7 +65,13 @@
     <div class="row"><span>Subtotal</span><span>${{ result.subtotal|floatformat:2 }}</span></div>
     <div class="row disc"><span>Bundle discount ({{ bundle.discount_pct }}%)</span><span>−${{ result.discount|floatformat:2 }}</span></div>
     <div class="row grand"><span>Your price</span><span>${{ result.total|floatformat:2 }}</span></div>
-    <p class="fineprint">The {{ bundle.discount_pct }}% comes off at the register — mention your bundle to the budtender. Taxes and the final total are calculated in store.</p>
+    {% comment %}
+      Tax-inclusive pricing: Dutchie's own checkout for this account reports
+      taxInclusivePricing:true and its ORDER TOTAL equals the sum of menu prices. So
+      this is the money. The previous line promised a recalculation in store, which
+      set shoppers up to expect a bigger number than they will pay.
+    {% endcomment %}
+    <p class="fineprint">All taxes included{% if totals.tax_included %} — about ${{ totals.tax_included|floatformat:2 }} of your cart is tax{% endif %}. The {{ bundle.discount_pct }}% comes off at the register — mention your bundle to the budtender.</p>
   </div>
 
   {% comment %}
@@ -100,15 +106,27 @@
       <input name="phone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel"
              required placeholder="509 555 1212" aria-describedby="e-phone">
       {% if errors.phone %}<span class="err" id="e-phone">{{ errors.phone }}</span>{% endif %}
-      <small>That's all we need — we'll find you by number at the counter, same as a phone order.</small>
+      <small>We'll find you by number at the counter, same as a phone order.</small>
     </label>
 
-    <details class="moredetails">
-      <summary>Add a name or email (optional)</summary>
+    {% comment %}Same three required fields as Dutchie's pickup checkout — see checkout.html.{% endcomment %}
+    <div class="namerow">
       <label>
-        Name
-        <input name="name" value="{{ form.name|default:'' }}" maxlength="120" autocomplete="name">
+        First name
+        <input name="first_name" value="{{ form.first_name|default:'' }}" maxlength="60"
+               autocomplete="given-name" required aria-describedby="e-first">
+        {% if errors.first_name %}<span class="err" id="e-first">{{ errors.first_name }}</span>{% endif %}
       </label>
+      <label>
+        Last name
+        <input name="last_name" value="{{ form.last_name|default:'' }}" maxlength="60"
+               autocomplete="family-name" required aria-describedby="e-last">
+        {% if errors.last_name %}<span class="err" id="e-last">{{ errors.last_name }}</span>{% endif %}
+      </label>
+    </div>
+
+    <details class="moredetails">
+      <summary>Add an email for a confirmation (optional)</summary>
       <label>
         Email
         <input name="email" type="email" value="{{ form.email|default:'' }}" maxlength="254"
@@ -117,7 +135,7 @@
       </label>
     </details>
 
-    <button type="submit" class="primary block big">Reserve for pickup</button>
+    <button type="submit" class="primary block big">Prepare order for pickup</button>
     <p class="fineprint">
       No payment now — you pay in store. You must be 21+ with valid ID to collect.
       We'll hold it for {{ draft_ttl|default:4 }} hours.

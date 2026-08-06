@@ -39,7 +39,9 @@ SMTP = {
 # One real-looking shopper, written every way a phone reaches us.
 PHONE = "5094206999"
 PHONE_VARIANTS = ("5094206999", "509-420-6999", "(509) 420-6999", "+15094206999", "15094206999")
-NAME = "Sam Reyes"
+FIRST, LAST = "Sam", "Reyes"
+# The pickup label the storefront builds from the two fields.
+NAME = f"{FIRST} {LAST}"
 EMAIL = "sam.reyes@example.com"
 
 # Staff-only signals that must never reach a shopper — page or email.
@@ -98,7 +100,8 @@ class CheckoutFlowTestCase(TestCase):
             return self.client.post("/custom-order/cart/add", payload)
 
     def _checkout(self, inv=None, **over):
-        payload = {"loc": "yakima", "name": NAME, "phone": PHONE, "email": EMAIL}
+        payload = {"loc": "yakima", "first_name": FIRST, "last_name": LAST,
+                   "phone": PHONE, "email": EMAIL}
         payload.update(over)
         with self._patch_inv(inv):
             return self.client.post("/custom-order/checkout", payload)
@@ -133,7 +136,8 @@ class CheckoutGetTests(CheckoutFlowTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("Blue Dream 3.5g", body)
         self.assertIn("Sunset Pre-Roll", body)
-        self.assertIn('name="name"', body)
+        self.assertIn('name="first_name"', body)
+        self.assertIn('name="last_name"', body)
         self.assertIn('name="phone"', body)
         self.assertIn('name="email"', body)
 
@@ -190,18 +194,27 @@ class CheckoutValidationTests(CheckoutFlowTestCase):
         self.assertEqual(PhoneCartDraft.objects.filter(
             status=PhoneCartDraft.Status.RELEASED).count(), 1)
 
-    def test_an_unnamed_order_still_gets_a_callable_label(self):
-        # A blank row in the pickup queue is one nobody can call out, so fall back
-        # to the number when Dutchie has no name for it either.
+    def test_a_missing_name_is_refused_rather_than_labelled_by_phone(self):
+        """Name is required now, matching Dutchie's own pickup checkout.
+
+        It used to be optional and the queue fell back to "Phone 6999". Asking is
+        better than guessing: staff call out a name across the counter, and a row
+        labelled by four digits is one nobody can hand an order to.
+        """
         self._add("1")
-        self._checkout(name="")
-        draft = PhoneCartDraft.objects.get(status=PhoneCartDraft.Status.RELEASED)
-        self.assertTrue(draft.pickup_name.strip(), "pickup_name must never be blank")
-        self.assertIn(draft.contact_phone[-4:], draft.pickup_name)
+        r = self._checkout(first_name="", last_name="")
+        self.assertEqual(r.status_code, 400)
+        self.assertNoOrderPlaced(r)
+
+    def test_each_half_of_the_name_is_required_on_its_own(self):
+        self._add("1")
+        for missing in ("first_name", "last_name"):
+            with self.subTest(missing=missing):
+                self.assertEqual(self._checkout(**{missing: ""}).status_code, 400)
 
     def test_a_supplied_name_is_kept(self):
         self._add("1")
-        self._checkout(name="Sam Reyes")
+        self._checkout(first_name="Sam", last_name="Reyes")
         self.assertEqual(PhoneCartDraft.objects.get(
             status=PhoneCartDraft.Status.RELEASED).pickup_name, "Sam Reyes")
 
@@ -227,7 +240,8 @@ class CheckoutValidationTests(CheckoutFlowTestCase):
         body = r.content.decode()
         self.assertEqual(r.status_code, 400)
         self.assertIn("look right", body)
-        self.assertIn(NAME, body)            # they don't have to retype it
+        self.assertIn(FIRST, body)           # they don't have to retype it
+        self.assertIn(LAST, body)
         self.assertNoOrderPlaced(r)
 
     def test_an_empty_cart_at_submit_time_places_nothing(self):

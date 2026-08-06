@@ -40,7 +40,7 @@
     </li>
     {% endfor %}
   </ul>
-  <div class="row grand"><span>Subtotal</span><span>${{ cart_ctx.quote.total|default:0|floatformat:2 }}</span></div>
+  <div class="row grand"><span>Total <small class="opt">all taxes in</small></span><span>${{ cart_ctx.quote.total|default:0|floatformat:2 }}</span></div>
 
   <div class="banner info">
     <strong>What happens next:</strong> walk in and give your name at the counter.

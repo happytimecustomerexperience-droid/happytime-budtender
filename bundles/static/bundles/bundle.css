@@ -403,3 +403,8 @@ button:disabled, .is-disabled { opacity: .45; pointer-events: none; }
   .line .thumb { width: 56px; height: 56px; }
   .price { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; }
 }
+
+/* First/last name side by side on anything wider than a phone; stacked below, where
+   two 50% inputs are narrower than the names people actually have. */
+.namerow { display: grid; grid-template-columns: 1fr; gap: 0 12px; }
+@media (min-width: 420px) { .namerow { grid-template-columns: 1fr 1fr; } }

@@ -185,7 +185,7 @@ class CartTests(StorefrontTestCase):
                    BUNDLE_MAX_ORDER_TOTAL=300)
 class CheckoutTests(StorefrontTestCase):
     def _checkout(self, **over):
-        payload = {"loc": "yakima", "name": "Sam Reyes", "phone": "509 555 1212",
+        payload = {"loc": "yakima", "first_name": "Sam", "last_name": "Reyes", "phone": "509 555 1212",
                    "email": "sam@example.com"}
         payload.update(over)
         with self._patch_inv(over.pop("_inv", None)):
@@ -251,7 +251,7 @@ class CheckoutTests(StorefrontTestCase):
         gone = [p for p in inventory() if p["product_id"] != "1"]
         with self._patch_inv(gone):
             r = self.client.post("/custom-order/checkout",
-                                 {"loc": "yakima", "name": "Sam", "phone": "5095551212"})
+                                 {"loc": "yakima", "first_name": "Sam", "last_name": "Sam", "phone": "5095551212"})
         self.assertEqual(r.status_code, 400)
         self.assertEqual(PhoneCartDraft.objects.get().status, PhoneCartDraft.Status.OPEN)
 
@@ -286,7 +286,7 @@ class OrderCustomerWiringTests(StorefrontTestCase):
             client.guest_search.return_value = {"Data": guest_rows or []}
         with patch("bundles.customers._client", return_value=client), self._patch_inv():
             self.client.post("/custom-order/checkout",
-                             {"loc": "yakima", "name": "Sam Reyes", "phone": "509 555 1212"})
+                             {"loc": "yakima", "first_name": "Sam", "last_name": "Reyes", "phone": "509 555 1212"})
         return PhoneCartDraft.objects.get()
 
     def test_existing_account_is_matched_and_stamped(self):
@@ -311,7 +311,7 @@ class OrderCustomerWiringTests(StorefrontTestCase):
         self._add("1")
         with patch("bundles.customers._client", return_value=client), self._patch_inv():
             self.client.post("/custom-order/checkout",
-                             {"loc": "yakima", "name": "Sam Reyes", "phone": "5095551212"})
+                             {"loc": "yakima", "first_name": "Sam", "last_name": "Reyes", "phone": "5095551212"})
         client.create_guest.assert_not_called()
 
 
@@ -352,7 +352,7 @@ class BundleLandingTests(StorefrontTestCase):
         self._get()
         with self._patch_inv():
             self.client.post("/custom-order/checkout",
-                             {"loc": "yakima", "name": "Sam", "phone": "5095551212"})
+                             {"loc": "yakima", "first_name": "Sam", "last_name": "Sam", "phone": "5095551212"})
         quote = PhoneCartDraft.objects.get().quote
         self.assertEqual(quote["bundle_discount_pct"], 20)
         self.assertEqual(quote["bundle_name"], "Roll & Relax Bundle")

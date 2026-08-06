@@ -197,7 +197,9 @@ class FullJourneyTests(TestCase):
 
     # ── stage 4: checkout ────────────────────────────────────────────────────
     def _checkout(self, **over):
-        payload = {"loc": LOC, "name": SHOPPER, "phone": PHONE, "email": "sam@example.com"}
+        first, _, last = SHOPPER.partition(" ")
+        payload = {"loc": LOC, "first_name": first, "last_name": last or first,
+                   "phone": PHONE, "email": "sam@example.com"}
         payload.update(over)
         return self.client.post(reverse("bundle_checkout"), payload)
 
@@ -236,9 +238,9 @@ class FullJourneyTests(TestCase):
             with patch_inventory(), patch("bundles.customers.attach"):
                 c.get(self._link())
                 r = c.post(reverse("bundle_checkout"),
-                           {"loc": LOC, "name": f"Sam {i}", "phone": raw})
+                           {"loc": LOC, "first_name": "Sam", "last_name": f"Number{i}", "phone": raw})
             self.assertEqual(r.status_code, 200, f"{raw} was rejected")
-            d = PhoneCartDraft.objects.filter(pickup_name=f"Sam {i}").first()
+            d = PhoneCartDraft.objects.filter(pickup_name=f"Sam Number{i}").first()
             self.assertIsNotNone(d, f"{raw} produced no order")
             self.assertEqual(d.phone_last4, "6999")
             seen.add(d.phone_hash)
@@ -386,7 +388,8 @@ class DegradedPipelineTests(TestCase):
         gone = [p for p in inventory() if p["product_id"] != "1"]
         with patch_inventory(gone), patch("bundles.customers.attach"):
             r = self.client.post(reverse("bundle_checkout"),
-                                 {"loc": LOC, "name": SHOPPER, "phone": PHONE})
+                                 {"loc": LOC, "first_name": SHOPPER.split()[0],
+                                  "last_name": SHOPPER.split()[-1], "phone": PHONE})
         self.assertEqual(r.status_code, 400)
         self.assertEqual(PhoneCartDraft.objects.filter(
             status=PhoneCartDraft.Status.RELEASED).count(), 0,
@@ -405,7 +408,8 @@ class DegradedPipelineTests(TestCase):
         with patch_inventory(), \
              patch("bundles.customers._client", side_effect=RuntimeError("POS unreachable")):
             r = self.client.post(reverse("bundle_checkout"),
-                                 {"loc": LOC, "name": SHOPPER, "phone": PHONE})
+                                 {"loc": LOC, "first_name": SHOPPER.split()[0],
+                                  "last_name": SHOPPER.split()[-1], "phone": PHONE})
         self.assertLess(r.status_code, 500, "a POS outage must not 500 the shopper")
         placed = PhoneCartDraft.objects.filter(status=PhoneCartDraft.Status.RELEASED)
         self.assertEqual(placed.count(), 1,

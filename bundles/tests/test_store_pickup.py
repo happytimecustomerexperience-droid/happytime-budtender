@@ -171,7 +171,7 @@ class PickupDetailTests(TestCase):
             self.client.post("/custom-order/cart/add",
                              {"loc": "pullman", "product_id": "1", "qty": 1})
             r = self.client.post("/custom-order/checkout",
-                                 {"loc": "pullman", "name": "Sam Reyes",
+                                 {"loc": "pullman", "first_name": "Sam", "last_name": "Reyes",
                                   "phone": "5094206999"})
         body = r.content.decode()
         self.assertEqual(r.status_code, 200)
@@ -189,7 +189,7 @@ class PickupDetailTests(TestCase):
             self.client.post("/custom-order/cart/add",
                              {"loc": "mount-vernon", "product_id": "1", "qty": 1})
             self.client.post("/custom-order/checkout",
-                             {"loc": "mount-vernon", "name": "Sam Reyes",
+                             {"loc": "mount-vernon", "first_name": "Sam", "last_name": "Reyes",
                               "phone": "5094206999"})
         draft = PhoneCartDraft.objects.get(status=PhoneCartDraft.Status.RELEASED)
         self.assertEqual(draft.location_slug, "mount-vernon")
