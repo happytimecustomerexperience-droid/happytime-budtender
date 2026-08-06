@@ -608,6 +608,67 @@ staff are not left chasing a phantom order.
 
 ---
 
+## 7b. Money: the menu price is the price
+
+**Happy Time sells tax-inclusive on Dutchie, and this changes what the storefront may
+say.** Walked Dutchie's own online-pickup checkout to the last screen before *Place
+order* and read its `computeWithPriceCartV2` response:
+
+```
+menu prices   $27.00 + $25.00 + $15.00  = $67.00
+Dutchie shows   Subtotal      $54.05
+                Discount      -$8.00
+                Taxes         $20.95
+                ORDER TOTAL   $67.00      <- equals the menu prices, exactly
+                taxInclusivePricing: true
+```
+
+Its product pages say it in words: *"All taxes included in price."* So the storefront's
+old line — "Taxes and the final total are calculated at the register" — told shoppers to
+brace for a bigger number than they actually pay. [`bundles/tax.py`](../bundles/tax.py)
+now carries the arithmetic and the two statutes behind it: RCW 69.50.535(1)(b) (the 37%
+excise is in the shelf price) and (1)(a) (it is not part of the sales-tax base).
+
+Sales-tax rates come from DOR's address API and are keyed by **location code, never city
+name** — the Pullman store geocodes to unincorporated Whitman County (`3800`, 8.0%), not
+the City of Pullman, and its address reads "Pullman". Yakima `3913`/8.6%, Mount Vernon
+`2907`/9.0%. They change quarterly; a test fails once the table is two quarters behind
+and prints the query to run. A stale rate cannot change any total — it only feeds the
+informational "about $X of that is tax" line — and a test pins that too.
+
+### The exact Dutchie breakdown, if it is ever wanted
+
+We show one total plus an approximate tax share. Dutchie shows Subtotal / Discount /
+Taxes as separate lines. Reproducing those exactly is **not** a matter of modelling the
+rates: on the captured cart our figure lands a few cents off its $20.95, because Dutchie
+rounds per item and per tax type (`itemTaxes[]` carries a `cannabis` and a `sales` row
+per product, and the `sales` rows are marked `showOnCheckout: false`, which is how it
+collapses them into one "Taxes:" line).
+
+The honest route is to call the same endpoint rather than to imitate it:
+
+```
+POST https://dutchie.com/api-0/graphql      operation: computeWithPriceCartV2
+returns CalculationResults, all money in integer cents:
+  subTotal, taxes, discount, grandTotal, totalSalesTax, totalCannabisTax,
+  roundedDifference, taxInclusivePricing, fees[], cartItemPrices[], itemTaxes[]
+dispensaryId: r8kjngwN38XgnWq9a   (embedded menu: dutchie.com/embedded-menu/happytime/)
+```
+
+**Unsolved before that is worth attempting:** our cart is keyed by POS register
+`product_id`, and this endpoint wants the ecom `productId` / `ecommKey`. Nothing maps
+the two today. It is also an unofficial API with no contract.
+
+### A real discrepancy this surfaced
+
+Dutchie's menu showed *Method DOH Approved Flower GG#4 1/8oz* at **$27.00** (marked
+`$8.00 off`, was $35.00). The POS register feed we price from reports the same product at
+**$35.00** with no discount. So for any product carrying an ecom-only promotion, this
+storefront quotes a **higher** price than the shop's own Dutchie menu. Worth deciding on
+before a campaign leans on it.
+
+---
+
 ## 8. Still open
 
 **One item, and it needs you rather than code:**
