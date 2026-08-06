@@ -111,12 +111,20 @@ def _in_stock(inventory: list[dict]) -> list[dict]:
 
 
 def _totals(ctx: dict, store: str) -> dict:
-    """How the cart total decomposes for display.
+    """How the price the shopper actually pays decomposes for display.
 
-    Prices here are Dutchie menu prices, and this account sells tax-inclusive — the
-    total IS the menu total, nothing is added. See bundles/tax.py.
+    Prices here are Dutchie menu prices and this account sells tax-inclusive, so the
+    total IS the menu total — nothing is added (bundles/tax.py).
+
+    `quote["total"]` is deliberately the PRE-discount subtotal: the bundle discount is
+    applied by the budtender at the register, not by us. So the tax share has to be
+    taken off the discounted figure, or a $95 cart with 30% off reports $29.75 of tax
+    against a $66.50 price — which is what shipped for one deploy.
     """
-    return tax.quote((ctx.get("quote") or {}).get("total") or 0, store)
+    quote = ctx.get("quote") or {}
+    subtotal = float(quote.get("total") or 0)
+    pct = float(quote.get("bundle_discount_pct") or 0)
+    return tax.quote(round(subtotal * (1 - pct / 100), 2), store)
 
 
 def _shell(request, store: str, ctx: dict) -> dict:

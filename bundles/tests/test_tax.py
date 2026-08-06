@@ -106,3 +106,29 @@ class EdgeTests(SimpleTestCase):
 
     def test_binary_float_error_never_reaches_a_displayed_price(self):
         self.assertEqual(tax.quote(0.1 + 0.2, "yakima")["total"], 0.30)
+
+
+class TaxRidesOnWhatTheyActuallyPayTests(SimpleTestCase):
+    """The bundle discount is applied at the register, so `quote["total"]` is the
+    PRE-discount subtotal. The displayed tax must still come off the discounted
+    price — otherwise a $95 cart at 30% off reported $29.75 of tax against a $66.50
+    price, which is what shipped for one deploy."""
+
+    def _totals(self, subtotal, pct=0):
+        from bundles.views import _totals
+        return _totals({"quote": {"total": subtotal, "bundle_discount_pct": pct}}, "yakima")
+
+    def test_without_a_bundle_the_tax_rides_on_the_subtotal(self):
+        self.assertEqual(self._totals(95)["total"], 95.00)
+
+    def test_with_a_bundle_it_rides_on_the_discounted_price(self):
+        t = self._totals(95, 30)
+        self.assertEqual(t["total"], 66.50)
+        # The bug: $29.75 was the tax on the undiscounted $95.
+        self.assertLess(t["tax_included"], 29.75)
+        self.assertAlmostEqual(t["tax_included"], 66.50 - t["pre_tax"], places=2)
+
+    def test_the_tax_share_never_exceeds_the_price(self):
+        for subtotal, pct in ((95, 30), (78, 20), (55, 25), (13.37, 0)):
+            t = self._totals(subtotal, pct)
+            self.assertLess(t["tax_included"], t["total"], f"{subtotal}/{pct}%")
