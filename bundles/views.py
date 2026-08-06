@@ -19,7 +19,8 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.http import Http404, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
@@ -133,7 +134,15 @@ def landing(request):
 
     Also seeds the shopper's cart, so "add bundle to cart" is genuinely one tap:
     they land already holding the items, and can browse for more.
+
+    With NO bundle at all — someone typing /custom-order, or a link stripped back to
+    its path — this is just the front door of the shop, so send them to the menu.
+    It used to answer "This link didn't open", which is an error message for a person
+    who never had a link.
     """
+    if not request.GET.get("b"):
+        return redirect(f"{reverse('bundle_menu')}?loc={_store_from(request)}")
+
     try:
         req = signing.parse(request.GET)
     except signing.BundleUrlError as exc:

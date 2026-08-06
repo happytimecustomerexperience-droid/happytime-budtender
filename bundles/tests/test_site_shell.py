@@ -71,6 +71,23 @@ class SiteChromeTests(TestCase):
                 "invalid": self.client.get("/custom-order/?b=roll-relax&sig=nope"),
             }
 
+    def test_a_bare_visit_lands_on_the_menu_not_an_error(self):
+        """`/custom-order` with no link is the front door, not a failure.
+
+        It used to answer 400 "This link didn't open" — an error about a link, shown
+        to someone who never had one. Anyone typing the URL, or following a link an
+        email client stripped back to its path, is just trying to shop.
+        """
+        r = self.client.get("/custom-order/")
+        self.assertEqual(r.status_code, 302)
+        self.assertIn("/custom-order/menu", r["Location"])
+
+    def test_a_broken_link_still_says_so(self):
+        # The redirect above must not swallow the case it was carved out of: a link
+        # that HAS a bundle but fails verification is a real problem worth naming.
+        r = self.client.get("/custom-order/?b=roll-relax&sig=nope")
+        self.assertEqual(r.status_code, 400)
+
     def test_the_broken_link_page_is_a_finished_page(self):
         r = self._pages()["invalid"]
         body = r.content.decode()

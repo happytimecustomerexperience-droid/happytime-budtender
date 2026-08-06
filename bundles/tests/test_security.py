@@ -343,8 +343,26 @@ class SignedLinkForgeryTests(PublicSurfaceTestCase):
             forged = self._signed()
         self.assertRefused(forged, "foreign-secret signature")
 
-    def test_a_bare_url_with_no_params_is_refused(self):
-        self.assertRefused("/custom-order/", "bare /custom-order/")
+    def test_a_bare_url_grants_no_bundle_and_seeds_no_cart(self):
+        """A bare /custom-order/ is the front door, not a forgery — but it must still
+        hand out nothing.
+
+        This used to assert a 400. It now redirects to the menu, because a person who
+        typed the URL never had a link to break. What has to stay true is the security
+        half: no discount, and no cart seeded before any signature was checked. Those
+        are asserted here directly rather than through assertRefused, which also
+        asserts the error page.
+        """
+        with self._patch_inv():
+            r = self.client.get("/custom-order/")
+        self.assertEqual(r.status_code, 302)
+        self.assertIn("/custom-order/menu", r["Location"])
+        self.assertEqual(PhoneCartDraft.objects.count(), 0,
+                         "a bare URL seeded a cart")
+        with self._patch_inv():
+            body = self.client.get(r["Location"]).content.decode()
+        for pct in ("20%", "25%", "30%"):
+            self.assertNotIn(pct, body, "the menu handed out a bundle discount")
 
     def test_a_validly_signed_link_to_an_unknown_store_is_404_not_a_fallback(self):
         # A signed link is trusted for WHAT, never for WHERE — silently falling
