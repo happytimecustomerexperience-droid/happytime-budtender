@@ -182,7 +182,7 @@ def landing(request):
 
     draft = cart_mod.get_cart(request, req.store, create=True)
     cart_mod.seed_from_bundle(draft, result, bundle.slug)
-    cart_ctx = cart_mod.reprice(draft, inventory)
+    cart_ctx = cart_mod.reprice(draft, inventory, confirm=True)
 
     # The emailed link IS the order: the products are already chosen and priced from
     # live register stock, so the shopper lands on the checkout holding all of it and
@@ -217,7 +217,7 @@ def menu(request):
     inventory = cart_mod.inventory_for(store)
     sellable = _in_stock(inventory)
     draft = cart_mod.get_cart(request, store, create=True)
-    cart_ctx = cart_mod.reprice(draft, inventory)
+    cart_ctx = cart_mod.reprice(draft, inventory, confirm=True)
 
     response = render(request, "bundles/menu.html", _shell(request, store, {
         "cats": pos_catalog.categories(sellable),
@@ -339,7 +339,10 @@ def checkout(request):
                                                   "empty": True}))
         return response
 
-    ctx = cart_mod.reprice(draft)
+    # confirm=True: this is where the price stops being a quote. It lands in
+    # draft.lines, the confirmation email and the POS queue, and is never
+    # revalidated again before someone pays it.
+    ctx = cart_mod.reprice(draft, confirm=True)
 
     if request.method == "GET":
         response = render(request, "bundles/checkout.html",

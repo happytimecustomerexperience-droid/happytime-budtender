@@ -361,7 +361,10 @@ class CheckoutHappyPathTests(CheckoutFlowTestCase):
         self.assertEqual(by_id["10"]["line_total"], 12.0)
         self.assertEqual(draft.quote["subtotal"], 42.0)
         self.assertEqual(draft.quote["total"], 42.0)
-        self.assertEqual(draft.quote["source"], "live_register")
+        # A cart is only "price_check" if EVERY in-stock line was confirmed against
+        # the register; one fallback makes the whole quote a snapshot. Offline in
+        # tests, so "menu_snapshot".
+        self.assertEqual(draft.quote["source"], "menu_snapshot")
 
     def test_a_tampered_price_in_the_post_body_is_ignored(self):
         # The client sends a product id and a quantity. Nothing else is priceable —

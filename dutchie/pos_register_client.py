@@ -16,10 +16,86 @@ Session block lives in dutchie/session.py. All bodies = {**args, **session_block
 from __future__ import annotations
 
 import logging
+import time
 
 from .session import PosClient
 
 logger = logging.getLogger(__name__)
+
+
+def _cents(value) -> float | None:
+    """float(value) rounded to cents, or None if it isn't a number."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return round(float(value), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_cart_totals(resp: dict) -> dict | None:
+    """/api/v2/cart/load_v2 -> the breakdown the register prints, or None.
+
+    Shape CONFIRMED from dutchie/fixtures/cart_load_v2.json:
+
+        SubTotal 8.25 / TotalDiscountAndLoyalty 0 / Tax 3.75 / RoundingAmount 0
+        / GrandTotalRounded 12 (what the till actually charges)
+
+    Defensive like parse_price_check: every field is probed by name and a miss stays
+    None — a missing total is NEVER coerced to 0, because 0 is a plausible-looking
+    wrong answer to show a customer. Returns None (never raises) when the payload
+    isn't a usable cart, so a totals lookup can't blow up a page render.
+    """
+    if not isinstance(resp, dict) or resp.get("Result") is False:
+        return None
+    d = resp.get("Data")
+    if isinstance(d, list):
+        d = d[0] if d else None
+    if not isinstance(d, dict):
+        return None
+
+    def pick(keys):
+        for k in keys:
+            v = _cents(d.get(k))
+            if v is not None:
+                return v
+        return None
+
+    cart = d.get("Cart")
+    lines = []
+    for row in cart if isinstance(cart, list) else []:
+        if not isinstance(row, dict):
+            continue
+        lines.append({
+            "product": row.get("Product") or row.get("ProductDesc") or "",
+            "product_id": row.get("ProductId"),
+            "serial_no": row.get("SerialNo"),
+            "quantity": _cents(row.get("PricedQuantity")),
+            "unit_price_formatted": row.get("UnitPriceFormatted"),
+            "total_formatted": row.get("TotalFormatted"),
+            "total": _cents(row.get("TotalCost")),
+            "tax": _cents(row.get("TaxAmt")),
+            "discount": _cents(row.get("DiscountAmt")),
+            "loyalty": _cents(row.get("LoyaltyAmt")),
+        })
+
+    items = d.get("TotalItems")
+    try:
+        item_count = int(items) if items is not None else None
+    except (TypeError, ValueError):
+        item_count = None
+
+    return {
+        "subtotal": pick(["SubTotal", "Subtotal", "SubTotalAmount"]),
+        "discounts_and_loyalty": pick(["TotalDiscountAndLoyalty", "TotalDiscount",
+                                       "DiscountAndLoyalty"]),
+        "tax": pick(["Tax", "TaxAmount", "TotalTax"]),
+        "rounding": pick(["RoundingAmount", "Rounding"]),
+        # GrandTotalRounded first: it is the amount the register charges.
+        "total": pick(["GrandTotalRounded", "GrandTotal", "OrderTotal", "Total"]),
+        "item_count": item_count,
+        "lines": lines,
+    }
 
 
 def map_product_row(row: dict) -> dict:
@@ -107,30 +183,64 @@ class PosRegisterClient(PosClient):
     @staticmethod
     def parse_price_check(resp: dict) -> dict:
         """Normalize /inventory/price-check -> {price, rec_price, discount, available, ok}.
-        Field names are probed defensively (the exact live shape is logged on first run);
-        any miss stays None so the caller falls back to the cached price (never blocks a
-        sale on a parse miss)."""
+
+        THIS RETURNED None FOR EVERY FIELD UNTIL THE SHAPE WAS ACTUALLY CAPTURED. The
+        old version probed eight plausible names for the price and six for availability,
+        and the live payload (`dutchie/fixtures/`, and the price-check entries in the
+        2026-08-06 capture) contains none of them:
+
+            {"Result": true, "Data": {"ProductName": "...", "FlowerEquivalent": "0.00000g",
+             "ProductGrams": "28.35 g", "Quantity": 0, "Price": "$ 12.00",
+             "PricingTier": {...}}}
+
+        `Price` is a FORMATTED STRING — `float("$ 12.00")` raises, the probe swallowed the
+        ValueError and moved on, and the function returned all-None with `ok: True`. So
+        every caller believed the check had succeeded and quietly kept its cached price.
+        The live price confirmation never once worked.
+
+        `Quantity` is deliberately NOT mapped to `available`. In the capture, a price-check
+        returning `Quantity: 0` was immediately followed by a successful add of that item
+        to the cart at $12.00 — so whatever it counts, it is not "units you may sell", and
+        `pos/views.py` blocks the add when `available <= 0`. Mapping it would refuse real
+        sales. TotalAvailable from product_SearchV2 remains the stock figure.
+
+        The old speculative names are kept as fallbacks: this endpoint plainly returns more
+        fields for a discounted item than the two rows we captured, and a name that shows up
+        later should work without another archaeology session.
+        """
         d = (resp or {}).get("Data") if isinstance(resp, dict) else None
         if isinstance(d, list):
             d = d[0] if d else {}
         if not isinstance(d, dict):
             d = resp if isinstance(resp, dict) else {}
 
+        def num(v):
+            """Money as Dutchie sends it: 12.0, "12.00", or "$ 12.00"."""
+            if v is None or isinstance(v, bool):
+                return None
+            if isinstance(v, (int, float)):
+                return float(v)
+            cleaned = str(v).replace("$", "").replace(",", "").strip()
+            if not cleaned:
+                return None
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+
         def pick(keys):
             for k in keys:
-                v = d.get(k)
-                if v is None:
-                    continue
-                try:
-                    return float(v)
-                except (TypeError, ValueError):
-                    continue
+                got = num(d.get(k))
+                if got is not None:
+                    return got
             return None
 
-        price = pick(["DiscountedUnitPrice", "DiscountedPrice", "UnitPriceAfterDiscount",
-                      "FinalUnitPrice", "FinalPrice", "NetUnitPrice", "UnitPrice", "Price"])
+        # "Price" first: it is the one field the live payload actually has.
+        price = pick(["Price", "DiscountedUnitPrice", "DiscountedPrice",
+                      "UnitPriceAfterDiscount", "FinalUnitPrice", "FinalPrice",
+                      "NetUnitPrice", "UnitPrice"])
         rec = pick(["RecUnitPrice", "OriginalUnitPrice", "OriginalPrice", "RegularPrice",
-                    "ListPrice", "UnitPrice", "Price"])
+                    "ListPrice"])
         disc = pick(["DiscountAmount", "TotalDiscount", "Discount", "DiscountTotal"])
         avail = pick(["TotalAvailable", "AvailableQuantity", "QtyAvailable", "Available",
                       "QuantityAvailable", "OnHand"])
@@ -172,6 +282,30 @@ class PosRegisterClient(PosClient):
             **self.session_block(with_register=False),
         }
         return self.post("/api/v2/cart/add_item_to_shopping_cart", body)
+
+    def load_cart(self, acct_id: int, shipment_id: int, register: int | None = None) -> dict:
+        """POST /api/v2/cart/load_v2 -> the raw cart (lines + register totals).
+
+        Body mirrors the capture exactly; Timestamp is epoch MILLISECONDS there.
+        Feed the result to parse_cart_totals().
+        """
+        body = {
+            "AcctId": int(acct_id),
+            "Register": int(register if register is not None else self.store.register_id),
+            "ShipmentId": int(shipment_id),
+            "Timestamp": int(time.time() * 1000),
+            **self.session_block(with_register=False),
+        }
+        return self.post("/api/v2/cart/load_v2", body)
+
+    def cart_totals(self, acct_id: int, shipment_id: int, register: int | None = None) -> dict | None:
+        """load_cart + parse_cart_totals. Returns None on any failure — a totals
+        lookup must never raise into a page render."""
+        try:
+            return parse_cart_totals(self.load_cart(acct_id, shipment_id, register))
+        except Exception as exc:  # noqa: BLE001 — display-only path, degrade quietly
+            logger.warning("cart_totals(acct=%s ship=%s) failed: %s", acct_id, shipment_id, exc)
+            return None
 
     def update_transaction_status(self, trans_id: int, status: str = "Ready for pickup") -> dict:
         body = {"TransId": int(trans_id), "TransactionStatus": status,

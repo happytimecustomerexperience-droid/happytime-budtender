@@ -15,13 +15,17 @@ counter. The client never sends a price — only a product id and a quantity.
 from __future__ import annotations
 
 import logging
+import os
 import re
+import sys
 from datetime import timedelta
 
 from django.conf import settings
 from django.utils import timezone
 
 from budtender.models import PhoneCartDraft
+from dutchie.pos_register_client import PosRegisterClient
+from dutchie.stores import get_store
 from pos import catalog as pos_catalog
 
 from . import resolver
@@ -52,6 +56,37 @@ def inventory_for(location_slug: str) -> list[dict]:
     except Exception:
         logger.warning("cart: live inventory unavailable for %s", location_slug, exc_info=True)
         return []
+
+
+def confirm_live_price(location_slug: str, item: dict) -> float | None:
+    """This ONE item's price, straight from the register. None if we couldn't ask.
+
+    `inventory_for` serves a shared snapshot the warmer refreshes every ~8 minutes —
+    fine for browsing 4,700 products, wrong for the number someone is about to commit
+    to. So at the moments that bind (add to cart, checkout) we do exactly what the POS
+    does at `pos/views.py` `cart_add`: re-check THIS package serial against
+    /api/v2/inventory/price-check.
+
+    Best-effort by design. Dutchie being unreachable must never stop someone ordering;
+    the caller keeps the snapshot price and the line records which it used.
+    """
+    # Same guard as budtender/live_stock and dutchie/stores: a unit test must never
+    # reach the real register. Without it the suite makes one HTTP call per cart line
+    # and every one of them times out.
+    if "pytest" in sys.modules or os.environ.get("BUDTENDER_TESTING"):
+        return None
+    serial = str(item.get("SerialNo") or "").strip()
+    if not serial:
+        return None
+    try:
+        store = get_store(store_key_for(location_slug))
+        got = PosRegisterClient.parse_price_check(PosRegisterClient(store).price_check(serial))
+    except Exception:
+        logger.warning("cart: price-check failed for %s (keeping snapshot price)",
+                       serial, exc_info=True)
+        return None
+    # 0.00 is a real answer (samples exist); only None means "no answer".
+    return got.get("price")
 
 
 def get_cart(request, location_slug: str, *, create: bool = False) -> PhoneCartDraft | None:
@@ -93,26 +128,47 @@ def attach_cookie(response, draft: PhoneCartDraft):
     return response
 
 
-def _line_for(item: dict, qty: int) -> dict:
+def _line_for(item: dict, qty: int, live_price: float | None = None) -> dict:
+    """One cart line. `live_price`, when given, is a per-serial confirmation from the
+    register and overrides the snapshot price."""
     pub = resolver._public(item)
+    price = pub["price"] if live_price is None else round(float(live_price), 2)
     return {
         "sku": pub["product_id"], "product_id": pub["product_id"],
         "name": pub["name"], "brand": pub["brand"], "category": pub["category"],
         "size": pub["size"], "image": pub["image"],
         "image_is_category": pub["image_is_category"],
         "quantity": qty,
-        "unit_price": pub["price"], "price_was": None, "discount_each": 0,
-        "line_total": round(pub["price"] * qty, 2),
+        "unit_price": price, "price_was": None, "discount_each": 0,
+        "line_total": round(price * qty, 2),
         "stock_on_hand": pub["qty"],
-        "quote_source": "live_register",
+        # Honest provenance. This said "live_register" for every line regardless, which
+        # made an hour-old snapshot indistinguishable from a per-serial confirmation.
+        "quote_source": "price_check" if live_price is not None else "menu_snapshot",
     }
 
 
-def reprice(draft: PhoneCartDraft, inventory: list[dict] | None = None) -> dict:
+def _quote_source(lines: list[dict], inv) -> str:
+    if not inv:
+        return "unavailable"
+    priced = [x for x in lines if x.get("in_stock")]
+    if priced and all(x.get("quote_source") == "price_check" for x in priced):
+        return "price_check"
+    return "menu_snapshot"
+
+
+def reprice(draft: PhoneCartDraft, inventory: list[dict] | None = None,
+            *, confirm: bool = False) -> dict:
     """Re-resolve every line against live stock/price. Returns a render context.
 
     Out-of-stock lines are KEPT and flagged rather than deleted — silently removing
     something the shopper chose is worse than telling them it's gone.
+
+    `confirm=True` additionally re-checks each line's package serial against the
+    register (`confirm_live_price`), which is what makes a price binding rather than a
+    snapshot up to ~8 minutes old. Pass it wherever the number is about to become a
+    commitment — the checkout form and the order write — and leave it off for browsing.
+    Bounded by MAX_LINES, so at most 30 calls.
     """
     inv = inventory if inventory is not None else inventory_for(draft.location_slug)
     lines, subtotal, issues = [], 0.0, 0
@@ -123,7 +179,8 @@ def reprice(draft: PhoneCartDraft, inventory: list[dict] | None = None) -> dict:
         qty = min(max(int(_f(raw.get("quantity"), 1)), 1), MAX_QTY)
         live = resolver.find_live(inv, pid) if inv else None
         if live and resolver.in_stock(live):
-            line = _line_for(live, qty)
+            confirmed = confirm_live_price(draft.location_slug, live) if confirm else None
+            line = _line_for(live, qty, confirmed)
             available = int(_f(live.get("qty")))
             if qty > available:                    # partial: cap, don't drop
                 line["quantity"] = available
@@ -147,7 +204,9 @@ def reprice(draft: PhoneCartDraft, inventory: list[dict] | None = None) -> dict:
         "discounts": 0.0,
         "total": subtotal,
         "currency": "USD",
-        "source": "live_register" if inv else "unavailable",
+        # Was a flat "live_register" whatever the truth. A cart is only price-confirmed
+        # if EVERY in-stock line was; one fallback makes the whole quote a snapshot.
+        "source": _quote_source(lines, inv),
         "generated_at": timezone.now().isoformat(),
         "final_total_note": "Register revalidates availability, discounts, taxes and final total.",
     }
@@ -184,7 +243,10 @@ def add(draft: PhoneCartDraft, product_id: str, qty: int = 1,
     else:
         if len(lines) >= MAX_LINES:
             return False, "cart_full"
-        lines.append(_line_for(live, min(max(qty, 1), MAX_QTY)))
+        # Confirm this serial against the register the moment it is chosen — the same
+        # thing pos/views.py cart_add does for a walk-in, so the two paths price alike.
+        lines.append(_line_for(live, min(max(qty, 1), MAX_QTY),
+                               confirm_live_price(draft.location_slug, live)))
     draft.lines = lines
     draft.save(update_fields=["lines", "updated_at"])
     return True, ""

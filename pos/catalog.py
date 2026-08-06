@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Long TTL: the `warm_menu` command (every ~8 min) keeps the shared (Redis) cache
 # hot, so a customer-facing request NEVER pays the slow product_SearchV2 pull. The
 # entry only expires if warming stops. Tune with the warmer interval.
-_INV_TTL = 3600
+_INV_TTL = 600
 
 CAT_LABELS = {
     "flower": "Flower", "pre-rolls": "Pre-Rolls", "vapes": "Vapes",

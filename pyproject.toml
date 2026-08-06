@@ -33,7 +33,7 @@ dev = [
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "core.settings"
 python_files = ["test_*.py", "tests.py"]
-testpaths = ["budtender", "pos", "customers", "idscan", "tests"]
+testpaths = ["budtender", "pos", "customers", "idscan", "dutchie", "tests"]
 
 [tool.uv]
 package = false

@@ -176,7 +176,11 @@ class CartAddTests(CartTestCase):
         self.assertEqual(line["quantity"], 1)
         self.assertEqual(line["line_total"], 25.0)
         self.assertEqual(line["stock_on_hand"], 10)
-        self.assertEqual(line["quote_source"], "live_register")
+        # Was a flat "live_register" on every line whatever the truth. It now records
+        # WHICH source priced it: "price_check" for a per-serial confirmation against
+        # the register, "menu_snapshot" for the ~8-minute browse cache. Under test the
+        # register is unreachable by design, so the snapshot is the honest answer.
+        self.assertEqual(line["quote_source"], "menu_snapshot")
 
     def test_adding_the_same_product_increments_one_line(self):
         cart_mod.add(self.draft, "1", 1, inventory=self.inv)
