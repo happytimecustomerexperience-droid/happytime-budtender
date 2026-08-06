@@ -239,11 +239,35 @@ def _img_is_cat(item: dict) -> bool:
 
 
 def public_thc(item: dict) -> float | None:
-    """THC% for a customer-facing card, or None when the source value isn't one."""
+    """THC% for a customer-facing card, or None when the source value isn't one.
+
+    `THCContent` on a product_SearchV2 row is supplier-entered per batch, and the
+    2026-08-06 register capture (4,743 rows) shows two conventions in use under the
+    SAME `THCContentUnitId` of 2 — a fraction of one, and whole percent:
+
+        Happy Buds "Syrup Soaked"  batch 7577655/6 -> 0.4187   (7g and 28g agree)
+                                   batch 7571073/4 -> 18.85    (7g and 28g agree)
+
+    Note it is stable WITHIN a batch — this is data entry, not a package-size bug.
+
+    So a value at or below 1.0 in a THC-bearing category is read as a fraction and
+    scaled. Nobody sells 0.42%-THC flower as flower, whereas 42% infused flower is
+    ordinary, and without this the band below hid 1,097 products that had perfectly
+    good numbers (flower showed potency on 16 of 645 rows).
+
+    Anything still outside the band is dropped rather than shown: the capture also
+    contains frank nonsense, like a 1g rosin at 1.258 — 125.8% as a fraction and
+    1.258% as a percentage, both impossible.
+
+    The authoritative source is the lab endpoint (`dutchie/lab.py`), whose units are
+    verified rather than inferred. Use this only for a menu tile.
+    """
     band = _THC_PERCENT_BANDS.get(canon_category(item.get("cat_key") or ""))
     if not band:
         return None
     value = _f(item.get("thc"))
+    if 0 < value <= 1.0:
+        value = round(value * 100, 2)
     lo, hi = band
     return value if lo <= value <= hi else None
 

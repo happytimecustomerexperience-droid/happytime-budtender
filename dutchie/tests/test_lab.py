@@ -205,3 +205,30 @@ def test_search_row_carries_the_join_key_and_basic_potency():
     assert SEARCH_ROW["THCContent"] == 0.472
     assert SEARCH_ROW["THCContentUnitId"] == 2
     assert "CBDContent" in SEARCH_ROW and "TotalTerpenesContent" in SEARCH_ROW
+
+
+def test_unit_code_two_is_percent_and_the_arithmetic_proves_it():
+    """Not a guess, and not lore from another Dutchie tenant.
+
+    In the captured panel THCA=48, THC=2.9 and TotalCannabinoids=44.996 all carry
+    unit 2, and 48 * 0.877 + 2.9 = 44.996 EXACTLY — the standard decarboxylation
+    identity. That closes only if the figures are whole percentages of mass: as
+    fractions 48 would be 4800%, and a 0.877 decarb ratio is meaningless on mg.
+
+    If this ever fails, Dutchie changed the convention and every potency figure we
+    display is suspect until someone re-derives it.
+    """
+    import json, pathlib
+    from dutchie import lab
+    row = json.loads(pathlib.Path("dutchie/fixtures/lab_result.json").read_text(encoding="utf-8"))["Data"][0]
+    assert row["THCAUnit"] == row["THCUnit"] == row["TotalCannabinoidsUnit"] == 2
+    assert abs(row["THCAValue"] * 0.877 + row["THCValue"] - row["TotalCannabinoidsValue"]) < 0.001
+    assert lab._unit(2) == "%"
+
+
+def test_an_unknown_unit_code_never_becomes_a_guess():
+    # A wrong unit on a potency number is a compliance problem; a bare number is the
+    # safe failure. Only code 2 has been derived from real data.
+    from dutchie import lab
+    for code in (0, 1, 3, 4, 5, 99, None, "", "mg"):
+        assert lab._unit(code) == "", code
