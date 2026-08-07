@@ -76,6 +76,15 @@ _FAQ_FIRST_RE = re.compile(
     r")\b",
     re.I,
 )
+# Topics the KB legitimately answers DURING a dispute. The relevance gate uses this as well as
+# _FAQ_FIRST_RE: _FAQ_FIRST_RE exists to steer product-vs-FAQ preference and carries none of the
+# dispute vocabulary, so gating on it alone silenced the on-topic return-policy answer a caller
+# asking "do I need the receipt and the box?" should get.
+_DISPUTE_TOPIC_RE = re.compile(
+    r"\b(returns?|refund|money\s*back|exchange|policy|receipt|packaging|box|"
+    r"defective|broken|busted|warranty|replacements?|replace|damaged)\b",
+    re.I,
+)
 _PRICE_MAX_RE = re.compile(r"\b(?:under|below|less than|no more than|up to|max(?:imum)?)\s*\$?\s*(\d+(?:\.\d{1,2})?)\b", re.I)
 _DOH_ONLY_RE = re.compile(r"\b(doh|medical|medically compliant|compliant)\b", re.I)
 _SUBCATEGORY_RE = re.compile(r"\b(indica|sativa|hybrid)\b", re.I)
@@ -283,6 +292,17 @@ def _staff_followup_hint(store: str, phone: str) -> str:
     return f"Please share your preferred contact method ({phone_hint}) so the team can follow up."
 
 
+def _escalation_answer(store: str, phone: str) -> str:
+    """The un-grounded dispute reply. Personalized through ``_staff_followup_hint`` — the previous
+    hardcoded string dropped store/phone entirely, so a caller who had just read out her callback
+    number was never told it had been taken down."""
+    return (
+        "I'm sorry that happened. I can't confirm a return or refund outcome from the current "
+        "Happy Time knowledge base, but I can get the store team involved. "
+        + _staff_followup_hint(store, phone)
+    )
+
+
 def _normalize_suggest_picks(picks, category: str) -> list[dict]:
     if not isinstance(picks, list):
         return []
@@ -316,7 +336,13 @@ def answer_text_chat(data: dict) -> dict:
         ctx.update(recognition.resolve_caller(phone, ctx) or {})
     else:
         ctx["profile_summary"] = {"has_history": False, "top_categories": [], "price_tier": ""}
-    escalation = bool(_HUMAN_RE.search(message)) or _recent_escalation(history)
+    escalation_now = bool(_HUMAN_RE.search(message))
+    # A dispute carries across turns, but a clean new product ask ENDS it — otherwise a caller who
+    # complains and then says "anyway, got any gummies?" never reaches the shelf. Only the
+    # message's own category counts here; a profile-derived fallback must not end an escalation.
+    message_category = _normalize_category(_category_from_text(message))
+    carried = _recent_escalation(history) and not (message_category and not escalation_now)
+    escalation = escalation_now or carried
     category = str(slots.get("category") or _category_from_text(message)).strip()
     category = _normalize_category(category)
     if not category and not _requires_sources(message):
@@ -341,7 +367,9 @@ def answer_text_chat(data: dict) -> dict:
     # read as authoritative). Only speak a retrieved row mid-dispute when the caller actually
     # asked something the KB covers.
     speak_faq = bool(faq.get("grounded") and faq.get("answer") and not prefer_products)
-    if speak_faq and escalation and not _FAQ_FIRST_RE.search(message):
+    if speak_faq and escalation and not (
+        _FAQ_FIRST_RE.search(message) or _DISPUTE_TOPIC_RE.search(message)
+    ):
         speak_faq = False
 
     if speak_faq:
@@ -366,11 +394,7 @@ def answer_text_chat(data: dict) -> dict:
     if escalation:
         return {
             "ok": True,
-            "answer": (
-                "I'm sorry that happened. I can't confirm a return or refund outcome from the current "
-                "Happy Time knowledge base, but I can get the store team involved. Please share the "
-                "location and the best way for staff to follow up."
-            ),
+            "answer": _escalation_answer(store, phone),
             "intent": "conflict_resolution",
             "grounded": False,
             "sources": [],
@@ -456,11 +480,7 @@ def answer_text_chat(data: dict) -> dict:
     fallback = faq.get("fallback") or "I can't confirm that from the current Happy Time knowledge base."
     answer = fallback
     if escalation:
-        answer = (
-            "I'm sorry that happened. I can't confirm a return or refund outcome from the current "
-            "Happy Time knowledge base, but I can get the store team involved. Please share the "
-            "location and the best way for staff to follow up."
-        )
+        answer = _escalation_answer(store, phone)
     elif _requires_sources(message) and not faq.get("grounded"):
         answer = f"I can't confirm that right now from the current knowledge base. {_staff_followup_hint(store, phone)}"
     return {

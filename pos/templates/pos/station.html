@@ -70,9 +70,15 @@
         is decoded IN THE BROWSER: only the decoded barcode text is posted, never the
         picture of someone's licence.
 
-        `data-guide` switches the framing box between a horizontal card and a vertical
-        one — Washington issues vertical cards to under-21s, so the shape itself is a
-        signal worth showing rather than hiding.
+        The guide is ONE orientation-agnostic bracket box, not a rotating rectangle.
+        AAMVA D.11.1 puts the PDF417 "perpendicular to the natural bottom of the card",
+        which for a portrait card implies a rotated symbol — but that is unconfirmed for
+        Washington specifically, and zxing finds rotated symbols anyway. A guide that
+        insists on an orientation would be wrong half the time for no benefit.
+
+        Deliberately NOT labelled "vertical = under 21": a WA vertical card runs its
+        full 8-year term (RCW 46.20.181), so one can sit in a 27-year-old's wallet.
+        DOB decides, always.
       {% endcomment %}
       <div id="screen-idscan" class="idscan idscan--big" data-autostart="1">
         <div class="idscan__stage">
@@ -82,7 +88,6 @@
         <div class="idscan__bar">
           <p id="screen-idscan-status" class="idscan__status" role="status" aria-live="polite"></p>
           <div class="idscan__actions">
-            <button type="button" class="ghost idscan__orient" data-orient="horizontal">Vertical card</button>
             <button type="button" class="ghost idscan__toggle" data-target="screen-idscan">Restart camera</button>
           </div>
         </div>

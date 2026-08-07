@@ -71,7 +71,9 @@ def test_text_chat_defective_issue_escalates_without_guessing_policy(client, set
     assert body["safe_next_action"] == "escalate"
     assert "sorry" in body["answer"].lower()
     assert "can't confirm a return or refund outcome" in body["answer"]
-    assert "staff" in body["answer"]
+    # Personalized staff-followup hint (replaces the old hardcoded "Please share the location and
+    # the best way for staff to follow up.") — it names the store's team and how to reach the caller.
+    assert "yakima team so they can contact you at" in body["answer"]
     assert not body["sources"]
 
 
@@ -92,7 +94,7 @@ def test_text_chat_angry_customer_deescalates_without_policy_guess(client, setti
     assert body["safe_next_action"] == "escalate"
     assert "sorry" in body["answer"].lower()
     assert "can't confirm a return or refund outcome" in body["answer"]
-    assert "staff" in body["answer"]
+    assert "pullman team so they can contact you at" in body["answer"]
     assert not body["sources"]
 
 
@@ -113,7 +115,7 @@ def test_text_chat_wrong_item_deescalates_without_policy_guess(client, settings)
     assert body["safe_next_action"] == "escalate"
     assert "sorry" in body["answer"].lower()
     assert "can't confirm a return or refund outcome" in body["answer"]
-    assert "staff" in body["answer"]
+    assert "yakima team so they can contact you at" in body["answer"]
     assert not body["sources"]
 
 

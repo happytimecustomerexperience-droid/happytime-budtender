@@ -131,13 +131,45 @@ def _extract_with_openai(ocr_text: str, openai_api_key: str) -> dict:
 
 # ---------- helpers ----------
 
+def _store_today() -> date:
+    """Today in STORE-LOCAL time, not UTC.
+
+    The server runs UTC; the stores are in America/Los_Angeles. Comparing a birthday
+    against a UTC date flips it up to 8 hours early — which on someone's 21st
+    birthday is the difference between a lawful sale and a gross misdemeanour
+    (RCW 69.50.475). Someone born exactly 21 years ago today IS 21 and may buy.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/Los_Angeles")).date()
+    except Exception:                      # zoneinfo data missing — UTC is the safe-ish fallback
+        return date.today()
+
+
 def _compute_age(birth_date_str: str | None) -> int | None:
     if not birth_date_str:
         return None
     try:
         dob = datetime.strptime(birth_date_str, "%Y-%m-%d").date()
-        today = date.today()
+        today = _store_today()
         return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    except (ValueError, TypeError):
+        return None
+
+
+def _is_expired(expiry_str: str | None) -> bool | None:
+    """True if the card has expired, False if valid, None if we cannot tell.
+
+    WAC 314-55-150(2) is unambiguous: "The identification document is not acceptable
+    to verify age if expired." So this is a hard refusal, not a warning — and None
+    (no readable expiry) must NOT read as valid, so callers treat it as check-by-hand.
+
+    Valid THROUGH the expiry date: a card expiring today is still good today.
+    """
+    if not expiry_str or not _is_valid_date(expiry_str):
+        return None
+    try:
+        return datetime.strptime(expiry_str, "%Y-%m-%d").date() < _store_today()
     except (ValueError, TypeError):
         return None
 
@@ -166,6 +198,9 @@ def _finalize(fields: dict, source_text: str) -> dict:
         "birth_date": birth_date,
         "age": age,
         "over_21": age is not None and age >= 21,
+        # Separate from over_21 on purpose: an expired card is refused even for a
+        # 40-year-old, and a budtender needs to be told WHICH rule stopped the sale.
+        "id_expired": _is_expired(fields.get("id_expiration")),
         "mjstateidno": fields.get("mjstateidno"),
         "id_number": fields.get("id_number"),
         "id_expiration": fields.get("id_expiration"),

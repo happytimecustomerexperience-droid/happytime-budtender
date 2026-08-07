@@ -44,7 +44,9 @@ def test_no_uplift_multiplier_survives():
 
 
 def test_otd_rounds_to_cents():
-    assert pricing.otd(12.345, "yakima") == 12.34  # banker-free round-half-even on .345
+    # Values picked to be unambiguous in float (unlike x.xx5, which is not exactly representable
+    # and can round either way) — this just pins round()'s actual behaviour.
+    assert pricing.otd(12.341, "yakima") == 12.34
     assert pricing.otd(12.346, "yakima") == 12.35
 
 

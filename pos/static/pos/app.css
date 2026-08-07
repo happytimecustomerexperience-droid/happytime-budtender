@@ -474,13 +474,23 @@ th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
                  aspect-ratio: 4 / 3; background: #000; border-radius: 12px; overflow: hidden; }
 .idscan__stage .idscan__video { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-/* Framing guide. ID-1 cards are 85.6 x 54 mm — 1.585:1 landscape, and the same
-   ratio stood on end for the vertical under-21 card. */
-.idscan__guide { position: absolute; inset: 0; margin: auto; width: 78%; aspect-ratio: 1.585;
-                 border: 3px solid rgba(255,255,255,.85); border-radius: 10px;
+/* Framing guide: corner BRACKETS on a square, not a closed card-shaped rectangle.
+   AAMVA puts the PDF417 perpendicular to the card's "natural bottom", which differs
+   between a landscape and a portrait card — and WA's vertical-card back layout is
+   unconfirmed. zxing decodes rotated symbols, so an orientation-specific box would
+   just be wrong half the time. A square accepts either card the same way. */
+.idscan__guide { position: absolute; inset: 0; margin: auto;
+                 width: min(72%, 62vh); aspect-ratio: 1;
                  box-shadow: 0 0 0 9999px rgba(0,0,0,.45); pointer-events: none;
-                 transition: width .18s ease, aspect-ratio .18s ease; }
-.idscan--vertical .idscan__guide { width: 46%; aspect-ratio: 0.631; }
+                 background:
+                   linear-gradient(#fff,#fff) left  top    / 34px 3px no-repeat,
+                   linear-gradient(#fff,#fff) left  top    / 3px 34px no-repeat,
+                   linear-gradient(#fff,#fff) right top    / 34px 3px no-repeat,
+                   linear-gradient(#fff,#fff) right top    / 3px 34px no-repeat,
+                   linear-gradient(#fff,#fff) left  bottom / 34px 3px no-repeat,
+                   linear-gradient(#fff,#fff) left  bottom / 3px 34px no-repeat,
+                   linear-gradient(#fff,#fff) right bottom / 34px 3px no-repeat,
+                   linear-gradient(#fff,#fff) right bottom / 3px 34px no-repeat; }
 
 .idscan__bar { display: flex; align-items: center; justify-content: space-between;
                gap: 12px; flex-wrap: wrap; margin-top: 10px; }

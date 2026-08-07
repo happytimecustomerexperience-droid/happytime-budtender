@@ -698,6 +698,16 @@ def scan(request):
         tracking.track(request, "scan_failed", detail=str(scan_result["error"])[:120])
         ctx["error"] = f"scan failed: {scan_result['error']}"
         return render(request, "pos/_profile.html", ctx)
+    if scan_result.get("id_expired") is True:
+        # WAC 314-55-150(2): an expired document cannot be used to verify age. Hard
+        # refusal even for an obviously-of-age customer — the rule is about the
+        # DOCUMENT, not the person.
+        tracking.track(request, "scan_failed", detail="expired")
+        ctx["warn"] = ("ID EXPIRED — cannot be used to verify age (WAC 314-55-150). "
+                       "Ask for another accepted ID.")
+        ctx["scan"] = scan_result
+        ctx["acct_id"] = None
+        return render(request, "pos/_profile.html", ctx)
     if scan_result.get("over_21") is False:
         tracking.track(request, "scan_failed", detail="under21")
         ctx["warn"] = "UNDER 21 â€” cannot create a POS session."
@@ -1120,6 +1130,10 @@ def _under_21_block(request):
     scan = dict(pending.raw_scan or {}) if pending else {}
     if scan.get("over_21") is False:
         ctx = {"warn": "UNDER 21 — cannot start a session for this customer.",
+               "scan": scan, "acct_id": None}
+        return render(request, "pos/_profile.html", ctx)
+    if scan.get("id_expired") is True:
+        ctx = {"warn": "ID EXPIRED — cannot be used to verify age (WAC 314-55-150).",
                "scan": scan, "acct_id": None}
         return render(request, "pos/_profile.html", ctx)
     return None

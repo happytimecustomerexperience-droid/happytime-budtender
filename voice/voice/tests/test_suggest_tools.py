@@ -83,7 +83,7 @@ def test_suggest_returns_speakable_picks(fake_bt):
     pick = out["picks"][0]
     assert pick["name"] == "Blueberry OG 3.5g"
     assert pick["why_this"]  # non-empty spoken reason
-    assert pick["price_otd"] == 56.43  # 38 * Yakima OTD; relabeled from price
+    assert pick["price_otd"] == 38.0  # menu price is the OTD price; relabeled from price
     assert out["spoken_summary"]  # a real spoken lead-in
 
 

@@ -78,3 +78,31 @@ def test_run_id_scan_no_barcode_no_keys_errors(monkeypatch):
     Image.new("RGB", (24, 24), "white").save(buf, "PNG")
     out = run_id_scan([buf.getvalue()])
     assert "error" in out          # no barcode + no cloud keys -> graceful error, no network
+
+
+def test_an_expired_card_is_flagged_expired():
+    """WAC 314-55-150(2) — an expired document cannot verify age, at any age."""
+    from idscan.pipeline import _is_expired
+    assert _is_expired("2000-01-01") is True
+
+
+def test_a_card_expiring_today_is_still_valid_today():
+    from datetime import date
+    from idscan.pipeline import _is_expired, _store_today
+    assert _is_expired(_store_today().isoformat()) is False
+    assert isinstance(_store_today(), date)
+
+
+def test_an_unreadable_expiry_is_unknown_not_valid():
+    # None must never read as "fine" — the caller sends it to a manual check.
+    from idscan.pipeline import _is_expired
+    for bad in (None, "", "not-a-date", "0000-00-00"):
+        assert _is_expired(bad) is None
+
+
+def test_age_uses_store_local_time_not_utc():
+    # A UTC comparison flips a birthday up to 8h early; on a 21st birthday that is
+    # the difference between a lawful sale and a gross misdemeanour.
+    from idscan.pipeline import _store_today
+    import datetime as dt
+    assert abs((_store_today() - dt.datetime.utcnow().date()).days) <= 1

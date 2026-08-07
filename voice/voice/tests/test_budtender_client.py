@@ -225,7 +225,7 @@ def test_check_sku_uses_by_sku_endpoint_and_computes_otd():
     out = _client(fs).check_sku("yakima", "SKU1")
     assert out["in_stock"] is True
     assert out["sku"] == "SKU1"
-    assert out["price_otd"] == 56.43  # 38 * 1.48508 (Yakima OTD)
+    assert out["price_otd"] == 38.0  # menu price is the OTD price (tax-inclusive Dutchie account)
     assert "price" not in out  # the raw pre-tax price never surfaces
     # the exact single-SKU endpoint is hit with store+sku (not the ranked search that missed SKUs)
     call = fs.calls[0]
