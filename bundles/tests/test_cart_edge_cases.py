@@ -189,12 +189,22 @@ class CartAddTests(CartTestCase):
         self.assertEqual(self.draft.lines[0]["quantity"], 4)
 
     def test_a_new_line_is_clamped_up_to_max_qty(self):
-        cart_mod.add(self.draft, "1", 999, inventory=self.inv)
+        # MAX_QTY only binds when the shelf is deeper than it; stock is the other cap.
+        deep = [dict(p, qty=99) if p["product_id"] == "1" else p for p in self.inv]
+        cart_mod.add(self.draft, "1", 999, inventory=deep)
         self.assertEqual(self.draft.lines[0]["quantity"], cart_mod.MAX_QTY)
 
+    def test_a_new_line_is_also_clamped_to_what_is_on_the_shelf(self):
+        # The reservation rule: a cart cannot hold more than exists. Before this,
+        # twenty shoppers each held a product with two units on hand.
+        three_left = [dict(p, qty=3) if p["product_id"] == "1" else p for p in self.inv]
+        cart_mod.add(self.draft, "1", 999, inventory=three_left)
+        self.assertEqual(self.draft.lines[0]["quantity"], 3)
+
     def test_an_increment_past_max_qty_is_clamped_too(self):
-        cart_mod.add(self.draft, "1", cart_mod.MAX_QTY, inventory=self.inv)
-        cart_mod.add(self.draft, "1", 5, inventory=self.inv)
+        deep = [dict(p, qty=99) if p["product_id"] == "1" else p for p in self.inv]
+        cart_mod.add(self.draft, "1", cart_mod.MAX_QTY, inventory=deep)
+        cart_mod.add(self.draft, "1", 5, inventory=deep)
         self.assertEqual(self.draft.lines[0]["quantity"], cart_mod.MAX_QTY)
 
     def test_a_new_line_is_clamped_up_from_zero_to_one(self):
@@ -242,17 +252,18 @@ class CartAddTests(CartTestCase):
     def test_an_empty_floor_refuses_everything(self):
         self.assertEqual(cart_mod.add(self.draft, "1", 1, inventory=[]), (False, "not_in_stock"))
 
-    def test_adding_more_than_the_live_quantity_succeeds_then_reprice_caps_it(self):
-        # add() does NOT check the requested qty against stock; reprice() is the
-        # single place that caps to what is really on the floor.
+    def test_adding_more_than_the_live_quantity_is_capped_at_add_time(self):
+        # WAS: add() ignored stock and reprice() capped later, which meant the cart
+        # showed 10 of something with 3 on the shelf until the next render — and,
+        # worse, nothing stopped the next shopper being promised the same 3. Stock is
+        # now reserved as it enters a cart, so the cap moves to add().
         three_left = [dict(p, qty=3) if p["product_id"] == "1" else p for p in self.inv]
         ok, _ = cart_mod.add(self.draft, "1", 10, inventory=three_left)
         self.assertTrue(ok)
-        self.assertEqual(self.draft.lines[0]["quantity"], 10)
+        self.assertEqual(self.draft.lines[0]["quantity"], 3)
         ctx = cart_mod.reprice(self.draft, three_left)
         self.assertEqual(ctx["lines"][0]["quantity"], 3)
-        self.assertEqual(ctx["lines"][0]["issue"], "reduced")
-        self.assertEqual(ctx["issues"], 1)
+        self.assertEqual(ctx["issues"], 0, "a cart already within stock is not an issue")
 
     def test_the_cart_is_capped_at_max_lines(self):
         many = [live(product_id=str(100 + i), name=f"P{i}") for i in range(cart_mod.MAX_LINES + 2)]

@@ -56,6 +56,15 @@ def main() -> int:
     ap.add_argument("--store", default="yakima")
     ap.add_argument("--send-escalation-email", action="store_true",
                     help="Also fire notify_staff_issue (sends a clearly-marked TEST email to staff).")
+    ap.add_argument("--stage-phone-cart", action="store_true",
+                    help="Also fire stage_phone_cart (stages + releases a clearly-marked TEST draft "
+                         "in the POS queue).")
+    ap.add_argument("--notify-vendor-callback", action="store_true",
+                    help="Also fire notify_vendor_callback (writes a real callback row and alerts "
+                         "staff with a clearly-marked TEST callback).")
+    ap.add_argument("--notify-n8n", action="store_true",
+                    help="Also fire notify_n8n (posts a clearly-marked TEST event to the configured "
+                         "n8n webhook).")
     a = ap.parse_args()
     if not a.secret:
         print("ERROR: pass --secret or set VAPI_WEBHOOK_SECRET", file=sys.stderr)
@@ -124,6 +133,84 @@ def main() -> int:
         check(PASS if ok else FAIL, "notify_staff_issue (TEST email)", json.dumps(res)[:80])
     else:
         check(WARN, "notify_staff_issue", "skipped — pass --send-escalation-email to test the email")
+
+    # 5) Phone-cart staging (opt-in — stages then releases a clearly-marked TEST draft in the
+    #    POS queue; the register handoff is real, staff will see it).
+    if a.stage_phone_cart:
+        add_args = {
+            "action": "add_item",
+            "store": a.store,
+            "quantity": 1,
+            "session_token": "text-smoke-test",
+            "pickup_name": "[AUTOMATED SYSTEM TEST] disregard",
+        }
+        if first_sku:
+            add_args["sku"] = first_sku
+        added = _call(a.url, a.secret, "stage_phone_cart", add_args)
+        ok_add = bool(added) and added.get("ok") is not False and not added.get("error")
+        check(PASS if ok_add else FAIL, "stage_phone_cart: add_item", json.dumps(added)[:80])
+
+        draft_token = (added.get("draft") or {}).get("draft_token") if isinstance(added, dict) else None
+        release_args = {
+            "action": "release",
+            "store": a.store,
+            "session_token": "text-smoke-test",
+            "pickup_name": "[AUTOMATED SYSTEM TEST] disregard",
+        }
+        if draft_token:
+            release_args["draft_token"] = draft_token
+        released = _call(a.url, a.secret, "stage_phone_cart", release_args)
+        ok_release = bool(released) and released.get("ok") is not False and not released.get("error")
+        check(PASS if ok_release else FAIL, "stage_phone_cart: release", json.dumps(released)[:80])
+    else:
+        check(WARN, "stage_phone_cart",
+              "skipped — pass --stage-phone-cart to test (stages + releases a TEST draft in the POS queue)")
+
+    # 6) Vendor callback (opt-in — writes a real VendorCallback row and alerts store staff with a
+    #    clearly-marked TEST callback).
+    if a.notify_vendor_callback:
+        res = _call(a.url, a.secret, "notify_vendor_callback", {
+            "store": a.store, "reason": "other",
+            "summary": "[AUTOMATED SYSTEM TEST] Please disregard — verifying the vendor callback path.",
+            "caller_name": "System Test",
+        })
+        ok = bool(res) and res.get("logged") is True
+        check(PASS if ok else FAIL, "notify_vendor_callback (TEST callback)", json.dumps(res)[:80])
+    else:
+        check(WARN, "notify_vendor_callback",
+              "skipped — pass --notify-vendor-callback to test (writes a callback row + alerts staff)")
+
+    # 7) n8n automation trigger (opt-in — posts a clearly-marked TEST event to the configured n8n
+    #    webhook; fire-and-forget, no queue row).
+    if a.notify_n8n:
+        res = _call(a.url, a.secret, "notify_n8n", {
+            "event_type": "system_test",
+            "summary": "[AUTOMATED SYSTEM TEST] Please disregard — verifying the n8n trigger path.",
+            "store": a.store,
+        })
+        ok = bool(res) and res.get("ok") is True
+        check(PASS if ok else FAIL, "notify_n8n (TEST event)", json.dumps(res)[:80])
+    else:
+        check(WARN, "notify_n8n",
+              "skipped — pass --notify-n8n to test (posts a TEST event to the n8n webhook)")
+
+    # 8) COVERAGE — literal names, no Django import (mirrors TOOL_REGISTRY in
+    #    voice/tools/__init__.py; update BOTH sets by hand whenever a tool is added/removed there,
+    #    or a gap goes silent again).
+    all_tools = {
+        "faq_lookup", "suggest_products", "check_inventory", "pair_upsell",
+        "notify_staff_issue", "stage_phone_cart", "notify_vendor_callback", "notify_n8n",
+    }
+    exercised_tools = {
+        "faq_lookup", "suggest_products", "check_inventory", "pair_upsell",
+        "notify_staff_issue", "stage_phone_cart", "notify_vendor_callback", "notify_n8n",
+    }
+    missing = sorted(all_tools - exercised_tools)
+    if missing:
+        for tool in missing:
+            check(WARN, f"COVERAGE: {tool}", "no live coverage in text_smoke.py — add a check above")
+    else:
+        check(PASS, "COVERAGE", f"all {len(all_tools)} registered tools have a live check above")
 
     # Summary
     n_fail = sum(1 for s, *_ in rows if s == FAIL)

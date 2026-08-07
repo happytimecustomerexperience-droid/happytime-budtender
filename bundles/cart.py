@@ -21,6 +21,7 @@ import sys
 from datetime import timedelta
 
 from django.conf import settings
+from django.db.models import Q
 from django.utils import timezone
 
 from budtender.models import PhoneCartDraft
@@ -42,6 +43,17 @@ MAX_QTY = 12
 # Carts are abandoned constantly; don't leave them claimable forever.
 OPEN_TTL_DAYS = 30
 
+# How long an untouched cart keeps holding stock for its shopper.
+#
+# Without this, nothing sat between "in someone's cart" and "on the shelf": twenty
+# shoppers were each given a confirmed order for a product with two units on hand.
+# Now a line in a cart reserves its units — but only while the cart is being used.
+# Any render or mutation bumps `updated_at` (auto_now), so browsing reactivates the
+# hold; walk away for RESERVE_MINUTES and the units go back on the shelf for
+# everyone else, while the CART ITSELF survives for the full 30 days of retention.
+# Coming back and refreshing re-reserves whatever is still there.
+RESERVE_MINUTES = 15
+
 
 def _f(v, d=0.0):
     try:
@@ -56,6 +68,47 @@ def inventory_for(location_slug: str) -> list[dict]:
     except Exception:
         logger.warning("cart: live inventory unavailable for %s", location_slug, exc_info=True)
         return []
+
+
+def reserved_units(location_slug: str, exclude_token: str = "") -> dict[str, int]:
+    """product_id -> units already spoken for at this store, by OTHER shoppers.
+
+    Two things hold stock:
+      * an OPEN cart touched within RESERVE_MINUTES — someone is shopping right now;
+      * a RELEASED order that has not expired — someone is driving in to collect it.
+
+    A CLAIMED order is already in the budtender's hands and its stock left the shelf
+    at the register, so it must NOT be counted again here.
+
+    `exclude_token` is the current shopper's own cart. Without it they would be
+    charged for their own reservation and watch the shelf count drop as they add.
+    """
+    now = timezone.now()
+    fresh = now - timedelta(minutes=RESERVE_MINUTES)
+    qs = (PhoneCartDraft.objects
+          .filter(location_slug=location_slug)
+          .filter(Q(status=PhoneCartDraft.Status.OPEN, updated_at__gte=fresh)
+                  | Q(status=PhoneCartDraft.Status.RELEASED, expires_at__gt=now))
+          .only("lines"))
+    if exclude_token:
+        qs = qs.exclude(draft_token=exclude_token)
+
+    held: dict[str, int] = {}
+    for draft in qs:
+        for line in (draft.lines or []):
+            if not isinstance(line, dict):
+                continue
+            pid = str(line.get("product_id") or "")
+            if not pid:
+                continue
+            held[pid] = held.get(pid, 0) + max(int(_f(line.get("quantity"), 0)), 0)
+    return held
+
+
+def available_after_holds(item: dict, held: dict[str, int]) -> int:
+    """Units this shopper may actually take: what the register says, minus holds."""
+    on_hand = int(_f(item.get("qty")))
+    return max(on_hand - held.get(str(item.get("product_id") or ""), 0), 0)
 
 
 def confirm_live_price(location_slug: str, item: dict) -> float | None:
@@ -171,6 +224,9 @@ def reprice(draft: PhoneCartDraft, inventory: list[dict] | None = None,
     Bounded by MAX_LINES, so at most 30 calls.
     """
     inv = inventory if inventory is not None else inventory_for(draft.location_slug)
+    # What everyone ELSE is holding right now. Clamping against raw shelf quantity
+    # was what let twenty shoppers each be confirmed for two units.
+    held = reserved_units(draft.location_slug, exclude_token=draft.draft_token)
     lines, subtotal, issues = [], 0.0, 0
     for raw in (draft.lines or []):
         if not isinstance(raw, dict):
@@ -181,7 +237,16 @@ def reprice(draft: PhoneCartDraft, inventory: list[dict] | None = None,
         if live and resolver.in_stock(live):
             confirmed = confirm_live_price(draft.location_slug, live) if confirm else None
             line = _line_for(live, qty, confirmed)
-            available = int(_f(live.get("qty")))
+            available = available_after_holds(live, held)
+            line["stock_on_hand"] = available
+            if available <= 0:                     # someone else got the last one
+                line["in_stock"] = False
+                line["issue"] = "sold_out"
+                line["line_total"] = 0.0
+                issues += 1
+                lines.append(line)
+                subtotal += line["line_total"]
+                continue
             if qty > available:                    # partial: cap, don't drop
                 line["quantity"] = available
                 line["line_total"] = round(line["unit_price"] * available, 2)
@@ -235,17 +300,26 @@ def add(draft: PhoneCartDraft, product_id: str, qty: int = 1,
     if not live or not resolver.in_stock(live):
         return False, "not_in_stock"
 
+    # What is left once everyone else's live carts and unclaimed orders are counted.
+    # CLAMP rather than refuse: asking for 20 when 5 are free should give you 5, which
+    # is the contract the rest of the cart already follows (reprice caps, it doesn't
+    # drop). Only a genuinely empty shelf is a refusal.
+    held = reserved_units(draft.location_slug, exclude_token=draft.draft_token)
+    spare = available_after_holds(live, held)
+    if spare <= 0:
+        return False, "not_in_stock"
+
     lines = [x for x in (draft.lines or []) if isinstance(x, dict)]
     for line in lines:
         if str(line.get("product_id")) == str(product_id):
-            line["quantity"] = min(int(_f(line.get("quantity"), 1)) + qty, MAX_QTY)
+            line["quantity"] = min(int(_f(line.get("quantity"), 1)) + qty, MAX_QTY, spare)
             break
     else:
         if len(lines) >= MAX_LINES:
             return False, "cart_full"
         # Confirm this serial against the register the moment it is chosen — the same
         # thing pos/views.py cart_add does for a walk-in, so the two paths price alike.
-        lines.append(_line_for(live, min(max(qty, 1), MAX_QTY),
+        lines.append(_line_for(live, min(max(qty, 1), MAX_QTY, spare),
                                confirm_live_price(draft.location_slug, live)))
     draft.lines = lines
     draft.save(update_fields=["lines", "updated_at"])

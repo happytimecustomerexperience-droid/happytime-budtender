@@ -11,7 +11,10 @@ line-up), park, and then all POST /custom-order/checkout through a `threading.Ba
 so the submits genuinely overlap instead of queueing behind each other.
 
 What is deliberately NOT real here, and why:
-  * `bundles.cart.pos_catalog.get_inventory` is stubbed, so no register pull.
+  * `bundles.cart.pos_catalog.get_inventory` is stubbed, so no register pull. Stock is
+    deliberately deep (500 each): these measure what CONCURRENCY does, and a shallow
+    shelf would make the stock reservation the limiter instead — that behaviour has
+    its own file, bundles/tests/test_reservations.py.
   * `bundles.cart.confirm_live_price` is stubbed. Its own in-code guard only trips
     under pytest/BUDTENDER_TESTING, and `manage.py test` is neither — without this
     patch every cart line would fire a real /price-check at a live store.
@@ -56,11 +59,11 @@ CATALOG = {
 
 def inventory():
     return [
-        live(product_id="1", name="Blue Dream 3.5g", brand="Athenry", price=25.0, qty=10),
+        live(product_id="1", name="Blue Dream 3.5g", brand="Athenry", price=25.0, qty=500),
         live(product_id="10", cat_key="pre-rolls", cat_label="Pre-Rolls", subcategory="1pk",
-             name="Sunset Pre-Roll", brand="Athenry", unit_grams=1.0, price=8.0, qty=10),
+             name="Sunset Pre-Roll", brand="Athenry", unit_grams=1.0, price=8.0, qty=500),
         live(product_id="20", cat_key="edibles", cat_label="Edibles", subcategory="10pk",
-             name="Marionberry Gummies", brand="Wyld", unit_grams=None, price=15.0, qty=10),
+             name="Marionberry Gummies", brand="Wyld", unit_grams=None, price=15.0, qty=500),
     ]
 
 
