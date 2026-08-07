@@ -41,6 +41,8 @@ from dutchie.pos_read import PosReadClient
 from dutchie.pos_register_client import PosRegisterClient
 from dutchie.backoffice_customer_client import BackofficeCustomerClient
 from bundles import customers as bundle_customers
+from bundles.resolver import public_potency
+from dutchie import lab as dutchie_lab
 from dutchie import stores as dutchie_stores
 from dutchie.stores import load_stores
 
@@ -599,6 +601,24 @@ def start(request):
     how = "scan" if scan else how
     return _start_session(request, acct_id, name, phone, how=how,
                           scan_over21=scan.get("over_21") if scan else None)
+
+
+@login_required
+@require_http_methods(["GET"])
+def product_lab(request, product_id):
+    """Lab panel for ONE product, fetched when a budtender asks for it.
+
+    lab_result is one Dutchie call per BATCH and batches barely repeat here (4,082
+    for 4,743 products), so this is never called for a grid — only for the card
+    someone opened. Terpenes and COA urls came back empty on 64/64 sampled batches,
+    so in practice this renders THCA + Total + the four cannabinoids that exist.
+    """
+    _require_not_door(request)
+    store = _active_store(request)
+    p = catalog.find_item(store.name, product_id=product_id) if store else None
+    result = dutchie_lab.lab_result(store.name, p.get("BatchId")) if p else None
+    return render(request, "pos/_lab.html",
+                  {"lab": result, "potency": public_potency(result)})
 
 
 # â”€â”€ POS screen (requires an active session) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1420,11 +1440,30 @@ def _filters(request):
         "brand_q": g.get("brand_q", ""),
         "subcat": g.get("subcat", ""),
         "strain_type": g.get("strain_type", ""), "effect": g.get("effect", ""),
+        "strain": g.get("strain", ""),
         "sort": g.get("sort", "foryou"),
         "price_min": _int("price_min"), "price_max": _int("price_max"),
         "thc_min": _int("thc_min"), "doh_only": g.get("doh_only") == "1",
         "page": max(1, _int("page") or 1),
     }
+
+
+@login_required
+@require_http_methods(["GET"])
+def product_lab(request, product_id):
+    """Lab panel for ONE product, fetched only when a budtender asks for it.
+
+    `lab_result` is one Dutchie call per BATCH, and batches barely repeat here —
+    4,082 of them across 4,743 products — so this must never be called for a whole
+    grid. Terpenes and COA urls came back empty on 64/64 sampled batches, so in
+    practice this renders THCA + Total + the four cannabinoids that do exist.
+    """
+    _require_not_door(request)
+    store = _active_store(request)
+    row = catalog.find_item(store.name, product_id=product_id) if store else None
+    result = dutchie_lab.lab_result(store.name, row.get("BatchId")) if row else None
+    return render(request, "pos/_lab.html",
+                  {"lab": result, "potency": public_potency(result)})
 
 
 @login_required

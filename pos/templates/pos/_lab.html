@@ -1,0 +1,31 @@
+{% comment %}
+  Fetched on demand by the Lab button — one Dutchie call per batch, never for a grid.
+
+  THCA and Total are shown as two figures. THCA is what a label means by "25% THC";
+  the menu row's own THC number is the decarbed one and reads far lower (2.9 vs 48 on
+  the batch this was verified against). Terpenes and COA came back empty on 64/64
+  sampled batches, so those blocks simply never render here — they stay in the
+  template for the day a lab starts reporting them.
+{% endcomment %}
+{% if potency.thca or potency.total %}
+<div class="labpanel">
+  <div class="labtotal">
+    {% if potency.thca %}<span><b>{{ potency.thca }}%</b> THCA</span>{% endif %}
+    {% if potency.total %}<span><b>{{ potency.total }}%</b> Total</span>{% endif %}
+  </div>
+  {% if lab.cannabinoids %}
+  <ul class="lablist">
+    {% for c in lab.cannabinoids %}<li>{{ c.name }} <span>{{ c.value }}{{ c.unit }}</span></li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% if lab.terpenes %}
+  <ul class="lablist">
+    {% for t in lab.terpenes %}<li>{{ t.name }} <span>{{ t.value }}{{ t.unit }}</span></li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% if lab.tested_date %}<p class="muted">Tested {{ lab.tested_date|slice:":10" }}</p>{% endif %}
+  {% if lab.coa_url %}<a href="{{ lab.coa_url }}" target="_blank" rel="noopener">COA</a>{% endif %}
+</div>
+{% else %}
+<p class="muted labpanel">No lab data for this batch.</p>
+{% endif %}

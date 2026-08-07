@@ -254,3 +254,59 @@ class TestLoadedLinesArePricedLive:
         d = _draft(contact_phone="5095551234")
         auth.post(reverse("phone_cart_claim"), {"draft_token": d.draft_token})
         assert auth.session["cart"][0]["UnitPrice"] == 25.0
+
+
+class TestLabAndFilters:
+    """The lab panel, the new strain filter, and the THC filter that was lying."""
+
+    def test_the_lab_panel_shows_thca_not_the_menu_row_number(self, auth, monkeypatch):
+        # The whole point: the card says 22% THC (decarbed), the panel says 48% THCA.
+        monkeypatch.setattr(V.dutchie_lab, "lab_result", lambda store, batch: {
+            "cannabinoids": [{"name": "THCA", "value": 48.0, "unit": "%"}],
+            "total_cannabinoids": {"value": 44.996}})
+        _sess(auth, role="budtender", store="yakima", acct_id=555)
+        body = auth.get(reverse("product_lab", args=["1"])).content.decode()
+        assert "48.0" in body and "THCA" in body
+        assert "45.0" in body and "Total" in body
+
+    def test_no_lab_data_says_so_instead_of_erroring(self, auth, monkeypatch):
+        monkeypatch.setattr(V.dutchie_lab, "lab_result", lambda store, batch: None)
+        _sess(auth, role="budtender", store="yakima", acct_id=555)
+        r = auth.get(reverse("product_lab", args=["1"]))
+        assert r.status_code == 200
+        assert "No lab data" in r.content.decode()
+
+    def test_a_door_user_cannot_read_lab_data(self, auth):
+        _sess(auth, role="door", store="yakima")
+        assert auth.get(reverse("product_lab", args=["1"])).status_code in (302, 403)
+
+
+class TestCredibleThcFilter:
+    """`THC >= 25%` matched 0 of 644 flower products because THCContent is decarbed
+    THC, not THCA. Filtering must not match on a number that isn't a percentage."""
+
+    def _flower(self, thc):
+        return {"cat_key": "flower", "thc": thc, "strain": "Blue Dream", "qty": 5,
+                "name": "x", "brand": "b", "price": 10.0, "strain_type": "", "effects": [],
+                "raw_category": "flower", "subcategory": "3.5g"}
+
+    def test_a_decarbed_reading_never_satisfies_a_percentage_filter(self):
+        from pos.catalog import query
+        rows = [self._flower(0.5), self._flower(0.15)]
+        assert query(rows, None, {"thc_min": 20}) == []
+
+    def test_a_real_percentage_still_passes(self):
+        from pos.catalog import query
+        rows = [self._flower(22.0)]
+        assert len(query(rows, None, {"thc_min": 20})) == 1
+
+    def test_an_impossible_value_is_not_treated_as_potency(self):
+        from pos.catalog import query
+        # 1400% — a fraction misread as a percentage. Must not satisfy anything.
+        assert query([self._flower(1400.0)], None, {"thc_min": 20}) == []
+
+    def test_the_strain_filter_narrows(self):
+        from pos.catalog import query
+        a, b = self._flower(22.0), self._flower(22.0)
+        b["strain"] = "Gelato"
+        assert len(query([a, b], None, {"strain": "Gelato"})) == 1

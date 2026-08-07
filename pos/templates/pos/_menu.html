@@ -60,12 +60,32 @@
       <option value="">Any type</option>
       {% for s in facets.strain_types %}<option value="{{ s }}" {% if f.strain_type == s %}selected{% endif %}>{{ s|title }}</option>{% endfor %}
     </select>{% endif %}
+    {% if facets.strains %}
+    {% comment %}
+      Strain is on every row at no extra cost. "Mixed" is ~29% of inventory and is a
+      house blend, not a strain, so it gets its own entry rather than sitting in the
+      alphabetical list pretending to be one.
+    {% endcomment %}
+    <select name="strain" aria-label="Strain">
+      <option value="">Any strain</option>
+      {% for s in facets.strains %}
+        <option value="{{ s }}" {% if f.strain == s %}selected{% endif %}>{% if s == "Mixed" %}Mixed / house blend{% else %}{{ s }}{% endif %}</option>
+      {% endfor %}
+    </select>{% endif %}
+    {% comment %}
+      THC only where the number is a real percentage. THCContent is decarbed THC, not
+      THCA: filtering flower by it matched 0 of 644 products at 25%+ while that same
+      flower's lab panel read 74% THCA. So the control appears only when the current
+      category actually has credible values (facets.thc_cats), and the label says so.
+    {% endcomment %}
+    {% if not f.cat or f.cat in facets.thc_cats %}
     <select name="thc_min" aria-label="THC">
       <option value="">Any THC</option>
       <option value="20" {% if f.thc_min == 20 %}selected{% endif %}>20%+</option>
       <option value="25" {% if f.thc_min == 25 %}selected{% endif %}>25%+</option>
       <option value="30" {% if f.thc_min == 30 %}selected{% endif %}>30%+</option>
     </select>
+    {% endif %}
     {% if facets.has_doh %}
     <label class="doh-toggle"><input type="checkbox" name="doh_only" value="1" {% if f.doh_only %}checked{% endif %}><span class="dot"></span> DOH</label>
     {% endif %}

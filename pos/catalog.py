@@ -122,11 +122,15 @@ def categories(items):
 def facets(items):
     brands = sorted({p["brand"] for p in items if p["brand"]})
     strain_types = sorted({p["strain_type"] for p in items if p["strain_type"]})
+    strains = sorted({p["strain"] for p in items if p["strain"]})
     effects = sorted({e for p in items for e in (p["effects"] or []) if e})
     prices = [p["price"] for p in items if p["price"] > 0]
     has_doh = any("doh" in (p["name"] or "").lower() for p in items)
     return {
         "brands": brands, "strain_types": strain_types, "effects": effects[:20],
+        "strains": strains,
+        # Which categories have a THC number worth filtering on at all.
+        "thc_cats": sorted({p["cat_key"] for p in items if _credible_thc(p) is not None}),
         "price_min": int(min(prices)) if prices else 0,
         "price_max": int(max(prices)) + 1 if prices else 0,
         "has_doh": has_doh,
@@ -155,6 +159,22 @@ def find_item(store_key, product_id=None, serial=None):
     return None
 
 
+# Same bands the public storefront uses (bundles/resolver._THC_PERCENT_BANDS).
+# Duplicated rather than imported: bundles.cart imports pos.catalog, so importing
+# back the other way is a cycle. Four lines is cheaper than breaking that apart.
+_THC_BANDS = {"flower": (5.0, 45.0), "pre-rolls": (5.0, 60.0),
+              "vapes": (30.0, 100.0), "concentrate": (30.0, 100.0)}
+
+
+def _credible_thc(p):
+    """The row's THC as a percentage, or None when the value isn't one."""
+    band = _THC_BANDS.get(p.get("cat_key") or "")
+    if not band:
+        return None
+    v = _f(p.get("thc"))
+    return v if band[0] <= v <= band[1] else None
+
+
 def query(items, profile, f):
     """Apply search + filters + sort. `f` is a dict of request filters.
     Always restricted to in-stock items (owner rule)."""
@@ -175,6 +195,8 @@ def query(items, profile, f):
         out = [p for p in out if brand_q in (p.get("brand") or "").lower()]
     if f.get("strain_type"):
         out = [p for p in out if p["strain_type"] == f["strain_type"]]
+    if f.get("strain"):
+        out = [p for p in out if p["strain"] == f["strain"]]
     if f.get("effect"):
         out = [p for p in out if f["effect"] in (p["effects"] or [])]
     if f.get("price_min") is not None:
@@ -182,7 +204,13 @@ def query(items, profile, f):
     if f.get("price_max") is not None:
         out = [p for p in out if p["price"] <= f["price_max"]]
     if f.get("thc_min"):
-        out = [p for p in out if _f(p["thc"]) >= f["thc_min"]]
+        # Only compare where the number MEANS a percentage. THCContent is decarbed
+        # THC, not THCA, and for flower it reads 0.15-0.9 — so "THC >= 25%" matched
+        # 0 of 644 flower products while the same flower's lab panel read 74% THCA.
+        # Matching on a credible value only is the honest half of the fix; the menu
+        # template hides the control for the categories where nothing is credible.
+        out = [p for p in out if _credible_thc(p) is not None
+               and _credible_thc(p) >= f["thc_min"]]
     if f.get("doh_only"):
         out = [p for p in out if "doh" in (p["name"] or "").lower()]
 

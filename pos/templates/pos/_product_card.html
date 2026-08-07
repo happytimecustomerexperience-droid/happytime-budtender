@@ -24,6 +24,9 @@
     <div>{{ p.received_date|slice:":10" }}</div>
   </details>
   {% endif %}
+  {% comment %}One Dutchie call per batch, so only for the card someone opens.{% endcomment %}
+  <button type="button" class="labbtn" data-url="{% url 'product_lab' p.ProductId %}">Lab</button>
+  <div class="labslot" hidden></div>
   <form class="addrow" hx-post="{% url 'cart_add' %}" hx-target="#cart">
     <input type="hidden" name="ProductId" value="{{ p.ProductId }}">
     <input name="Cnt" type="number" min="1" max="99" value="1" aria-label="qty">

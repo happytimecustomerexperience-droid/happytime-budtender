@@ -115,3 +115,22 @@
     if (!document.hidden && unseen) { unseen = 0; document.title = baseTitle; }
   });
 })();
+
+/* Lab panel: fetched once per card, then just toggled. One Dutchie call per batch,
+   so re-fetching on every click would cost the same as not caching at all. */
+(function () {
+  "use strict";
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest && e.target.closest(".labbtn");
+    if (!btn) return;
+    var slot = btn.parentElement.querySelector(".labslot");
+    if (!slot) return;
+    if (slot.getAttribute("data-loaded")) { slot.hidden = !slot.hidden; return; }
+    slot.hidden = false;
+    slot.innerHTML = '<p class="muted">Loading…</p>';
+    fetch(btn.getAttribute("data-url"), { credentials: "same-origin" })
+      .then(function (r) { return r.text(); })
+      .then(function (html) { slot.innerHTML = html; slot.setAttribute("data-loaded", "1"); })
+      .catch(function () { slot.innerHTML = '<p class="muted">Couldn\'t load lab data.</p>'; });
+  });
+})();

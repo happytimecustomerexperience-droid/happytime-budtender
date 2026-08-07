@@ -429,3 +429,13 @@ th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
 .mini-table{display:flex;flex-direction:column;gap:8px}
 .mini-row{display:grid;grid-template-columns:1.6fr .7fr .7fr 1.4fr;gap:8px;align-items:center;font-size:13px;padding:8px 0;border-top:1px solid var(--line)}
 .mini-row:first-child{border-top:0}
+
+/* lab panel (on-demand, per product card) */
+.labbtn { width: 100%; margin-top: 6px; font-size: 12px; padding: 6px; }
+.labpanel { margin-top: 6px; padding: 8px; border-radius: 8px; font-size: 12px;
+            background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.10); }
+.labtotal { display: flex; gap: 12px; margin-bottom: 6px; }
+.labtotal b { color: var(--amber, #ffb74d); font-size: 14px; }
+.lablist { list-style: none; margin: 0; padding: 0; }
+.lablist li { display: flex; justify-content: space-between; }
+.lablist li span { opacity: .7; }
