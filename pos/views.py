@@ -767,6 +767,18 @@ def lookup(request):
     if request.POST.get("name"):
         for guest in guests:
             guest["possible_name_match"] = True
+    # Surface a waiting online order ON the search row. The budtender picks the
+    # person and already knows there is an order — instead of selecting them, then
+    # noticing the separate "Orders waiting" panel, then matching it up by hand with
+    # the customer standing there. Reuses the same matcher `claim` uses.
+    for guest in guests:
+        try:
+            guest["waiting_order"] = _waiting_draft_for(
+                store.name if store else None,
+                acct_id=guest.get("acct_id"), phone=guest.get("phone"))
+        except Exception:
+            guest["waiting_order"] = None
+
     ctx["guests"] = guests
     tracking.track(request, "customer_search", detail=q[:120], results=len(guests))
     # Record which accounts THIS budtender is allowed to open (anchors `profile`
@@ -1019,6 +1031,9 @@ def claim(request, visit_id):
     guest so the budtender can shop/checkout, and adopt this visit as the session's open
     visit - dropping into the existing shop flow via `customerChanged`."""
     _require_not_door(request)
+    blocked = _under_21_block(request)
+    if blocked:
+        return blocked
     store = _active_store(request)
     v = ShopVisit.objects.filter(pk=visit_id, status="queued", ended_at__isnull=True).first()
     if v is None:
@@ -1091,9 +1106,31 @@ def claim(request, visit_id):
 @login_required
 @rate_limit("start", limit=30, window=60)
 @require_http_methods(["POST"])
+def _under_21_block(request):
+    """A refusal page when the last scan said under 21, else None.
+
+    The station scan already refused to build a profile for an under-21 — but only
+    on that one path. Nothing stopped the budtender then checking the SAME person in
+    with the Guest button or off the queue, which is the obvious next click when the
+    scan "didn't work". 21 is the whole legal basis for the sale, so every route that
+    creates a session asks the same question.
+    """
+    pending_id = request.session.get("pending_customer_id")
+    pending = Customer.objects.filter(pk=pending_id).first() if pending_id else None
+    scan = dict(pending.raw_scan or {}) if pending else {}
+    if scan.get("over_21") is False:
+        ctx = {"warn": "UNDER 21 — cannot start a session for this customer.",
+               "scan": scan, "acct_id": None}
+        return render(request, "pos/_profile.html", ctx)
+    return None
+
+
 def guest_start(request):
     """Continue-as-guest from the budtender screen (mirrors the begin-gate guest path)."""
     _require_not_door(request)
+    blocked = _under_21_block(request)
+    if blocked:
+        return blocked
     store = _active_store(request)
     if not store:
         return render(request, "pos/_profile.html", {"error": "no store configured"})

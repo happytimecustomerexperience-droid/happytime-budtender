@@ -149,6 +149,37 @@
     }
   });
 
+  // Orientation guide. Washington issues VERTICAL cards to under-21s, so the shape
+  // of the card is itself information — the budtender frames it deliberately rather
+  // than wondering why the box doesn't fit.
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest(".idscan__orient");
+    if (!btn) return;
+    e.preventDefault();
+    var panel = btn.closest(".idscan");
+    if (!panel) return;
+    var toVertical = btn.getAttribute("data-orient") === "horizontal";
+    panel.classList.toggle("idscan--vertical", toVertical);
+    btn.setAttribute("data-orient", toVertical ? "vertical" : "horizontal");
+    btn.textContent = toVertical ? "Horizontal card" : "Vertical card";
+  });
+
+  // Camera on by default. Someone is standing at the counter holding a card out;
+  // making them wait for a budtender to find a "start camera" button was a step that
+  // existed only because the camera used to be hidden behind a toggle.
+  function autostart() {
+    document.querySelectorAll(".idscan[data-autostart]").forEach(function (panel) {
+      if (panel.id) startPanel(panel.id);
+    });
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", autostart);
+  } else {
+    autostart();
+  }
+  // htmx swaps the station body without a page load, so re-arm after a swap.
+  document.body.addEventListener("htmx:afterSwap", autostart);
+
   window.addEventListener("pagehide", function () {
     Object.keys(loopByPanel).forEach(function (id) {
       stopPanel(id);

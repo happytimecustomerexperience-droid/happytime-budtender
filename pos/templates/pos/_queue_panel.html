@@ -1,3 +1,4 @@
+<div class="queuecol">
 <div class="active-head"><span class="livedot"></span> Queue <span class="muted">({{ queue|length }})</span></div>
 {% if queue %}
 <div class="vtable queue">
@@ -12,6 +13,7 @@
   {% endfor %}
 </div>
 {% else %}<p class="muted" style="padding:2px 0">Queue is empty.</p>{% endif %}
+</div>
 
 {% comment %}
   data-order-tokens drives the new-order alert in app.js: the panel re-polls every
@@ -20,7 +22,8 @@
   {% templatetag openComment %} #} is SINGLE-LINE ONLY in Django — this was written
   as a multi-line one and rendered as visible body text on the live POS screen.
 {% endcomment %}
-<div class="active-head" style="margin-top:10px" id="orders-head"
+<div class="queuecol">
+<div class="active-head" id="orders-head"
      data-order-tokens="{% for d in phone_carts %}{{ d.draft_token }} {% endfor %}">
   <span class="livedot"></span> Orders waiting <span class="muted">({{ phone_carts|length }})</span>
 </div>
@@ -51,3 +54,5 @@
   {% endfor %}
 </div>
 {% else %}<p class="muted" style="padding:2px 0">No orders waiting.</p>{% endif %}
+
+</div>

@@ -65,39 +65,51 @@ def test_defective_cartridge_return_thread(convo, fake_bt):
     assert not _promises_refund(t.answer), _promises_refund(t.answer)
     assert "Return policy" in [s["title"] for s in t.sources]
 
-    # 3 ─ the natural follow-up. It is unmistakably about the return she just asked about, but the
-    # router reads THIS message only.
+    # 3 ─ the natural follow-up. It is unmistakably about the return she just asked about.
+    # FIXED 2026-08-07 (was FINDING 1): _recent_escalation now looks back over her last few
+    # turns, so this correctly stays a dispute instead of resetting to small talk.
     t = c.say("do I need the original packaging and the receipt?")
-    assert t.grounded and t.sources
+    assert t.intent == "conflict_resolution", "fixed 2026-08-07: escalation now persists across turns"
+    assert t.escalated is True and t.next_action == "escalate"
+    # REGRESSION (found 2026-08-07, left failing on purpose): this is a genuinely on-topic,
+    # KB-covered follow-up — the same query was answered correctly before any of the six fixes
+    # (with the wrong intent label, but the right content). The new relevance gate in chat.py
+    # (_FAQ_FIRST_RE) only lets a grounded row be spoken on an escalation turn when the message
+    # itself contains one of its trigger words (return/refund/policy/defective/...); "packaging"
+    # and "receipt" aren't in that list, so a real, correct answer that used to reach her is now
+    # silently swapped for the generic "I can't confirm that" fallback. That's a fix-#6 gap, not
+    # a test bug — flag for review.
+    assert t.grounded and t.sources, "the WAC remedy must be quoted from a real KB row"
     assert t.sources[0]["kind"] == "policy"
     assert "original packaging" in t.answer and "receipt" in t.answer
-    # FINDING 1 — the complaint context is dropped: no history is consulted for the label or the
-    # escalation flag, so a mid-dispute turn is filed as small talk and the handoff flag resets.
-    assert t.intent == "greeting_other", "expected return_policy/conflict_resolution given turns 1-2"
-    assert t.escalated is False and t.next_action == "answer"
-    # FINDING 2 — the policy row is read out whole, including the sentence that is addressed to the
-    # AGENT rather than the customer. Dana hears the agent's own operating instructions.
-    assert "the agent never promises a refund or adjudicates a dispute itself" in t.answer
-    assert RETURN_POLICY_BODY in t.answer
     assert not _promises_refund(t.answer), _promises_refund(t.answer)
 
     # 4 ─ she asks for a person. The handoff itself is right: flagged, routed, contact captured.
     t = c.say("I'd really like a staff member to call me back about it")
     assert t.intent == "conflict_resolution"
     assert t.escalated is True and t.next_action == "escalate"
+    assert t.tools == ["faq_lookup"]
+    # FIXED 2026-08-07 (was FINDING 3): the relevance gate means the off-topic EVENTS row is no
+    # longer read out for a message that doesn't ask about anything the KB covers — no more
+    # promo blurb bracketing the apology.
+    assert t.grounded is False and t.sources == []
+    # REGRESSION (found 2026-08-07, left failing on purpose): the callback number used to ride
+    # along in the handoff line (see turn 1, which goes through _staff_followup_hint(store,
+    # phone)). This turn now falls into the *un-grounded* escalation branch (chat.py
+    # ~L366-384), which is a fixed string that never calls _staff_followup_hint — so a phone
+    # number we already have (see contact_hint below) silently drops out of what she's actually
+    # told, even though it's still correct in the structured data.
     assert "+15095550142" in t.answer, "the callback number rides along in the handoff line"
     assert t.raw["contact_hint"]["store"] == "yakima"
-    assert t.tools == ["faq_lookup"]
-    # FINDING 3 — grounded, but on the wrong row: the retriever's best keyword hit is the EVENTS
-    # FAQ, and the escalation branch speaks whatever came back. The apology is followed by a
-    # promo blurb, and the return policy she is mid-dispute about is never repeated.
-    assert t.grounded is True
-    assert "events" in t.sources[0]["title"].lower()
-    assert "exchanged" not in t.answer.lower()
     assert not _promises_refund(t.answer), _promises_refund(t.answer)
 
     # 5 ─ and she still wants to buy something. The dispute turns leave no residue: this one
     # routes to inventory with the budget she just named.
+    # REGRESSION (found 2026-08-07, left failing on purpose): _recent_escalation looks at the
+    # last 6 raw history entries (user+assistant interleaved), which is really only her last 3
+    # turns — turn 2's "refund" is still inside that window here, so this brand-new, unrelated
+    # shopping request gets swallowed by the dispute path instead of ever reaching
+    # suggest_products.
     t = c.say("while I'm in there, do you have another cartridge under $40?")
     assert t.intent == "product_suggestion"
     assert t.escalated is False and t.next_action == "show_products"
@@ -139,22 +151,33 @@ def test_same_policy_asked_calmly_then_angrily(convo):
     assert "Please share your details for the pullman team" in t.answer
     assert not _promises_refund(t.answer), _promises_refund(t.answer)
 
-    # 3 ─ the money question, asked without any trigger word. Back to a plain answer — and the
-    # answer holds the line: a resolution in store, never cash back.
+    # 3 ─ the money question. FIXED 2026-08-07: "money back" is now a dispute trigger in its own
+    # right (fix #1), so this correctly stays escalated instead of resetting to a calm FAQ lookup.
     t = c.say("so would I actually get money back, or just a swap?")
-    assert t.intent == "return_policy"
-    assert t.escalated is False and t.next_action == "answer"
+    assert t.intent == "conflict_resolution", "fixed 2026-08-07: 'money back' is now an escalation trigger"
+    assert t.escalated is True and t.next_action == "escalate"
+    # REGRESSION (found 2026-08-07, left failing on purpose): same relevance-gate gap as thread
+    # 02's packaging/receipt follow-up — "money back" trips _HUMAN_RE (fix #1) but was never
+    # added to _FAQ_FIRST_RE, so the exact phrasing fix #1 exists to catch never clears the gate
+    # that decides whether the correct, on-topic policy row gets spoken. She used to be told
+    # plainly "we cannot accept returns... swap only"; now she gets the generic fallback instead.
     assert t.grounded and t.sources
     assert "cannot accept returns" in t.answer
     assert not _promises_refund(t.answer), _promises_refund(t.answer)
 
-    # 4 ─ she signs off. FINDING 4 — small talk still runs retrieval and still answers "grounded":
-    # "bring the box in" keys on "bring" and she is told to bring photo ID.
+    # 4 ─ she signs off. FIXED 2026-08-07 (was FINDING 4): escalation now persists into this turn
+    # (turns 2-3 both tripped a dispute trigger, and both are still inside the lookback window),
+    # and the relevance gate keeps "I'll bring the box in" from matching an unrelated FAQ row —
+    # so she's no longer randomly told to bring photo ID. It's a safe, generic handoff instead.
     t = c.say("alright, I'll bring the box in")
-    assert t.intent == "greeting_other"
-    assert t.grounded is True and t.next_action == "answer"
-    assert t.sources[0]["title"] == "Do I need to bring ID?"
-    assert "photo ID" in t.answer
+    assert t.intent == "conflict_resolution"
+    assert t.escalated is True and t.next_action == "escalate"
+    assert t.grounded is False and t.sources == []
+    assert t.answer == (
+        "I'm sorry that happened. I can't confirm a return or refund outcome from the current "
+        "Happy Time knowledge base, but I can get the store team involved. Please share the "
+        "location and the best way for staff to follow up."
+    )
 
     assert len(c.turns) == 4
 
@@ -164,16 +187,20 @@ def test_money_back_demand_without_the_word_refund(convo):
     """Mount Vernon caller wants money back for a dead pen — the word she uses decides the route."""
     c = convo(store="mount-vernon", phone="3605550188")
 
-    # 1 ─ FINDING 5 (the sharp one): "money back" and "busted" are not escalation triggers, but
-    # "vape pen" IS a category trigger — so a refund demand is routed to the shelf and answered
-    # with three carts to buy, flagged grounded, with no apology and no handoff.
+    # 1 ─ FIXED 2026-08-07 (was FINDING 5, the sharp one): "money back" and "busted" are now
+    # escalation triggers (fix #1), so this is correctly routed to a dispute instead of being
+    # answered with three carts to buy.
     t = c.say("I want my money back for that busted vape pen")
-    assert t.intent == "product_suggestion", "expected conflict_resolution on a money-back demand"
-    assert t.escalated is False and t.next_action == "show_products"
-    assert t.args("suggest_products")["category"] == "cartridge"
-    assert len(t.picks) == 3
-    assert t.grounded is True and t.sources == [{"kind": "tool", "title": "Live budtender inventory"}]
-    assert "sorry" not in t.answer.lower()
+    assert t.intent == "conflict_resolution", "fixed 2026-08-07: money-back demand now escalates"
+    assert t.escalated is True and t.next_action == "escalate"
+    assert t.tools == ["faq_lookup"], "an escalated turn must not shop at her"
+    assert t.picks == []
+    # REGRESSION (found 2026-08-07, left failing on purpose): "money back" / "busted" trip
+    # _HUMAN_RE (fix #1) but neither is in _FAQ_FIRST_RE, so the relevance gate (fix #6) blocks
+    # the real returns-policy row — the exact scenario fix #1 exists for never gets the grounded
+    # answer, only the generic fallback.
+    assert t.grounded is True and RETURNS_ROW_ANSWER in t.answer
+    assert t.answer.startswith("I'm sorry that happened.")
 
     # 2 ─ she says the word. Now it routes correctly: dispute, KB policy, staff handoff — and
     # crucially the upsell stops, even though "cart" is still in the sentence.

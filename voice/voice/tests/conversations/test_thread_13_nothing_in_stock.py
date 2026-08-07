@@ -107,27 +107,35 @@ def test_sold_out_streak_ends_in_a_human_not_a_guess(convo, fake_bt):
     assert t.next_action == "escalate"
     assert "suggest_products" not in t.tools, "an escalation must not be answered with products"
 
-    # Stock is back — but this turn is a GAP, asserted exactly as it behaves rather than papered
-    # over. The router's category lexicon is singular-only ("concentrate", not "concentrates"), so
-    # no category is derived, no inventory search is attempted, and the FAQ answer is served
-    # CONFIDENTLY (grounded, with sources) even though it has nothing to do with concentrates.
+    # Stock is back and FIXED 2026-08-07: the router's category lexicon is plural-tolerant now
+    # (fix 2, ``_CATEGORY_RE``), so "concentrates" DOES derive category="concentrate" here. But
+    # this follow-up still never reaches the shelf — fix 5 (``_recent_escalation``) makes a
+    # dispute stay a dispute for the caller's last 3 turns (a 6-message lookback), and the
+    # "budtender" trigger from the turn above is still inside that window. Escalation outranks
+    # the now-correct category routing.
     fake_bt.fail_search = False
     searches_before = len(fake_bt.calls["search"])
     t = c.say("okay, while I have you — what concentrates are actually on the shelf")
-    assert t.intent == "greeting_other"
-    assert t.tools == ["faq_lookup"], "the plural killed the product route entirely"
+    assert t.intent == "conflict_resolution"
+    assert t.escalated is True
+    assert t.next_action == "escalate"
+    assert t.tools == ["faq_lookup"], "still no product route — the persisted escalation wins"
     assert len(fake_bt.calls["search"]) == searches_before, "no product search was even attempted"
     assert t.picks == []
-    assert t.grounded is True and t.sources, "answered confidently from the KB"
-    assert t.next_action == "answer"
-    assert "concentrate" not in t.answer.lower(), "and the confident answer is off-topic"
+    assert t.grounded is False, "the canned escalation copy, not a confident-but-off-topic FAQ row"
+    assert t.answer == (
+        "I'm sorry that happened. I can't confirm a return or refund outcome from the current "
+        "Happy Time knowledge base, but I can get the store team involved. Please share the "
+        "location and the best way for staff to follow up."
+    )
 
-    # The caller rephrases in the singular and the same shelf answers immediately.
+    # The caller rephrases in the singular — same result. It's the 3-turn escalation window still
+    # holding, not the category lexicon (fix 2 already lets "concentrate" through on its own).
     t = c.say("I mean rosin or wax, whatever concentrate you've got")
-    assert t.intent == "product_suggestion"
-    assert t.escalated is False
-    assert t.next_action == "show_products"
-    assert t.pick_names == ["DOH Compliant RSO 1g", "Live Rosin 1g"]
-    assert t.grounded is True
+    assert t.intent == "conflict_resolution"
+    assert t.escalated is True
+    assert t.next_action == "escalate"
+    assert t.picks == []
+    assert len(fake_bt.calls["search"]) == searches_before, "the dispute window hasn't cleared yet"
 
     assert len(c.turns) == 5

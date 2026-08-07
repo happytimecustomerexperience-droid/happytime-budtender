@@ -25,22 +25,23 @@ def test_dana_switches_flower_to_edibles_then_adds_something_small(convo, fake_b
     assert t.next_action == "show_products"
     first_sku = t.picks[0]["sku"]
 
-    # 2) Changes her mind out loud, in the words a caller actually uses. The plural "edibles" is
-    #    not in the category lexicon (only the singular "edible" is), so the switch routes nowhere.
+    # 2) Changes her mind out loud, in the words a caller actually uses. FIXED 2026-08-07: the
+    #    plural "edibles" now matches the plural-tolerant ``_CATEGORY_RE`` (fix 2), so the switch
+    #    lands on the FIRST try — and it must still carry NO subcategory and NO size from turn 1,
+    #    or she gets "indica 3.5g edibles" and hears nothing.
     t = c.say("actually hold on, my wife can't smoke - do you have edibles instead")
-    assert "suggest_products" not in t.tools, (
-        "FINDING: 'edibles' (plural) misses _CATEGORY_RE, so the category switch is dropped"
-    )
-    assert t.intent == "greeting_other"
-    assert t.picks == []
-    assert t.next_action != "show_products"
-    assert t.grounded is True and t.sources
-    assert t.sources[0]["title"] == "Do you have a rewards or loyalty program?", (
-        "FINDING: the dropped switch is answered by an unrelated grounded FAQ row, not a fallback"
-    )
+    assert t.intent == "product_suggestion"
+    switched = t.args("suggest_products")
+    assert switched["category"] == "edible", "the spoken switch re-derives the category"
+    assert "subcategory" not in switched, f"turn-1 'indica' leaked into the edible ask: {switched}"
+    assert "size" not in switched, f"turn-1 '3.5g' leaked into the edible ask: {switched}"
+    sent = fake_bt.calls["search"][-1]["slots"]
+    assert sent["category"] == "edible"
+    assert "subcategory" not in sent and "size" not in sent
+    assert t.picks and all(p["sku"].startswith("ED-") for p in t.picks), t.pick_names
 
-    # 3) She repairs it herself, the way callers do. NOW the switch lands — and it must carry NO
-    #    subcategory and NO size from turn 1, or she gets "indica 3.5g edibles" and hears nothing.
+    # 3) She repeats herself anyway, the way callers do even when they were already understood.
+    #    The router re-derives fresh every turn — same correct, non-leaking result the second time.
     t = c.say("sorry - gummies I mean, what have you got")
     assert t.intent == "product_suggestion"
     switched = t.args("suggest_products")
@@ -60,25 +61,24 @@ def test_dana_switches_flower_to_edibles_then_adds_something_small(convo, fake_b
     assert narrowed["size"] == "10mg", "size is re-derived per turn, so 10mg must land here"
     assert t.pick_names == ["Wyld Raspberry Gummies 10mg"]
 
-    # 5) The small add-on. The router classifies pre-roll correctly, then the tool schema throws
-    #    the slot away: "pre-roll" is not in the suggest_products category enum, so _sanitize_args
-    #    drops it and the handler bails on missing_category — inventory is never even asked.
+    # 5) The small add-on. FIXED 2026-08-07: "pre-roll" is now in the suggest_products category
+    #    enum (constants.py) and mapped in budtender's CATEGORY_BY_SLOTKEY (fix 4), so the
+    #    router's correct category reaches the catalog instead of being dropped at the schema
+    #    wall and bouncing off the handler's own required-field check.
     searches_before = len(fake_bt.calls["search"])
     assert any(r["category"] == "pre-roll" and r["price"] <= 10 for r in fake_bt.catalog), (
-        "the catalog does stock a cheap single pre-roll — a miss below is routing, not inventory"
+        "the catalog does stock a cheap single pre-roll"
     )
     t = c.say("perfect, can I add a cheap single pre-roll to that under $10")
     addon = t.args("suggest_products")
     assert addon["category"] == "pre-roll", "the router does recognise a pre-roll"
     assert addon["price_max"] == 10.0
-    assert t.result("suggest_products").get("error") == "missing_category", (
-        "FINDING: the pre-roll category is dropped by the tool-arg enum wall"
-    )
-    assert t.picks == []
-    assert t.grounded is False
-    assert t.next_action == "ask_staff"
-    assert len(fake_bt.calls["search"]) == searches_before, (
-        "the pre-roll ask never reached budtender at all"
+    assert t.result("suggest_products").get("error") is None
+    assert t.pick_names == ["Single Pre-roll 1g"], "the cheap single pre-roll the catalog stocks"
+    assert t.grounded is True
+    assert t.next_action == "show_products"
+    assert len(fake_bt.calls["search"]) == searches_before + 1, (
+        "the pre-roll ask now reaches budtender"
     )
 
     # 6) She refers back — but SAYS the words again, so the stateless router finds it a second time.

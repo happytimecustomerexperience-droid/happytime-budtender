@@ -1,58 +1,115 @@
 {% extends "pos/_shell.html" %}
-{% block title %}Station — Budtender POS{% endblock %}
 
 {% comment %}
-  THE STATION. What a budtender sees when they pick the tablet up: who is waiting,
-  which online orders are unclaimed, and the three ways to check someone in (queue
-  claim, ID scan, name/phone lookup).
+  The STATION — what a budtender sees before a customer exists.
 
-  There is deliberately no menu here. Checking a customer in is the job on this
-  screen, and every path that resolves one answers with HX-Redirect to `shop`
-  (see _advance_to_shop in views.py), so the tablet moves on by itself.
+  Layout follows the actual counter gesture, top to bottom:
+    1. who is waiting (queue) and what is already ordered (saved orders), SIDE BY SIDE
+       so neither is buried under the other;
+    2. one search box — the budtender types whatever they have, a name or a number;
+    3. the ID scanner, camera already live, because the common case is "someone just
+       handed me a card".
+
+  Search sits ABOVE the scanner deliberately: looking someone up is the fast path for
+  a returning customer, and the camera is a big element that used to push it off
+  screen on a tablet.
 {% endcomment %}
 
 {% block body %}
 {% if role != "door" %}
-<div id="queue" class="queuewrap" hx-get="{% url 'queue_panel' %}" hx-trigger="load, every 5s">
-  {% include "pos/_queue_panel.html" %}
-</div>
 
-<div class="customerbar">
-  <form hx-post="{% url 'scan' %}" hx-target="#profile" hx-encoding="multipart/form-data">
-    <input type="file" name="images" accept="image/*" capture="environment" multiple aria-label="Scan ID">
-    <button type="button" class="ghost idscan__toggle" data-target="screen-idscan">Scan barcode on device</button>
-    <div id="screen-idscan" class="idscan" hidden>
-      <video class="idscan__video" autoplay playsinline muted></video>
-      <p id="screen-idscan-status" class="muted" style="margin-top:8px"></p>
-      <div class="idscan__actions">
-        <button type="button" class="ghost idscan__close" data-target="screen-idscan">Close scanner</button>
+<div class="station">
+
+  {# ── 1. queue + saved orders, side by side ─────────────────────────────── #}
+  <div id="queue" class="queuewrap queuegrid" hx-get="{% url 'queue_panel' %}" hx-trigger="load, every 5s">
+    {% include "pos/_queue_panel.html" %}
+  </div>
+
+  {# ── 2. one search box ─────────────────────────────────────────────────── #}
+  <section class="stationsearch">
+    <form hx-post="{% url 'lookup' %}" hx-target="#guests"
+          hx-trigger="submit, keyup changed delay:350ms" class="ac-form onesearch">
+      {% comment %}
+        ONE input, not the old phone-box-plus-name-box. `lookup` already collapsed
+        them server-side (`POST["phone"] or POST["name"]`), so two boxes only ever
+        meant the budtender had to decide which one their scrap of information went
+        in. Posted as `phone` because that is the field lookup reads first, and
+        Dutchie's guest_search takes a name or a number on the same endpoint.
+      {% endcomment %}
+      <input class="grow bigsearch" name="phone" autocomplete="off"
+             placeholder="Search by name or phone number…"
+             aria-label="Search customers by name or phone number">
+      <button type="submit">Find</button>
+    </form>
+
+    <form hx-post="{% url 'phone_cart_claim' %}" hx-target="#cart" class="ac-form">
+      <input class="grow" name="draft_token" type="tel" inputmode="tel"
+             placeholder="Load a saved order by phone number" autocomplete="off"
+             aria-label="Load a saved order by phone number">
+      <button type="submit">Load order</button>
+    </form>
+
+    <button type="button" class="ghost" hx-post="{% url 'guest_start' %}" hx-target="#profile">
+      Continue as guest
+    </button>
+
+    <div id="guests" class="ac-results"></div>
+  </section>
+
+  {# ── 3. the scanner ────────────────────────────────────────────────────── #}
+  <section class="scanwrap">
+    <form hx-post="{% url 'scan' %}" hx-target="#profile" hx-encoding="multipart/form-data"
+          class="scanform">
+      <div class="scanhead">
+        <h2>Check ID</h2>
+        <span class="muted scanhint">Hold the <strong>back</strong> of the card in the frame — the barcode side.</span>
       </div>
-    </div>
-    <input type="hidden" id="id_payload" name="id_payload" value="">
-    <button type="submit" class="ghost">Scan ID</button>
-  </form>
-  <form hx-post="{% url 'lookup' %}" hx-target="#guests"
-        hx-trigger="submit, keyup changed delay:350ms" class="grow ac-form">
-    <input class="grow" name="phone" placeholder="Search customer by phone…" inputmode="tel" autocomplete="off">
-    <input class="grow" name="name" placeholder="Or search by name…" autocomplete="off">
-    <button type="submit">Find</button>
-  </form>
-  <button type="button" class="ghost" hx-post="{% url 'guest_start' %}" hx-target="#profile">Guest</button>
-  <form hx-post="{% url 'phone_cart_claim' %}" hx-target="#cart" class="grow ac-form">
-    <input class="grow" name="draft_token" type="tel" inputmode="tel"
-           placeholder="Saved order — customer's phone number" autocomplete="off">
-    <button type="submit">Load phone cart</button>
-  </form>
-  <div id="guests" class="ac-results"></div>
+
+      {% comment %}
+        The camera is opened on load by idscan.js (data-autostart). Everything here
+        is decoded IN THE BROWSER: only the decoded barcode text is posted, never the
+        picture of someone's licence.
+
+        `data-guide` switches the framing box between a horizontal card and a vertical
+        one — Washington issues vertical cards to under-21s, so the shape itself is a
+        signal worth showing rather than hiding.
+      {% endcomment %}
+      <div id="screen-idscan" class="idscan idscan--big" data-autostart="1">
+        <div class="idscan__stage">
+          <video class="idscan__video" autoplay playsinline muted></video>
+          <div class="idscan__guide" aria-hidden="true"></div>
+        </div>
+        <div class="idscan__bar">
+          <p id="screen-idscan-status" class="idscan__status" role="status" aria-live="polite"></p>
+          <div class="idscan__actions">
+            <button type="button" class="ghost idscan__orient" data-orient="horizontal">Vertical card</button>
+            <button type="button" class="ghost idscan__toggle" data-target="screen-idscan">Restart camera</button>
+          </div>
+        </div>
+      </div>
+
+      <input type="hidden" id="id_payload" name="id_payload" value="">
+
+      <details class="scanfallback">
+        <summary>Camera not working? Upload a photo instead</summary>
+        <input type="file" name="images" accept="image/*" capture="environment" multiple
+               aria-label="Upload a photo of the ID">
+        <button type="submit" class="ghost">Scan uploaded photo</button>
+      </details>
+    </form>
+  </section>
+
+  {# ── 4. the selected customer ──────────────────────────────────────────── #}
   <div id="profile">
     {% if acct_id %}
       <span class="muted">{{ acct_name|default:"Guest" }} is checked in —
         <a class="link" href="{% url 'shop' %}">go to the menu</a>.</span>
     {% else %}
-      <span class="muted">No customer selected — claim from the queue, scan, search, or continue as guest.</span>
+      <span class="muted">No customer selected — claim from the queue, scan an ID, search, or continue as guest.</span>
     {% endif %}
   </div>
 </div>
+
 {% else %}
 <main><p class="muted" style="padding:20px">Door role — use <a class="link" href="{% url 'door' %}">Door check-in</a>.</p></main>
 {% endif %}

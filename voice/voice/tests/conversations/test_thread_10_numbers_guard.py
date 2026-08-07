@@ -108,14 +108,20 @@ def test_caller_presses_for_exact_numbers(convo, fake_bt):
     assert t.intent == "conflict_resolution"
     assert t.escalated is True
     assert t.next_action == "escalate"
-    kb_answer = t.result("faq_lookup")["answer"]
-    assert t.answer == f"I'm sorry that happened. {kb_answer} Please share your details for the yakima team so they can contact you at a callback number or email."
-    # The escalation wrapper introduces no figure of its own — every number is the KB row's.
-    assert _numbers(t.answer) <= _numbers(kb_answer), t.answer
-    # FINDING (low): the wrapper apologises ("I'm sorry that happened") to a caller who reported no
-    # problem, and speaks the store slug "yakima" rather than "Yakima".
+    # FIXED 2026-08-07: the relevance gate (fix 6) keeps a grounded-but-irrelevant KB row off an
+    # escalation turn that never asked anything the KB actually covers — "quote me the exact
+    # price" doesn't match ``_FAQ_FIRST_RE``, so the loyalty-program row faq_lookup retrieved is
+    # never spoken; the canned escalation copy answers instead, with no KB row riding along.
+    assert t.grounded is False
+    assert t.answer == (
+        "I'm sorry that happened. I can't confirm a return or refund outcome from the current "
+        "Happy Time knowledge base, but I can get the store team involved. Please share the "
+        "location and the best way for staff to follow up."
+    )
+    # The canned escalation copy introduces no figure of its own either.
+    assert not _numbers(t.answer), t.answer
     assert t.answer.startswith("I'm sorry that happened.")
-    assert "the yakima team" in t.answer
+    assert "share the location" in t.answer
 
     assert len(c.turns) == 6
     assert len(fake_bt.calls["search"]) == 4  # turns 3 and 6 never reached inventory

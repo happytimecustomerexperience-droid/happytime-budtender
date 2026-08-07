@@ -1,9 +1,14 @@
-"""Thread 15 — the slot wall: what the router derives but the schema silently throws away.
+"""Thread 15 — the slot wall: proof the router's derived slots now survive to budtender.
 
-``voice/chat.py`` derives rich slots from free speech, then ``voice/tools/__init__.py::_sanitize_args``
-drops any value that fails ``TOOL_SPECS``' enum. Nothing logs the drop, so the caller's actual
-request quietly stops reaching budtender's ranker. These tests pin the CURRENT behaviour so the
-loss is visible and a fix has a failing-then-passing test to move.
+FIXED 2026-08-07: three routing bugs used to lose slots at the tool-arg wall — a rich effect
+(sleep/pain relief/anxiety relief/focused) got silently dropped by ``_sanitize_args`` because
+``TOOL_SPECS`` only enums {relaxed, uplifted, middle} (fix 3, ``_EFFECT_TO_BUDTENDER`` maps the
+richer value down before dispatch); plural category words ("concentrates", "edibles") missed the
+singular-only ``_CATEGORY_RE`` and fell through to the FAQ (fix 2, the regex is plural-tolerant
+now); and "pre-roll" was a category chat.py derived but the enum didn't allow, so the handler
+bailed on its own required-field check (fix 4, the enum plus budtender's CATEGORY_BY_SLOTKEY).
+This module is the regression guard: it pins that all three slots now reach budtender instead of
+being thrown away.
 """
 
 from __future__ import annotations
@@ -12,34 +17,36 @@ import pytest
 
 
 @pytest.mark.django_db
-def test_sleep_request_loses_its_effect_before_reaching_budtender(convo, fake_bt):
-    """"Something for sleep" is the most common ask in the store — and the reason is dropped."""
+def test_sleep_request_survives_to_budtender(convo, fake_bt):
+    """"Something for sleep" is the most common ask in the store — the reason now survives."""
     c = convo(store="yakima")
     t = c.say("I need some flower that helps me sleep")
 
     assert t.intent == "product_suggestion"
-    # The router understood the request correctly...
-    assert t.args("suggest_products")["effect_desired"] == "sleep"
-    # ...and the schema wall threw it away, because TOOL_SPECS enums effect_desired to
-    # {relaxed, uplifted, middle} while chat.py derives {sleep, relaxed, focused,
-    # pain relief, anxiety relief}. Four of the five derived effects cannot survive.
+    # The router understands the request AND the mapped value reaches the tool: chat.py maps
+    # "sleep" -> "relaxed" via _EFFECT_TO_BUDTENDER (fix 3) before the enum wall ever sees it, so
+    # nothing is silently dropped.
+    assert t.args("suggest_products")["effect_desired"] == "relaxed"
     sent = fake_bt.calls["search"][-1]["slots"]
-    assert "effect_desired" not in sent, "FIXED? then tighten this test"
-    assert t.picks, "picks still come back — just ranked without knowing why they were asked for"
+    assert sent["effect_desired"] == "relaxed", "the mapped effect now reaches budtender's ranker"
+    assert t.picks
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("effect,phrase", [
-    ("sleep", "flower to help me sleep"),
-    ("focused", "flower that keeps me focused"),
-    ("pain relief", "flower for my back pain"),
-    ("anxiety relief", "flower for anxiety"),
+@pytest.mark.parametrize("effect,phrase,mapped", [
+    ("sleep", "flower to help me sleep", "relaxed"),
+    ("focused", "flower that keeps me focused", "uplifted"),
+    ("pain relief", "flower for my back pain", "relaxed"),
+    ("anxiety relief", "flower for anxiety", "relaxed"),
 ])
-def test_only_relaxed_survives_the_effect_enum(convo, fake_bt, effect, phrase):
+def test_every_derived_effect_survives_via_the_budtender_map(convo, fake_bt, effect, phrase, mapped):
+    """Every effect chat.py derives now reaches budtender — mapped to budtender's only known
+    vocabulary {relaxed, uplifted, middle} by ``_EFFECT_TO_BUDTENDER`` (fix 3), instead of being
+    dropped by the enum wall the way four of the five derived effects used to be."""
     c = convo(store="yakima")
     t = c.say(phrase)
-    assert t.args("suggest_products")["effect_desired"] == effect
-    assert "effect_desired" not in fake_bt.calls["search"][-1]["slots"]
+    assert t.args("suggest_products")["effect_desired"] == mapped, f"{effect!r} should map to {mapped!r}"
+    assert fake_bt.calls["search"][-1]["slots"]["effect_desired"] == mapped
 
 
 @pytest.mark.django_db
@@ -66,34 +73,36 @@ def test_an_effect_alone_never_reaches_the_shelf(convo):
     ("what concentrates do you have", "what concentrate do you have"),
     ("do you have any edibles", "do you have any edible"),
 ])
-def test_plural_category_words_miss_the_regex(convo, plural, singular):
-    """``_CATEGORY_RE`` anchors on ``\\bconcentrate\\b`` / ``\\bedible\\b``, so the way customers
-    actually speak — plural — never routes to products. ``cart|carts`` is the only pair that
-    spelled both out. The plural ask falls through to the FAQ and answers something unrelated."""
+def test_plural_category_words_route_to_products(convo, plural, singular):
+    """``_CATEGORY_RE`` is plural-tolerant now (fix 2) — every category pattern spells out both
+    the singular and the plural, so the way customers actually speak routes to products exactly
+    like the singular does, instead of falling through to the FAQ."""
     plural_turn = convo(store="yakima").say(plural)
-    assert plural_turn.tools == ["faq_lookup"], "FIXED? then invert this test"
-    assert plural_turn.intent != "product_suggestion"
+    assert plural_turn.intent == "product_suggestion"
+    assert plural_turn.picks
 
     singular_turn = convo(store="yakima").say(singular)
     assert singular_turn.intent == "product_suggestion"
     assert singular_turn.picks
+    assert plural_turn.pick_names == singular_turn.pick_names, "plural and singular route identically"
 
 
 @pytest.mark.django_db
-def test_pre_roll_request_cannot_reach_the_catalog_at_all(convo, fake_bt):
-    """``pre-roll`` is a category chat.py derives but TOOL_SPECS does not allow — so the
-    category is dropped, the handler then fails its own required-field check, and a caller
-    asking for the cheapest joint is told nothing is in stock while pre-rolls sit on the shelf."""
+def test_pre_roll_request_reaches_the_catalog(convo, fake_bt):
+    """"pre-roll" is a category chat.py derives, and it's now in TOOL_SPECS' category enum and
+    budtender's CATEGORY_BY_SLOTKEY (fix 4) — so a caller asking for the cheapest joint gets a
+    real answer instead of being told nothing is in stock while pre-rolls sit on the shelf."""
     c = convo(store="yakima")
     t = c.say("what's the cheapest pre-roll you have")
 
     assert t.intent == "product_suggestion"
     assert t.args("suggest_products")["category"] == "pre-roll"  # router got it right
-    assert t.result("suggest_products").get("error") == "missing_category"
-    assert t.picks == []
-    assert t.next_action == "ask_staff"
-    # budtender is never even asked, though the fixture catalog holds two pre-rolls.
-    assert not fake_bt.calls.get("search"), "search was called after all — re-check the wall"
+    assert t.result("suggest_products").get("error") is None
+    assert t.pick_names == ["Single Pre-roll 1g", "Half Ounce Pre-roll 5pk"]
+    assert t.next_action == "show_products"
+    assert t.grounded is True
+    # budtender is asked, and the fixture catalog's two pre-rolls are exactly what comes back.
+    assert fake_bt.calls["search"][-1]["slots"]["category"] == "pre-roll"
     assert any(row["category"] == "pre-roll" for row in fake_bt.catalog)
 
 

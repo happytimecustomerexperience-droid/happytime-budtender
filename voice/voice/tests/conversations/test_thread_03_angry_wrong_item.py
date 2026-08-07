@@ -27,18 +27,17 @@ def test_angry_wrong_item_thread(convo, fake_bt):
     assert t.next_action == "escalate"
     assert t.tools == ["faq_lookup"], "a complaint never turns into a product pitch"
     assert t.answer.startswith("I'm sorry that happened."), "the reply has to apologise first"
+    # FIXED 2026-08-07 (was FINDING 1): the relevance gate means a KB row is only spoken on an
+    # escalation turn if the message itself asks about something the KB covers. "wrong item...
+    # not what I ordered" doesn't match any FAQ trigger word, so the off-topic row that used to
+    # get read out here (an apology wrapped around whatever ranked first) is gone — she gets the
+    # honest, generic fallback instead. That fallback is a fixed string that never mentions
+    # store/phone even though we already know the store (see the note on turn 4).
+    assert t.grounded is False and t.sources == [], "chat.py no longer speaks an unrelated KB row"
     assert t.answer.endswith(
-        "Please share your details for the yakima team so they can contact you at "
-        "a callback number or email."
-    ), "and close by asking for a callback method"
-    # FINDING 1: the escalation branch speaks whatever KB row ranked first, with no relevance
-    # gate — the return-policy row exists (turn 2 reads it out) but this complaint does not
-    # reach it. The apology and the contact ask bracket an unrelated grounded answer.
-    assert t.grounded and t.sources, "chat.py still speaks a KB row on an escalation turn"
-    assert WAC not in t.answer, (
-        "FINDING: the opening wrong-item complaint is answered with an off-topic KB row, "
-        "not the return policy"
-    )
+        "Please share the location and the best way for staff to follow up."
+    ), "the un-grounded escalation branch's generic closing line"
+    assert WAC not in t.answer, "the opening wrong-item complaint still isn't the return policy"
 
     # 2. She escalates it herself — and this time the FAQ genuinely matches. Escalation must win.
     t = c.say("I'm honestly pretty upset about it, can I just get a refund? what is your return policy")
@@ -63,13 +62,12 @@ def test_angry_wrong_item_thread(convo, fake_bt):
     assert t.raw["contact_hint"] == {"store": "yakima", "customer_phone": ""}, (
         "before she gives a number the hint carries the store and an empty phone"
     )
-    # FINDING 2: on the grounded escalation path the spoken reply asks ONLY for a contact method.
-    # The "share the location and the best way for staff to follow up" wording lives in the
-    # un-grounded escalation branch, which the KB's keyword fallback almost never reaches.
+    # FIXED 2026-08-07 (was FINDING 2): "exchange" / "manager" don't match _FAQ_FIRST_RE either,
+    # so this now correctly lands on the same generic, un-grounded handoff line as turn 1 —
+    # consistent, and no longer wrapped around an unrelated grounded row.
     assert t.answer.endswith(
-        "Please share your details for the yakima team so they can contact you at "
-        "a callback number or email."
-    ), "FINDING: the spoken escalation reply never asks the caller for their location"
+        "Please share the location and the best way for staff to follow up."
+    )
 
     # 4. She reads her number out. From here the session carries it, like the widget would.
     c.phone = "509-555-0147"
@@ -79,6 +77,15 @@ def test_angry_wrong_item_thread(convo, fake_bt):
     assert t.raw["contact_hint"] == {"store": "yakima", "customer_phone": "+15095550147"}, (
         "contact_hint must carry store + the normalized phone once she supplies it"
     )
+    # REGRESSION (found 2026-08-07, left failing on purpose): contact_hint (the structured data
+    # staff actually use) has her number, but the SPOKEN reply doesn't read it back.
+    # "manager"/"call me back" don't hit _FAQ_FIRST_RE, so this lands in the un-grounded branch
+    # (chat.py ~L366-384), which is a fixed string that never calls _staff_followup_hint — so a
+    # phone number we already have is never spoken back to confirm it; she just gets asked again,
+    # generically. This used to work (the grounded branch's _staff_followup_hint reads the
+    # number back) whenever retrieval happened to return *any* row, however irrelevant — the
+    # relevance gate (fix #6) now correctly suppresses those irrelevant rows, but the
+    # personalized ending was riding on that same branch and got suppressed along with it.
     assert t.answer.endswith(
         "Please share your details for the yakima team so they can contact you at +15095550147."
     ), "the spoken reply reads back the number staff will call"
@@ -87,30 +94,33 @@ def test_angry_wrong_item_thread(convo, fake_bt):
     )
 
     # 5. Mid-dispute, phrased without a trigger word.
-    # FINDING 3: escalation is per-message keyword matching with no memory of the conversation,
-    # so this drops straight off the escalation path — greeting_other, safe_next_action "answer",
-    # no apology — even though the previous four turns were one unresolved dispute.
+    # FIXED 2026-08-07 (was FINDING 3, the escalation-memory bug): _recent_escalation looks back
+    # over her last few turns, so a follow-up with no trigger word of its own ("so what are you
+    # going to do about it") correctly stays inside the dispute instead of falling back to
+    # greeting_other.
     t = c.say("so what are you going to do about it")
-    assert not t.escalated, "FINDING: the escalation flag does not persist across turns"
-    assert t.intent == "greeting_other", "FINDING: a mid-dispute turn is labelled greeting_other"
-    assert t.next_action == "answer", "FINDING: safe_next_action falls back to answer mid-dispute"
-    assert not t.answer.startswith("I'm sorry")
+    assert t.escalated, "fixed 2026-08-07: escalation now persists across turns"
+    assert t.intent == "conflict_resolution"
+    assert t.next_action == "escalate"
+    assert t.answer.startswith("I'm sorry that happened.")
     assert t.raw["contact_hint"] == {"store": "yakima", "customer_phone": "+15095550147"}, (
-        "the contact hint survives the drop even though the escalate action does not"
+        "the contact hint carries through unchanged"
     )
 
-    # 6. She says a trigger word again and the route comes straight back — purely keyword-driven.
+    # 6. She says a trigger word again — still escalated (it never should have left).
     t = c.say("seriously, this is unacceptable, I need a manager to call me today")
     assert t.intent == "conflict_resolution"
     assert t.escalated and t.next_action == "escalate"
     assert t.answer.startswith("I'm sorry that happened.")
+    # Same personalization gap as turn 4 (see the note there): "unacceptable"/"manager" don't
+    # hit _FAQ_FIRST_RE, so the known phone number still isn't read back. Left failing on purpose.
     assert t.answer.endswith(
         "Please share your details for the yakima team so they can contact you at +15095550147."
     )
 
     assert len(c.turns) == 6
-    assert [turn.escalated for turn in c.turns] == [True, True, True, True, False, True]
-    assert sum(1 for turn in c.turns if turn.next_action == "escalate") == 5
+    assert [turn.escalated for turn in c.turns] == [True, True, True, True, True, True]
+    assert sum(1 for turn in c.turns if turn.next_action == "escalate") == 6
 
 
 @pytest.mark.django_db
@@ -164,6 +174,12 @@ def test_escalation_without_a_store_then_she_names_one(convo):
     assert t.raw["contact_hint"] == {"store": "mount-vernon", "customer_phone": ""}, (
         "naming the store fills the hint even before a phone number exists"
     )
+    # REGRESSION (found 2026-08-07, left failing on purpose): contact_hint now correctly carries
+    # the store she just named, but "mount vernon store... still mad" doesn't hit
+    # _FAQ_FIRST_RE, so this lands in the un-grounded branch and the spoken reply falls back to
+    # the generic "share the location" line instead of naming the mount-vernon team the way this
+    # exact reply used to (back when retrieval finding *any* row, however irrelevant, was enough
+    # to take the personalized branch). Same root cause as thread 03 turns 4/6.
     assert t.answer.endswith(
         "Please share your details for the mount-vernon team so they can contact you at "
         "a callback number or email."

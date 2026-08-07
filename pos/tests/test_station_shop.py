@@ -96,7 +96,9 @@ class TestTheSplit:
         _sess(auth, role="budtender", store="yakima")
         body = auth.get(reverse("screen")).content.decode()
         assert "Orders waiting" in body
-        assert "Search customer by phone" in body
+        # One search box now, so assert the FORM rather than the placeholder copy.
+        assert reverse("lookup") in body
+        assert 'name="phone"' in body
         # The menu container must NOT be on the station — that is the whole point.
         assert 'id="menu"' not in body
 
