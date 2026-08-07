@@ -899,24 +899,36 @@ class RateLimitTests(PublicSurfaceTestCase):
                                  HTTP_X_FORWARDED_FOR="9.9.9.9, 127.0.0.1")
         self.assertEqual(r.status_code, 429)
 
-    def test_the_checkout_throttle_engages_at_its_limit(self):
+    def test_reading_the_checkout_page_never_spends_order_budget(self):
+        """GETs used to count, and that was the whole problem.
+
+        This bucket is keyed on `_client_ip`, which takes the LAST X-Forwarded-For
+        hop — correct behind our own Traefik, but happytimeweed.com/custom-order is
+        a Vercel rewrite, so on the on-brand link the last hop is a Vercel egress IP
+        and every shopper shares one bucket. The only real production order proves
+        it: audit ip 34.222.117.230, inside AWS us-west-2 where Vercel's pdx1 runs.
+
+        With GETs counted, that shared bucket capped the entire business at roughly
+        ten orders an hour — and the header Cart button is a GET to this very view,
+        so a shopper could be refused having never pressed submit.
+        """
         with self._frozen(), self._patch_inv():
             codes = [self.client.get("/custom-order/checkout?loc=yakima").status_code
-                     for _ in range(21)]
-        self.assertEqual(codes[:20], [200] * 20)
-        self.assertEqual(codes[20], 429)
+                     for _ in range(40)]
+        self.assertNotIn(429, codes, "browsing the checkout page burned order budget")
 
-    def test_the_checkout_throttle_covers_post_not_just_get(self):
-        # 20 order attempts an hour per IP — not 20 page views plus unlimited
-        # submits. The submit is the expensive half (Dutchie lookup, held stock).
+    def test_the_checkout_throttle_still_engages_on_submits(self):
+        # Still a real ceiling — just a store-wide abuse one, on POSTs only.
+        from bundles import views as bviews
         self._add("1")
         with self._frozen(), self._patch_inv():
-            for _ in range(20):
-                self.client.get("/custom-order/checkout?loc=yakima")
-            r = self.client.post("/custom-order/checkout",
-                                 {"loc": "yakima", "first_name": "Sam", "last_name": "Reyes", "phone": "5095551212"})
-        self.assertEqual(r.status_code, 429)
-        self.assertEqual(PhoneCartDraft.objects.get().status, PhoneCartDraft.Status.OPEN)
+            codes = []
+            for _ in range(302):
+                codes.append(self.client.post(
+                    "/custom-order/checkout",
+                    {"loc": "yakima", "first_name": "Sam", "last_name": "Reyes",
+                     "phone": "5095551212"}).status_code)
+        self.assertIn(429, codes, "the submit throttle never fired")
 
     def test_the_cart_and_checkout_buckets_are_independent(self):
         # Browsing hard must not lock a shopper out of placing their order.

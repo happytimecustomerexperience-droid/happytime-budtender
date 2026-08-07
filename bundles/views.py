@@ -420,7 +420,23 @@ def lookup_customer(request):
 
 
 @require_http_methods(["GET", "POST"])
-@rate_limit("bundle-checkout", limit=20, window=3600)
+# POST only, and a store-wide budget rather than a per-shopper one.
+#
+# `_client_ip` takes the LAST X-Forwarded-For hop, which is correct when our own
+# Traefik is the edge — but happytimeweed.com/custom-order is a Vercel rewrite, so
+# for every shopper on the on-brand link the last hop is a Vercel egress IP. Proven
+# by the only real online order in production: its audit ip is 34.222.117.230, which
+# resolves into AWS us-west-2, where Vercel's pdx1 runs. So this bucket is shared by
+# EVERYONE, not per person, and at 20/hour it capped the whole business at roughly
+# ten orders an hour — with GETs counting, a shopper could be refused before
+# submitting anything.
+#
+# Two changes: GETs no longer spend it, and the number is set for what it actually
+# is — a store-wide abuse ceiling, not a per-person one. Nothing here writes to
+# Dutchie, so this throttle guards our own DB and mail, not the register.
+# ponytail: per-shopper throttling needs the proxy chain sorted out (trusting the
+# FIRST hop is spoofable); raise this again or fix the chain if abuse ever shows up.
+@rate_limit("bundle-checkout", limit=300, window=3600, methods=("POST",))
 def checkout(request):
     """GET renders the form; POST places the order as a released PhoneCartDraft.
 
@@ -505,14 +521,39 @@ def checkout(request):
     audit.append({"at": timezone.now().isoformat(), "action": "online_order_placed",
                   "ip": _client_ip(request), "lines": len(draft.lines)})
     draft.audit = audit[-100:]
-    draft.save()
-
-    logger.info("online order %s placed at %s (%d lines, $%.2f)",
-                draft.draft_token, store, len(draft.lines), ctx["quote"]["total"])
-
-    # Best-effort: the order is saved and already in the staff queue, so a mail
-    # failure must never surface to the shopper as a failed checkout.
-    emails.send_order_confirmation(draft, store_label(store), STORE_ADDRESS.get(store, ""))
+    # Only release a cart that is still OPEN, and do it in one atomic UPDATE.
+    #
+    # A bare draft.save() wrote every column, so a second click that landed AFTER a
+    # budtender had already claimed the order reset status claimed -> released and
+    # claimed_at -> None. The order went back into the staff queue and a second
+    # budtender could pick and sell it again — the one path from this page to a
+    # duplicate real-world sale. Verified: "after the 2nd click lands: status=
+    # 'released' claimed_at=None / in the released queue again? 1 row(s)".
+    #
+    # filter(status=OPEN) makes the release idempotent: the loser of a double-click
+    # updates 0 rows and falls through to the same confirmation page.
+    released = PhoneCartDraft.objects.filter(
+        pk=draft.pk, status=PhoneCartDraft.Status.OPEN,
+    ).update(
+        pickup_name=draft.pickup_name, contact_phone=draft.contact_phone,
+        contact_email=draft.contact_email, phone_last4=draft.phone_last4,
+        phone_hash=draft.phone_hash, source=draft.source, status=draft.status,
+        released_at=draft.released_at, expires_at=draft.expires_at,
+        audit=draft.audit, dutchie_acct_id=draft.dutchie_acct_id,
+        customer_status=draft.customer_status, customer_name=draft.customer_name,
+        lines=draft.lines, quote=draft.quote, updated_at=timezone.now(),
+    )
+    if released:
+        logger.info("online order %s placed at %s (%d lines, $%.2f)",
+                    draft.draft_token, store, len(draft.lines), ctx["quote"]["total"])
+        # Best-effort: the order is saved and already in the staff queue, so a mail
+        # failure must never surface to the shopper as a failed checkout.
+        emails.send_order_confirmation(draft, store_label(store), STORE_ADDRESS.get(store, ""))
+    else:
+        # The impatient second click, or a second tab. Their order already exists —
+        # show the same confirmation, but do not email or log it twice.
+        logger.info("online order %s already released — ignoring duplicate submit",
+                    draft.draft_token)
 
     request.session["htco_success"] = draft.draft_token
     response = render(request, "bundles/success.html", _shell(request, store, {

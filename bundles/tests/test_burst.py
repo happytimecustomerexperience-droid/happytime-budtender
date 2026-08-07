@@ -277,27 +277,37 @@ class Burst40Tests(BurstTestCase):
 
 
 class BurstBehindOneIpTests(BurstTestCase):
-    def test_forty_shoppers_behind_one_ip_hit_the_hourly_throttle(self):
-        """Same crowd, one shared egress IP — an office, a hotel, carrier-grade NAT.
+    def test_forty_shoppers_behind_one_ip_all_get_through(self):
+        """Same crowd, one shared egress IP — and that is the NORMAL case here.
 
-        `@rate_limit("bundle-checkout", limit=20, window=3600)` in bundles/views.py is
-        keyed on (scope, ip), so a shared IP is a shared budget: the 21st checkout in
-        the hour gets a bare 429 and loses nothing but its order. Pinned here because
-        it is the ONLY way this burst drops orders, and it is invisible from the code
-        until you count.
+        `_client_ip` takes the LAST X-Forwarded-For hop, which is right when our own
+        Traefik is the edge. But happytimeweed.com/custom-order is a Vercel rewrite,
+        so on the on-brand link the last hop is a Vercel egress IP and EVERY shopper
+        shares one bucket. The only real online order in production proves it: its
+        audit ip is 34.222.117.230, inside AWS us-west-2 where Vercel's pdx1 runs.
+
+        So the old 20/hour was never per-shopper — it was a store-wide cap of about
+        ten orders an hour, because the GET that renders the form spent the same
+        budget as the POST that places the order. A shopper could be refused having
+        never pressed submit.
+
+        Now: GETs don't count, and the number is set for what it actually is. Forty
+        shoppers on one IP all get served.
         """
         shoppers = self._build(40, same_ip=True)
         wall = self._fire(shoppers)
         r = self._report("40 shoppers, ONE shared IP", shoppers, wall)
-        # Still no corruption — throttled shoppers simply never reach the view.
         self._assert_no_crossover(r)
-        self.assertEqual(r["released"], 20, "the throttle let a different number through")
-        self.assertEqual(r["codes"].get(429), 20)
-        # A 429 must leave the cart intact so a retry works.
-        for i in r["lost"]:
-            draft = PhoneCartDraft.objects.get(draft_token=shoppers[i].token)
-            self.assertEqual(draft.status, PhoneCartDraft.Status.OPEN)
-            self.assertEqual(draft.contact_phone, "")
+        self.assertEqual(r["released"], 40, "a shared egress IP still drops orders")
+        self.assertNotIn(429, r["codes"], "the store-wide throttle fired on 40 orders")
+
+    def test_reading_the_checkout_page_does_not_spend_order_budget(self):
+        """The header Cart button is a GET to this view, and the menu has no other
+        route to the form — so counting GETs meant browsing burned the allowance."""
+        from django.test import Client
+        c = Client()
+        for _ in range(40):
+            self.assertNotEqual(c.get("/custom-order/checkout?loc=yakima").status_code, 429)
 
 
 class DoubleClickRaceTests(BurstTestCase):
@@ -360,10 +370,13 @@ class DoubleClickRaceTests(BurstTestCase):
         self.assertEqual(draft.contact_phone, base.phone)
         self.assertEqual({str(x["product_id"]): x["quantity"] for x in draft.lines}, base.basket)
         self.assertNotIn(500, codes)
-        # Bounded, not pinned to 1: this IS the finding, and forcing it to 1 here would
-        # only make the test lie about a race that is timing-dependent by nature.
-        self.assertGreaterEqual(len(mail.outbox), 1, "the shopper was never confirmed")
-        self.assertLessEqual(len(mail.outbox), tabs_n)
+        # Pinned to exactly 1 now. The release is a conditional UPDATE filtered on
+        # status=OPEN (bundles/views.py), so only one racing request can win it; the
+        # losers skip the email and the log and fall through to the same confirmation.
+        # Before that fix this ran 2-5 emails for one order on every run.
+        self.assertEqual(len(mail.outbox), 1,
+                         f"{len(mail.outbox)} confirmations for one order — the "
+                         "conditional release stopped holding")
         return len(mail.outbox), stamps
 
     def test_a_double_click_can_confirm_the_same_order_twice(self):
@@ -371,10 +384,8 @@ class DoubleClickRaceTests(BurstTestCase):
 
     def test_five_tabs_on_one_cart_still_produce_one_order(self):
         emails, stamps = self._race(5, "1 cart, 5 simultaneous submits")
-        # The audit trail cannot show what the last writer overwrote.
-        self.assertEqual(stamps, 1, "the audit trail suddenly records the extra releases")
-        if emails > 1:
-            print(f"  → {emails} shoppers-worth of email for ONE order; audit says {stamps}")
+        self.assertEqual(stamps, 1, "one release, one audit stamp")
+        self.assertEqual(emails, 1, "five tabs must still mean one confirmation")
 
 
 class BurstWithDutchieLatencyTests(BurstTestCase):

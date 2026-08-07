@@ -106,7 +106,6 @@ a { color: var(--amber); }
 .navdrop { position: relative; }
 .navdrop > summary { list-style: none; }
 .navdrop > summary::-webkit-details-marker { display: none; }
-.navdrop > summary::after { content: " ⌄"; color: var(--sage); }
 .navdrop[open] > summary { color: var(--amber); }
 .navmenu { position: absolute; left: 0; top: calc(100% + 6px); min-width: 210px; z-index: 70;
            background: var(--fog); border: 1px solid var(--line-strong); border-radius: 12px;
