@@ -357,6 +357,68 @@ def _clean_phone(raw: str) -> str:
     return digits
 
 
+# A phone number in, a real person's NAME out, with no login in front of it. That
+# is a PII oracle, so the throttle is the control that matters, not a nicety:
+#   * 5/minute stops a burst,
+#   * 30/hour stops the patient version — one number a minute, all day, which is
+#     what an enumeration script actually looks like.
+# Both scopes are separate from bundle-checkout on purpose: an abuser burning the
+# lookup budget must not also lock real shoppers out of placing orders.
+LOOKUP_PER_MINUTE = 5
+LOOKUP_PER_HOUR = 30
+
+
+@require_POST
+@rate_limit("bundle-lookup-hour", limit=LOOKUP_PER_HOUR, window=3600)
+@rate_limit("bundle-lookup", limit=LOOKUP_PER_MINUTE, window=60)
+def lookup_customer(request):
+    """POST /custom-order/lookup-customer — "do we already know this number?"
+
+    Purely a convenience: a returning shopper shouldn't have to retype the name
+    Dutchie already has. So every failure mode collapses to the SAME answer,
+    `{"found": false}`, and the shopper types their name as they would have anyway:
+
+      * a phone that isn't 10 digits never reaches Dutchie at all,
+      * Dutchie down, slow or angry is a 200, never a 500,
+      * a match with no usable name is not a match.
+
+    That symmetry is also the security property. A distinguishable failure ("we
+    couldn't reach the register" vs "no account") tells a prober which numbers are
+    real even when the lookup is broken, and a 500 tells them by timing.
+
+    NOTE the allowlist at the bottom. `lookup_by_phone` hands back an AcctId too,
+    and the Dutchie guest row behind it carries DOB, address, email and points.
+    Only the two name fields are ever named in a response — never a dict passed
+    through, so growing the tuple upstream cannot silently widen this endpoint.
+    """
+    phone = _clean_phone(request.POST.get("phone"))
+    if len(phone) != 10:
+        return JsonResponse({"found": False})
+
+    store = _store_from(request)
+    try:
+        # Read-only. The create half lives behind staff auth at claim time
+        # (bundles/customers.py) — an unauthenticated create is a spam vector.
+        _acct, name, status = customers.lookup_by_phone(store, phone)
+    except Exception:
+        # lookup_by_phone swallows its own Dutchie errors today; this catches the
+        # day it stops, because a shopper must never lose their cart to it.
+        logger.warning("customer lookup unavailable at %s", store, exc_info=True)
+        return JsonResponse({"found": False})
+
+    matched = status == PhoneCartDraft.Customer.MATCHED
+    first, last = customers.split_name(name) if matched else ("", "")
+    # Last 4 only, same as `phone_last4` in the staff queue: enough to reconcile a
+    # complaint against a real order, not enough to reconstitute the number from logs.
+    logger.info("customer lookup at %s from %s for ...%s (%s)",
+                store, _client_ip(request), phone[-4:], "match" if first else "no match")
+    if not first:
+        # A matched row with an unusable name would show "we found you" over two
+        # empty boxes — worse than not asking.
+        return JsonResponse({"found": False})
+    return JsonResponse({"found": True, "first_name": first, "last_name": last})
+
+
 @require_http_methods(["GET", "POST"])
 @rate_limit("bundle-checkout", limit=20, window=3600)
 def checkout(request):

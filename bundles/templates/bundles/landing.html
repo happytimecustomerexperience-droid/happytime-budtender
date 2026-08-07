@@ -95,7 +95,8 @@
     </div>
   </section>
 
-  <form method="post" action="{% url 'bundle_checkout' %}?loc={{ store }}" class="orderform" novalidate>
+  <form method="post" action="{% url 'bundle_checkout' %}?loc={{ store }}" class="orderform" novalidate
+        data-lookup-url="{% url 'bundle_lookup_customer' %}">
     {% csrf_token %}
     <input type="hidden" name="loc" value="{{ store }}">
     <h2>Reserve it</h2>
@@ -106,6 +107,8 @@
       <input name="phone" type="tel" inputmode="tel" maxlength="20" autocomplete="tel"
              required placeholder="509 555 1212" aria-describedby="e-phone">
       {% if errors.phone %}<span class="err" id="e-phone">{{ errors.phone }}</span>{% endif %}
+      {% comment %}The customer lookup slot — see checkout.html.{% endcomment %}
+      <span class="lookup" aria-live="polite" hidden></span>
       <small>We'll find you by number at the counter, same as a phone order.</small>
     </label>
 

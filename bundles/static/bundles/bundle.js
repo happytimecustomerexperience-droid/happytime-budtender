@@ -147,5 +147,98 @@
     }
   });
 
+  // ── customer lookup ────────────────────────────────────────────────────────
+  // Someone who has bought here before shouldn't retype the name Dutchie already
+  // has. This is a convenience and nothing more, so it obeys three rules:
+  //   1. it NEVER blocks the submit — in flight, failed and "no account" all look
+  //      the same, and the form works with this whole block deleted;
+  //   2. the fields stay editable and required, so a wrong match is correctable;
+  //   3. it never overwrites something the shopper typed themselves.
+  var orderForm = document.querySelector(".orderform[data-lookup-url]");
+  if (orderForm) {
+    var phoneInput = orderForm.querySelector('input[name="phone"]');
+    var statusEl = orderForm.querySelector(".lookup");
+    var firstEl = orderForm.querySelector('input[name="first_name"]');
+    var lastEl = orderForm.querySelector('input[name="last_name"]');
+    // What WE put in each box. Anything else in there was typed by a person and
+    // is never touched — but our own guess stays replaceable, so correcting a
+    // mistyped phone number also corrects the name it pulled in.
+    var autofilled = {};
+    var lastLooked = "";
+    var seq = 0;
+
+    function setStatus(state, text) {
+      if (!statusEl) return;
+      statusEl.className = "lookup" + (state ? " " + state : "");
+      statusEl.textContent = text;
+      statusEl.hidden = !text;
+    }
+
+    function fill(el, value) {
+      if (!el) return;
+      if (el.value && el.value !== autofilled[el.name]) return;
+      el.value = value || "";
+      autofilled[el.name] = el.value;
+    }
+
+    function tenDigits(raw) {
+      var d = String(raw || "").replace(/[^0-9]/g, "");
+      if (d.length === 11 && d.charAt(0) === "1") d = d.slice(1);
+      return d;
+    }
+
+    function lookup() {
+      if (!phoneInput) return;
+      var digits = tenDigits(phoneInput.value);
+      if (digits.length !== 10) {
+        lastLooked = "";
+        setStatus("", "");
+        return;
+      }
+      if (digits === lastLooked) return;   // blur after the debounce already ran
+      lastLooked = digits;
+
+      var mine = ++seq;
+      setStatus("busy", "Checking…");
+      var body = new URLSearchParams();
+      body.set("phone", digits);
+      var loc = orderForm.querySelector('input[name="loc"]');
+      if (loc) body.set("loc", loc.value);
+      // The endpoint is NOT csrf_exempt (the cart ones are): it reads customer
+      // identity, so it stays same-origin only. The token is already in the form.
+      var token = orderForm.querySelector('input[name="csrfmiddlewaretoken"]');
+      if (token) body.set("csrfmiddlewaretoken", token.value);
+
+      fetch(orderForm.getAttribute("data-lookup-url"), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString()
+      })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (mine !== seq) return;   // a newer number is already in flight
+          if (data && data.found) {
+            fill(firstEl, data.first_name);
+            fill(lastEl, data.last_name);
+            setStatus("ok", "We found your profile — check it's right.");
+          } else {
+            fill(firstEl, "");
+            fill(lastEl, "");
+            setStatus("", "");
+          }
+        })
+        .catch(function () {
+          // Throttled, offline, register down: all just "we don't know you".
+          if (mine === seq) setStatus("", "");
+        });
+    }
+
+    if (phoneInput) {
+      phoneInput.addEventListener("input", debounce(lookup, 400));
+      phoneInput.addEventListener("blur", lookup);
+    }
+  }
+
   syncCount();
 })();

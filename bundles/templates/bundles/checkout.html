@@ -80,7 +80,8 @@
       <a class="linkbtn" href="{% url 'bundle_menu' %}?loc={{ store }}">Edit cart</a>
     </section>
 
-    <form method="post" class="orderform" novalidate>
+    <form method="post" class="orderform" novalidate
+          data-lookup-url="{% url 'bundle_lookup_customer' %}">
       {% csrf_token %}
       <input type="hidden" name="loc" value="{{ store }}">
       <h2>Who's picking up?</h2>
@@ -99,6 +100,12 @@
                autocomplete="tel" required aria-describedby="e-phone"
                placeholder="509 555 1212">
         {% if errors.phone %}<span class="err" id="e-phone">{{ errors.phone }}</span>{% endif %}
+        {% comment %}
+          Filled by bundle.js once the number is 10 digits. Empty and hidden in the
+          server-rendered page on purpose — the lookup is a convenience, so a
+          shopper with JS off sees no half-finished UI, just the form.
+        {% endcomment %}
+        <span class="lookup" aria-live="polite" hidden></span>
         <small>We'll find you by number at the counter, same as a phone order.</small>
       </label>
 
