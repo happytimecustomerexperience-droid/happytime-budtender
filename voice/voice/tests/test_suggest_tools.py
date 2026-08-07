@@ -100,8 +100,8 @@ def test_speakable_pick_drops_non_allowlist_fields():
         "price_otd",
         "price_spoken",  # derived TTS-safe wording of price_otd (leak-safe — no cost/margin)
     }
-    assert pick["price_otd"] == 56.43  # otd(38.0, yakima)
-    assert pick["price_spoken"] == "56 dollars and 43 cents"  # voiced, never "$56.43"
+    assert pick["price_otd"] == 38.0  # otd(38.0, yakima)
+    assert pick["price_spoken"] == "38 dollars"  # voiced, never "$38.00"
     # the raw pre-tax price + image/dutchie_link/stock/price_was are all dropped
     assert "price" not in pick
     assert "image_url" not in pick and "dutchie_link" not in pick

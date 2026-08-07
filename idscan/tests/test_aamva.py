@@ -105,4 +105,4 @@ def test_age_uses_store_local_time_not_utc():
     # the difference between a lawful sale and a gross misdemeanour.
     from idscan.pipeline import _store_today
     import datetime as dt
-    assert abs((_store_today() - dt.datetime.utcnow().date()).days) <= 1
+    assert abs((_store_today() - dt.datetime.now(dt.UTC).date()).days) <= 1
