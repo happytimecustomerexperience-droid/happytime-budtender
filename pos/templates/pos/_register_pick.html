@@ -1,0 +1,13 @@
+{% comment %}Swapped in place after a change, so the budtender sees it took.{% endcomment %}
+<form id="registerpick" class="registerpick" hx-post="{% url 'set_register' %}"
+      hx-target="#registerpick" hx-swap="outerHTML">
+  <label for="reg">Register</label>
+  <select name="register" id="reg" onchange="this.form.requestSubmit()">
+    <option value="">— none —</option>
+    {% for r in registers %}
+      <option value="{{ r.id }}" {% if register_id == r.id|stringformat:"s" %}selected{% endif %}>
+        {{ r.name }}{% if r.room %} · {{ r.room }}{% endif %}</option>
+    {% endfor %}
+  </select>
+  {% if saved %}<span class="badge-ok">saved</span>{% endif %}
+</form>

@@ -509,3 +509,33 @@ th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
 .vtable.guests .vrow.has-order { border-left: 3px solid var(--amber, #ffb74d); }
 .pill-order { background: rgba(255,183,77,.16); color: var(--amber, #ffb74d);
               border: 1px solid rgba(255,183,77,.45); font-weight: 700; }
+
+/* ── the ID verdict ────────────────────────────────────────────────────────
+   Carried by the WORD, a glyph and the band's texture — never colour alone.
+   A greyscale screenshot must still be unambiguous (WCAG 1.4.1), and red/green
+   is exactly the pair a naive pass/fail design reaches for. */
+.verdict { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px;
+           align-items: center; padding: 18px 20px; border-radius: 14px; margin: 10px 0 14px; }
+.verdict__glyph { grid-row: span 2; font-size: 44px; line-height: 1; font-weight: 800; }
+.verdict__word { font-size: 30px; font-weight: 800; letter-spacing: .01em; }
+.verdict__sub { font-size: 14px; opacity: .92; }
+@media (max-width: 560px) { .verdict__word { font-size: 22px; } }
+
+.verdict--ok { background: #12351f; color: #d8f5e2; border: 2px solid #2f8f56; }
+/* Hatching, so STOP is distinguishable without colour. */
+.verdict--stop { color: #ffe9e9; border: 2px solid #b3392f;
+                 background: repeating-linear-gradient(45deg, #3b1512, #3b1512 10px, #4a1a16 10px, #4a1a16 20px); }
+.verdict--check { color: #fff4d9; border: 2px dashed #b58b2a; background: #33280f; }
+
+/* ── scanned fields, collapsible + editable below ──────────────────────────── */
+.scanfields { margin: 10px 0; border: 1px solid rgba(255,255,255,.12);
+              border-radius: 12px; padding: 10px 14px; background: rgba(255,255,255,.03); }
+.scanfields > summary { cursor: pointer; font-weight: 700; padding: 4px 0; }
+.scangrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            gap: 8px 18px; margin-top: 10px; }
+.scangrid .k { display: block; font-size: 11px; text-transform: uppercase;
+               letter-spacing: .04em; opacity: .6; }
+.scangrid .v { display: block; font-size: 15px; }
+
+.registerpick { display: flex; align-items: center; gap: 8px; }
+.registerpick select { min-height: 40px; }

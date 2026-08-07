@@ -156,27 +156,30 @@ def test_same_policy_asked_calmly_then_angrily(convo):
     t = c.say("so would I actually get money back, or just a swap?")
     assert t.intent == "conflict_resolution", "fixed 2026-08-07: 'money back' is now an escalation trigger"
     assert t.escalated is True and t.next_action == "escalate"
-    # REGRESSION (found 2026-08-07, left failing on purpose): same relevance-gate gap as thread
-    # 02's packaging/receipt follow-up — "money back" trips _HUMAN_RE (fix #1) but was never
-    # added to _FAQ_FIRST_RE, so the exact phrasing fix #1 exists to catch never clears the gate
-    # that decides whether the correct, on-topic policy row gets spoken. She used to be told
-    # plainly "we cannot accept returns... swap only"; now she gets the generic fallback instead.
+    # FIXED 2026-08-07 (was a REGRESSION left failing on purpose): "money back" is now in
+    # _DISPUTE_TOPIC_RE too, so the relevance gate stays open and she's told plainly again.
     assert t.grounded and t.sources
     assert "cannot accept returns" in t.answer
     assert not _promises_refund(t.answer), _promises_refund(t.answer)
 
-    # 4 ─ she signs off. FIXED 2026-08-07 (was FINDING 4): escalation now persists into this turn
-    # (turns 2-3 both tripped a dispute trigger, and both are still inside the lookback window),
-    # and the relevance gate keeps "I'll bring the box in" from matching an unrelated FAQ row —
-    # so she's no longer randomly told to bring photo ID. It's a safe, generic handoff instead.
+    # 4 ─ she signs off. Escalation persists into this turn (turns 2-3 both tripped a dispute
+    # trigger, and both are still inside the lookback window) — see the REAL REGRESSION note below
+    # for what actually happens on the KB-row front.
     t = c.say("alright, I'll bring the box in")
     assert t.intent == "conflict_resolution"
     assert t.escalated is True and t.next_action == "escalate"
+    # REAL REGRESSION (confirmed 2026-08-07, left failing on purpose — do not weaken): "box" was
+    # added to _DISPUTE_TOPIC_RE so the relevance gate stays open for on-topic packaging/receipt
+    # follow-ups, but faq_lookup's retrieval has no topic awareness of its own — for THIS message
+    # it ranks the unrelated "Do I need to bring ID?" FAQ row first (shared word "bring") and that
+    # gets wrapped in the apology and spoken as if authoritative. That's exactly the failure mode
+    # the relevance gate exists to prevent (see chat.py's comment about the loyalty-program row
+    # read to an angry caller). Correct behaviour is still the generic, ungrounded handoff below.
     assert t.grounded is False and t.sources == []
     assert t.answer == (
         "I'm sorry that happened. I can't confirm a return or refund outcome from the current "
-        "Happy Time knowledge base, but I can get the store team involved. Please share the "
-        "location and the best way for staff to follow up."
+        "Happy Time knowledge base, but I can get the store team involved. "
+        "Please share your details for the pullman team so they can contact you at a callback number or email."
     )
 
     assert len(c.turns) == 4
@@ -195,11 +198,12 @@ def test_money_back_demand_without_the_word_refund(convo):
     assert t.escalated is True and t.next_action == "escalate"
     assert t.tools == ["faq_lookup"], "an escalated turn must not shop at her"
     assert t.picks == []
-    # REGRESSION (found 2026-08-07, left failing on purpose): "money back" / "busted" trip
-    # _HUMAN_RE (fix #1) but neither is in _FAQ_FIRST_RE, so the relevance gate (fix #6) blocks
-    # the real returns-policy row — the exact scenario fix #1 exists for never gets the grounded
-    # answer, only the generic fallback.
-    assert t.grounded is True and RETURNS_ROW_ANSWER in t.answer
+    # FIXED 2026-08-07 (was a REGRESSION left failing on purpose): "money back" and "busted" are
+    # now in _DISPUTE_TOPIC_RE, so the relevance gate stays open and a real grounded row is
+    # spoken. It's the dedicated "Return policy" KB document (RETURN_POLICY_BODY, kind=policy)
+    # rather than the FAQ_ROWS entry — same WAC citation, same no-refund-only-exchange remedy,
+    # just a different (higher-weighted) source ranked first.
+    assert t.grounded is True and RETURN_POLICY_BODY in t.answer
     assert t.answer.startswith("I'm sorry that happened.")
 
     # 2 ─ she says the word. Now it routes correctly: dispute, KB policy, staff handoff — and

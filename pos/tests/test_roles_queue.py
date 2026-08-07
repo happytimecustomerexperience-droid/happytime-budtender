@@ -145,8 +145,15 @@ def test_staffsession_rollup(user):
 
 
 # ── login: role/store/register + shift; superuser -> admin ──────────────────
+def _dutchie_ok(monkeypatch, user_id=4242):
+    """Dutchie says yes. Sign-in is gated on Dutchie now, not a Django password."""
+    monkeypatch.setattr(V.dutchie_auth, "verify",
+                        lambda store, u, p: {"user_id": user_id, "session_gid": "S", "cookie_header": "c=1"})
+
+
 def test_login_sets_shift_and_role(client, user, monkeypatch):
     _use_store(monkeypatch)
+    _dutchie_ok(monkeypatch)
     monkeypatch.setattr(V, "_all_registers",
                         lambda: [{"store": "yakima", "id": 8318, "name": "Register Test", "room": ""}])
     r = client.post(reverse("login"),
@@ -163,6 +170,7 @@ def test_login_sets_shift_and_role(client, user, monkeypatch):
 def test_superuser_forced_to_admin(client, monkeypatch):
     _use_store(monkeypatch)
     monkeypatch.setattr(V, "_all_registers", lambda: [])
+    _dutchie_ok(monkeypatch)
     User.objects.create_superuser("boss", password="pw12345!", email="")
     r = client.post(reverse("login"),
                     {"username": "boss", "password": "pw12345!",
@@ -216,3 +224,69 @@ def test_screen_renders_queue_for_budtender(auth, monkeypatch):
     ShopVisit.objects.create(store="yakima", status="queued", acct_name="InLine")
     r = auth.get(reverse("screen"), SERVER_NAME="localhost")
     assert r.status_code == 200 and b"Queue" in r.content and b"InLine" in r.content
+
+
+class TestDutchieOnlySignIn:
+    """Dutchie is the gate. A Django password must never be a way in."""
+
+    def test_a_rejected_credential_is_refused(self, client, user, monkeypatch):
+        _use_store(monkeypatch)
+        monkeypatch.setattr(V, "_all_registers", lambda: [])
+
+        def reject(store, u, p):
+            raise V.dutchie_auth.LoginRejected("nope")
+        monkeypatch.setattr(V.dutchie_auth, "verify", reject)
+        r = client.post(reverse("login"),
+                        {"username": "bud", "password": "pw12345!", "role": "budtender",
+                         "location": "yakima", "register": ""}, SERVER_NAME="localhost")
+        assert r.status_code == 401
+        assert "_auth_user_id" not in client.session
+
+    def test_a_correct_django_password_alone_does_not_get_in(self, client, user, monkeypatch):
+        # THE POINT. `user` has a real, valid Django password. Dutchie says no, so
+        # the answer is no — otherwise the old local password is still a live door.
+        _use_store(monkeypatch)
+        monkeypatch.setattr(V, "_all_registers", lambda: [])
+
+        def reject(store, u, p):
+            raise V.dutchie_auth.LoginRejected("nope")
+        monkeypatch.setattr(V.dutchie_auth, "verify", reject)
+        r = client.post(reverse("login"),
+                        {"username": "bud", "password": "pw12345!", "role": "budtender",
+                         "location": "yakima", "register": ""}, SERVER_NAME="localhost")
+        assert r.status_code == 401
+        assert "_auth_user_id" not in client.session
+
+    def test_dutchie_unreachable_fails_closed(self, client, user, monkeypatch):
+        # A network blip must not become an authorisation decision, and must NOT
+        # silently fall back to the local password.
+        _use_store(monkeypatch)
+        monkeypatch.setattr(V, "_all_registers", lambda: [])
+
+        def down(store, u, p):
+            raise V.dutchie_auth.LoginUnavailable("dutchie down")
+        monkeypatch.setattr(V.dutchie_auth, "verify", down)
+        r = client.post(reverse("login"),
+                        {"username": "bud", "password": "pw12345!", "role": "budtender",
+                         "location": "yakima", "register": ""}, SERVER_NAME="localhost")
+        assert r.status_code == 503
+        assert "_auth_user_id" not in client.session
+
+    def test_the_dutchie_user_id_lands_on_the_session(self, client, user, monkeypatch):
+        _use_store(monkeypatch)
+        monkeypatch.setattr(V, "_all_registers", lambda: [])
+        _dutchie_ok(monkeypatch, user_id=99001)
+        client.post(reverse("login"),
+                    {"username": "bud", "password": "x", "role": "budtender",
+                     "location": "yakima", "register": ""}, SERVER_NAME="localhost")
+        assert client.session["dutchie_user_id"] == 99001
+
+    def test_the_local_row_never_has_a_usable_password(self, client, monkeypatch):
+        _use_store(monkeypatch)
+        monkeypatch.setattr(V, "_all_registers", lambda: [])
+        _dutchie_ok(monkeypatch)
+        client.post(reverse("login"),
+                    {"username": "NewPerson", "password": "x", "role": "budtender",
+                     "location": "yakima", "register": ""}, SERVER_NAME="localhost")
+        u = User.objects.get(username="newperson")     # casefolded, so one row per person
+        assert not u.has_usable_password()

@@ -59,7 +59,7 @@ def test_returning_caller_recognised_and_ranked_by_taste(convo, fake_bt):
     assert search["phone"] == PHONE
     assert t.pick_names == ["Avitas GSC 0.5g Cart"]
     for pick in t.picks:
-        assert pick["price_otd"] > 22.0, "the spoken price is the out-the-door uplift, not the shelf price"
+        assert pick["price_otd"] == 22.0, "the spoken price is the menu price — tax-inclusive Dutchie account"
         assert "cost" not in pick and "margin" not in pick
 
     # 4. A named category beats the profile — and the derived effect is mapped into budtender's

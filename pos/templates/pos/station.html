@@ -25,8 +25,9 @@
     {% include "pos/_queue_panel.html" %}
   </div>
 
-  {# ── 2. one search box ─────────────────────────────────────────────────── #}
+  {# ── 2. one search box + which till you are on ──────────────────────────── #}
   <section class="stationsearch">
+    {% include "pos/_register_pick.html" %}
     <form hx-post="{% url 'lookup' %}" hx-target="#guests"
           hx-trigger="submit, keyup changed delay:350ms" class="ac-form onesearch">
       {% comment %}

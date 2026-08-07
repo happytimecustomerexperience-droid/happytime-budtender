@@ -39,17 +39,17 @@ def test_caller_presses_for_exact_numbers(convo, fake_bt):
     assert args["price_max"] == 40.0
     assert t.pick_names == ["Jetty Blue Dream 1g Cart"]
     jetty = t.picks[0]
-    # The spoken figure is the TOOL's number: budtender's pre-tax 35.00 uplifted by the Yakima
-    # OTD multiplier — nothing composed in prose.
-    assert jetty["price_otd"] == pricing.otd(35.0, "yakima") == 51.98
-    assert jetty["price_spoken"] == "51 dollars and 98 cents"
+    # The spoken figure is the TOOL's number: budtender's menu price, unchanged (tax-inclusive
+    # Dutchie account) — nothing composed in prose.
+    assert jetty["price_otd"] == pricing.otd(35.0, "yakima") == 35.0
+    assert jetty["price_spoken"] == "35 dollars"
     assert jetty["price_spoken"] in t.answer
     assert _numbers(t.answer) <= _tool_numbers(t.picks), t.answer
     # ...and the leak-guard still holds on the row that figure came from.
     assert "cost" not in jetty and "margin" not in jetty
-    # FINDING (low): the caller capped the budget at $40 and the agent quotes $51.98 out the door —
-    # price_max filters the pre-tax shelf price while the spoken number is the OTD price.
-    assert args["price_max"] < jetty["price_otd"]
+    # FIXED 2026-08-07: otd() is identity now, so the budget the caller named and the price
+    # actually quoted agree — no more overspend gap.
+    assert jetty["price_otd"] <= args["price_max"]
 
     # 2. He presses for the exact potency of the item he was just offered.
     t = c.say("what's the exact THC percentage on that Jetty cart")
@@ -115,13 +115,13 @@ def test_caller_presses_for_exact_numbers(convo, fake_bt):
     assert t.grounded is False
     assert t.answer == (
         "I'm sorry that happened. I can't confirm a return or refund outcome from the current "
-        "Happy Time knowledge base, but I can get the store team involved. Please share the "
-        "location and the best way for staff to follow up."
+        "Happy Time knowledge base, but I can get the store team involved. "
+        "Please share your details for the yakima team so they can contact you at a callback number or email."
     )
     # The canned escalation copy introduces no figure of its own either.
     assert not _numbers(t.answer), t.answer
     assert t.answer.startswith("I'm sorry that happened.")
-    assert "share the location" in t.answer
+    assert "share your details for the yakima team" in t.answer
 
     assert len(c.turns) == 6
     assert len(fake_bt.calls["search"]) == 4  # turns 3 and 6 never reached inventory
@@ -134,7 +134,7 @@ def test_price_tracks_the_tool_and_goes_quiet_when_it_dies(convo, fake_bt):
 
     t = c.say("how much is a full gram cartridge out the door")
     first = next(p for p in t.picks if p["sku"] == "CT-JETTY-1G")
-    assert first["price_otd"] == pricing.otd(35.0, "yakima") == 51.98
+    assert first["price_otd"] == pricing.otd(35.0, "yakima") == 35.0
 
     # The shelf price is corrected mid-call.
     for row in fake_bt.catalog:
@@ -143,11 +143,11 @@ def test_price_tracks_the_tool_and_goes_quiet_when_it_dies(convo, fake_bt):
 
     t = c.say("my buddy says the Jetty cart went up — what is it now")
     second = next(p for p in t.picks if p["sku"] == "CT-JETTY-1G")
-    assert second["price_otd"] == pricing.otd(41.0, "yakima") == 60.89
-    assert second["price_spoken"] == "60 dollars and 89 cents"
+    assert second["price_otd"] == pricing.otd(41.0, "yakima") == 41.0
+    assert second["price_spoken"] == "41 dollars"
     # The stale figure is gone everywhere — the agent re-read the tool instead of remembering.
-    assert "51 dollars and 98 cents" not in t.answer
-    assert "51.98" not in str(t.picks)
+    assert "35 dollars" not in t.answer
+    assert "35.0" not in str(t.picks)
     assert _numbers(t.answer) <= _tool_numbers(t.picks), t.answer
     # FINDING: he named a product; the spoken line answers about a different one entirely.
     assert "Jetty" not in t.answer

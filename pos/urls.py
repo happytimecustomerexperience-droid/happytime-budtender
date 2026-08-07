@@ -27,6 +27,7 @@ urlpatterns = [
     # roles + live queue
     path("door/", views.door, name="door"),
     path("door/scan/", views.door_scan, name="door_scan"),
+    path("register/", views.set_register, name="set_register"),
     path("queue/", views.queue_panel, name="queue_panel"),
     path("queue/<int:visit_id>/claim/", views.claim, name="claim"),
     path("guest/", views.guest_start, name="guest_start"),

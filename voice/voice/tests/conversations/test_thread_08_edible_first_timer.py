@@ -80,11 +80,11 @@ def test_first_timer_asks_how_much_is_too_much(convo, fake_bt):
     assert args4["price_max"] == 20.0
     assert t4.pick_names == ["Wyld Raspberry Gummies 10mg"]
     assert t4.pick_names != t3.pick_names, "the new size slot must change the pick"
-    # FINDING: the budget filters the PRE-TAX price while the agent quotes the out-the-door price,
-    # so a caller who said "under $20" is read a number over $20.
+    # otd() is identity now (tax-inclusive Dutchie account), so the budget filter and the spoken
+    # price agree: a caller who said "under $20" is read a number at or under $20.
     pick = t4.picks[0]
-    assert pick["price_otd"] > args4["price_max"]
-    assert pick["price_spoken"] == "22 dollars and 28 cents"
+    assert pick["price_otd"] <= args4["price_max"]
+    assert pick["price_spoken"] == "15 dollars"
 
     # ── 5. They quote the KB's own wording back at the agent. ───────────────────────
     t5 = c.say("you said a quarter of a 10 mg gummy, do you have anything like that")

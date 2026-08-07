@@ -27,9 +27,12 @@ from django.db.models import Count, Max, OuterRef, Q, Subquery, Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_http_methods
 
 from pos_core.ratelimit import rate_limit
+
+from . import dutchie_auth
 from customers import tracking
 from customers.intelligence import load_customer_history, load_profile_full_cached
 from customers.models import Customer, ShopEvent, ShopVisit, StaffSession
@@ -203,20 +206,40 @@ def _parse_guests(raw) -> list[dict]:
 
 
 # â”€â”€ auth (budtender-facing login, mobile) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-@rate_limit("login", limit=10, window=300)
+# methods=("POST",): GETs used to spend this budget, so ten loads of the sign-in
+# page locked the whole store out of SEEING the form — and the limiter keys on IP,
+# which for a store behind one NAT is every budtender at once.
+@sensitive_post_parameters("password")
+@rate_limit("login", limit=10, window=300, methods=("POST",))
 def login_view(request):
     if request.method == "POST":
-        form = AuthenticationForm(request, data=request.POST)
-        if form.is_valid():
-            auth_login(request, form.get_user())
+        # Dutchie is the gate. Store first — EmployeeLogin needs LocId/LspId, so we
+        # cannot validate anybody until we know where they are standing.
+        stores = _stores()
+        store = request.POST.get("location") or ""
+        if store not in stores:
+            store = next(iter(stores), "")
+        username = (request.POST.get("username") or "").strip()
+        try:
+            identity = dutchie_auth.verify(store, username, request.POST.get("password") or "")
+        except dutchie_auth.LoginUnavailable as exc:
+            # Explicitly NOT a fallback to a local password: an attacker who can make
+            # Dutchie unreachable must not be able to downgrade the till's auth.
+            return render(request, "pos/login.html",
+                          {**_login_pickers(), "error": str(exc)}, status=503)
+        except dutchie_auth.LoginRejected as exc:
+            return render(request, "pos/login.html",
+                          {**_login_pickers(), "error": str(exc)}, status=401)
+
+        user = dutchie_auth.local_user_for(username)
+        # No authenticate() call happened, so name the backend explicitly.
+        auth_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+        request.session["dutchie_user_id"] = identity["user_id"]
+        if True:
             role = request.POST.get("role")
             role = role if role in ("budtender", "door") else "budtender"
             if request.user.is_superuser:
                 role = "admin"                # privilege is server-side, never the client's word
-            stores = _stores()
-            store = request.POST.get("location") or ""
-            if store not in stores:
-                store = next(iter(stores), "")
             register_id = str(request.POST.get("register") or "")
             request.session["role"] = role
             request.session["store"] = store
@@ -1821,6 +1844,28 @@ def _load_draft_lines(request, draft, store):
                        source_recommendation_type="phone_cart")
     request.session["cart"] = cart
     return loaded, skipped
+
+
+@login_required
+@require_http_methods(["POST"])
+def set_register(request):
+    """Change till without signing out.
+
+    `register_id` was written only by `login_view`, so a budtender moving to another
+    register had to end their session and start again — losing the customer they had
+    open. Validated against the live register list for THIS store so the session can
+    never hold a till that belongs to another shop.
+    """
+    _require_not_door(request)
+    store = _active_store(request)
+    wanted = str(request.POST.get("register") or "").strip()
+    valid = {str(r["id"]) for r in _all_registers() if r["store"] == (store.name if store else "")}
+    if wanted and wanted in valid:
+        request.session["register_id"] = wanted
+    return render(request, "pos/_register_pick.html", {
+        "registers": [r for r in _all_registers() if r["store"] == (store.name if store else "")],
+        "register_id": request.session.get("register_id", ""),
+        "saved": bool(wanted and wanted in valid)})
 
 
 def _find_phone_cart(needle: str):

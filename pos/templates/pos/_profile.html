@@ -8,14 +8,39 @@
   rather than discovering it in the drawer.
 {% endcomment %}
 {% if order_note %}<span class="badge-ok">{{ order_note }}</span>{% endif %}
+{% comment %}
+  THE VERDICT. A budtender has about two seconds and is looking at a customer, not
+  at this tablet — so the answer is the biggest thing on screen and it is carried by
+  the WORD, a glyph, and a band style, never by colour alone (a greyscale screenshot
+  must still be unambiguous; red/green is the commonest colour-vision deficiency and
+  is exactly the pair a naive pass/fail design reaches for).
+
+  "OK TO SELL", never "VERIFIED" — the scan verified a barcode, not a person, and
+  Washington gives no statutory safe harbour for scanning. The photo match below is
+  a human act the machine cannot do.
+{% endcomment %}
+{% if scan.id_expired is True %}
+  <div class="verdict verdict--stop"><span class="verdict__glyph">✕</span>
+    <span class="verdict__word">DO NOT ACCEPT — ID EXPIRED</span>
+    <span class="verdict__sub">An expired ID cannot be used to verify age (WAC 314-55-150). Ask for another accepted ID.</span></div>
+{% elif scan.over_21 is False %}
+  <div class="verdict verdict--stop"><span class="verdict__glyph">✕</span>
+    <span class="verdict__word">DO NOT SELL — UNDER 21</span>
+    <span class="verdict__sub">{% if scan.age %}Age {{ scan.age }}.{% endif %} Washington requires 21+ (RCW 69.50.360).</span></div>
+{% elif scan.over_21 is True %}
+  <div class="verdict verdict--ok"><span class="verdict__glyph">✔</span>
+    <span class="verdict__word">OK TO SELL — 21+</span>
+    <span class="verdict__sub">Age {{ scan.age }}{% if scan.id_expiration %} · expires {{ scan.id_expiration }}{% endif %}
+      — check the photo matches the person in front of you.</span></div>
+{% elif scan %}
+  <div class="verdict verdict--check"><span class="verdict__glyph">?</span>
+    <span class="verdict__word">CHECK BY HAND</span>
+    <span class="verdict__sub">No readable date of birth in the barcode. Read the DOB printed on the card.</span></div>
+{% endif %}
+
 {% if scan or acct_id %}
   <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <strong>{{ scan.accts_name|default:"Customer" }}</strong>
-    {% if scan.over_21 is not None %}
-      <span class="{% if scan.over_21 %}badge-ok{% else %}badge-bad{% endif %}">
-        {% if scan.over_21 %}21+ ✓{% else %}UNDER 21 ✕{% endif %}{% if scan.age %} · {{ scan.age }}{% endif %}
-      </span>
-    {% endif %}
     {% if history %}
       {% if history.orders %}<span class="chip">{{ history.orders }} orders</span>{% endif %}
       {% if history.price_tier %}<span class="chip amber">{{ history.price_tier|title }}</span>{% endif %}
@@ -28,6 +53,28 @@
   </div>
 {% else %}
   <span class="muted">No customer selected.</span>
+{% endif %}
+
+{% if scan %}
+<details class="scanfields" {% if scan and not acct_id %}open{% endif %}>
+  <summary>Scanned ID details <span class="muted">— tap to open or close</span></summary>
+  <div class="scangrid">
+    <div><span class="k">First name</span><span class="v">{{ scan.first_name|default:"—" }}</span></div>
+    <div><span class="k">Middle</span><span class="v">{{ scan.middle_name|default:"—" }}</span></div>
+    <div><span class="k">Last name</span><span class="v">{{ scan.last_name|default:"—" }}</span></div>
+    <div><span class="k">Date of birth</span><span class="v">{{ scan.birth_date|default:"—" }}</span></div>
+    <div><span class="k">ID number</span><span class="v">{{ scan.id_number|default:"—" }}</span></div>
+    <div><span class="k">Expires</span><span class="v">{{ scan.id_expiration|default:"—" }}</span></div>
+    <div><span class="k">State</span><span class="v">{{ scan.state|default:"—" }}</span></div>
+    <div><span class="k">Address</span><span class="v">{{ scan.address|default:"—" }}</span></div>
+    <div><span class="k">City</span><span class="v">{{ scan.city|default:"—" }}</span></div>
+    <div><span class="k">ZIP</span><span class="v">{{ scan.postal_code|default:"—" }}</span></div>
+  </div>
+  <p class="muted" style="margin:8px 0 0">
+    Read from the barcode. Anything missing or wrong can be typed in below — the
+    barcode carries no photo, so it can never prove the card belongs to this person.
+  </p>
+</details>
 {% endif %}
 
 {% include "pos/_scan_preview.html" %}

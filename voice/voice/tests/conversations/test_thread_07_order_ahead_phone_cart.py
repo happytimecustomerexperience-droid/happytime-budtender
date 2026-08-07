@@ -37,7 +37,7 @@ def test_order_ahead_for_pickup_never_reaches_the_phone_cart(convo, fake_bt):
     assert t.pick_names == ["Jetty Blue Dream 1g Cart"], "1g + under $40 leaves exactly one cart"
     cart_pick = t.picks[0]
     assert cart_pick["sku"] == "CT-JETTY-1G"
-    assert cart_pick["price_otd"] > 35.0, "spoken price is out-the-door, above the $35 shelf price"
+    assert cart_pick["price_otd"] == 35.0, "spoken price is the menu price — tax-inclusive Dutchie account"
     assert "cost" not in cart_pick and "margin" not in cart_pick
     # Documents the doubled-brand read-back: brand is prefixed onto a name that already carries it.
     assert "Jetty Jetty Blue Dream" in t.answer

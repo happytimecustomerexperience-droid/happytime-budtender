@@ -97,7 +97,7 @@ def test_mount_vernon_call_then_the_pullman_call(convo, fake_bt):
     assert fake_bt.calls["search"][-1]["slots"]["store"] == "mount-vernon"
     assert t6.pick_names == ["Cannaquench Sparkling 5mg", "Wyld Raspberry Gummies 10mg"]
     mv_wyld = next(p for p in t6.picks if p["sku"] == "ED-WYLD-10")
-    assert mv_wyld["price_otd"] == 22.36, "15.00 uplifted at Mt Vernon's 8.8% local rate"
+    assert mv_wyld["price_otd"] == 15.0, "menu price, unchanged — tax-inclusive Dutchie account"
 
     assert len(mv.turns) == 6
     assert mv.transcript.count("user:") == 6
@@ -129,8 +129,11 @@ def test_mount_vernon_call_then_the_pullman_call(convo, fake_bt):
     assert p6.args("suggest_products")["store"] == "pullman"
     assert fake_bt.calls["search"][-1]["location"] == "pullman"
     pu_wyld = next(p for p in p6.picks if p["sku"] == "ED-WYLD-10")
-    assert pu_wyld["price_otd"] == 22.38, "same SKU, Pullman's 8.9% local rate"
-    assert pu_wyld["price_otd"] > mv_wyld["price_otd"], "OTD price is store-scoped"
+    assert pu_wyld["price_otd"] == 15.0, "same SKU, same menu price"
+    assert pu_wyld["price_otd"] == mv_wyld["price_otd"], (
+        "tax-inclusive pricing is an account-level Dutchie setting, not a per-store rate — no "
+        "longer store-scoped"
+    )
 
     assert [call["location"] for call in fake_bt.calls["search"]] == ["mount-vernon", "pullman"]
     assert len(pu.turns) == 6
@@ -204,7 +207,7 @@ def test_a_store_we_dont_have_is_dropped_not_passed_through(convo, fake_bt):
     # Yakima's shelf and Yakima's tax without ever being told which store answered.
     assert fake_bt.calls["search"][-1]["location"] == "yakima"
     assert fake_bt.calls["search"][-1]["slots"]["store"] == "yakima"
-    assert next(p for p in t4.picks if p["sku"] == "ED-WYLD-10")["price_otd"] == 22.28
+    assert next(p for p in t4.picks if p["sku"] == "ED-WYLD-10")["price_otd"] == 15.0
     assert t4.raw["store"] == ""
 
     for turn in c.turns:

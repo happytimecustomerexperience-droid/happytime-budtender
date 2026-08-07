@@ -57,11 +57,11 @@ def test_blocked_caller_is_served_without_ever_identifying_them(convo, fake_bt):
     for pick in t.picks:
         assert "cost" not in pick and "margin" not in pick
 
-    # GAP (see findings): ``price_max`` filters budtender's PRE-TAX price while the agent speaks
-    # the OTD price, so a "$40" budget is quoted back at $51.98 out the door. Asserting the real
-    # behaviour, not the desired one — flip this to ``<= 40.0`` when the budget is made OTD-aware.
-    assert max(p["price_otd"] for p in t.picks) > 40.0
-    assert "51 dollars and 98 cents" in [p["price_spoken"] for p in t.picks]
+    # The old GAP here (price_max filtering budtender's pre-tax price while the agent spoke an
+    # OTD-uplifted price) is gone now that otd() is identity-with-rounding: the menu price IS the
+    # OTD price, so a "$40" budget is quoted back at or under $40, exactly as it should be.
+    assert max(p["price_otd"] for p in t.picks) <= 40.0
+    assert "35 dollars" in [p["price_spoken"] for p in t.picks]
 
     # ── 3. The caller reacts to that price and asks for a second category. ──
     # GAP (see findings): the throwaway "good deal" puts an ``_FAQ_FIRST_RE`` word in the sentence,
@@ -172,9 +172,9 @@ def test_junk_digits_are_rejected_until_a_real_number_lands(convo, fake_bt):
     assert args["price_max"] == 30.0
     assert t.picks
     assert _searches(fake_bt)[-1]["phone"] == "+15095550142"
-    # GAP (see findings): same pre-tax-vs-OTD budget break as thread turn 2 — the only pick that
-    # survives a "$30" filter is quoted at $44.76 out the door.
-    assert t.picks[0]["price_otd"] > 30.0
+    # Same fix as turn 2: otd() is identity now, so the pick that survives a "$30" filter is
+    # quoted back at or under $30.
+    assert t.picks[0]["price_otd"] <= 30.0
 
     assert len(c.turns) == 4
     assert len(fake_bt.calls["resume_by_phone"]) == 2, "only the two turns with a real number"
