@@ -43,6 +43,15 @@ def authenticate_employee(base_url: str, username: str, password: str,
     (session.py); login was the one that didn't, and it is the one that decides who
     gets in. Success here demands positive evidence: Result not false, a non-empty
     SessionGId, a non-zero UserId, and at least one cookie.
+
+    CONFIRMED AGAINST THE LIVE API (2026-08-07, fixtures/employee_login_*.json):
+    Dutchie rejects with **HTTP 200 + Result:false**, never a 401 — so the truthy
+    ("", "", 0) hole was reachable in production, not theoretical. The rejection body
+    also ECHOES THE SUBMITTED PASSWORD, which is why nothing in here logs.
+
+    NOT confirmed, and deliberately not enforced: we sent LocId 3501 and Dutchie
+    answered LocId 3498. EmployeeLogin does not scope to the location we ask for, so
+    a success proves WHO, never WHERE.
     """
     url = urljoin(base_url.rstrip("/") + "/", "api/posv3/user/EmployeeLogin")
     payload = {"UserName": username, "Password": password, "AppId": 2,
@@ -142,10 +151,10 @@ def login_employee(
             timeout=timeout,
         )
         if resp.status_code >= 400:
-            logger.warning(
-                "Dutchie employee login HTTP %s — first 200 bytes: %s",
-                resp.status_code, getattr(resp, "text", "")[:200],
-            )
+            # Status ONLY. A live capture shows Dutchie echoing the submitted
+            # password back inside the response body on a failed login, so the body
+            # of anything on this path is credential material.
+            logger.warning("Dutchie employee login HTTP %s", resp.status_code)
             return None
         try:
             data = resp.json() if resp.content else {}

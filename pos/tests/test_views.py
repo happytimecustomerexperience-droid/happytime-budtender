@@ -509,12 +509,51 @@ def test_submit_happy_path_audits(auth, monkeypatch):
     s["cart"] = [{"ProductId": 1, "ProductDesc": "X", "UnitPrice": 5, "Cnt": 1}]
     s["acct_id"] = 710000003
     s.save()
-    r = auth.post(reverse("cart_submit"), {}, SERVER_NAME="localhost")
+    r = auth.post(reverse("cart_submit"), {"photo_match": "1"}, SERVER_NAME="localhost")
     assert r.status_code == 200 and b"Shipment 999" in r.content
     assert r["HX-Redirect"] == reverse("begin")          # auto-return to start
     assert "acct_id" not in auth.session and "cart" not in auth.session  # session cleared
     audit = DutchieWriteAudit.objects.latest("created_at")
     assert audit.ok and audit.shipment_id == 999 and audit.action == "submit"
+    # Who said the photo matched is part of the sale record, not just the UI.
+    assert "photo match confirmed" in audit.summary
+
+
+def _loaded(auth, monkeypatch):
+    _use_store(monkeypatch)
+    monkeypatch.setattr(V, "_client", lambda s: FakeClient())
+    s = auth.session
+    s["cart"] = [{"ProductId": 1, "ProductDesc": "X", "UnitPrice": 5, "Cnt": 1}]
+    s["acct_id"] = 710000003
+    s.save()
+
+
+def test_submit_refuses_without_a_photo_match(auth, monkeypatch):
+    """The barcode carries no photograph, so a clean scan cannot prove the card is
+    the holder's — the one thing WAC 314-55-150 actually asks a licensee to
+    establish. Nothing reaches Dutchie until someone says they looked."""
+    _loaded(auth, monkeypatch)
+    r = auth.post(reverse("cart_submit"), {}, SERVER_NAME="localhost")
+    assert b"Confirm the photo" in r.content
+    assert not DutchieWriteAudit.objects.filter(action="submit").exists()
+    assert auth.session["cart"], "the cart was thrown away on a refusal"
+
+
+def test_an_empty_cart_is_still_told_about_the_cart_not_the_photo(auth, monkeypatch):
+    # Ordering matters at a counter: telling someone to check a photo when they have
+    # not rung anything up sends them looking for the wrong problem.
+    _use_store(monkeypatch)
+    r = auth.post(reverse("cart_submit"), {}, SERVER_NAME="localhost")
+    assert b"need a store" in r.content and b"Confirm the photo" not in r.content
+
+
+def test_the_box_is_never_pre_ticked(auth, monkeypatch):
+    # A box that arrives ticked is a box nobody reads.
+    _loaded(auth, monkeypatch)
+    body = auth.get(reverse("shop"), SERVER_NAME="localhost").content.decode()
+    assert 'name="photo_match"' in body
+    form = body[body.index('name="photo_match"'):][:200]
+    assert "checked" not in form
 
 
 def test_start_continue_as_guest(auth, monkeypatch):

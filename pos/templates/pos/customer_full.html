@@ -238,9 +238,7 @@
   <div class="hd"><h2>Cart</h2><button type="button" class="ghost" data-cart-close>Close</button></div>
   <div class="bd cart"><div id="cart">{% include "pos/_cart.html" %}</div></div>
   <div class="ft">
-    <form hx-post="{% url 'cart_submit' %}" hx-target="#submit-result">
-      <button type="submit" class="submit">Submit → Ready for pickup</button>
-    </form>
+    {% include "pos/_submit_form.html" %}
     <div id="submit-result" style="margin-top:8px"></div>
   </div>
 </aside>

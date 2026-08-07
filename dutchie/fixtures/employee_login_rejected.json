@@ -1,0 +1,12 @@
+{
+  "_source": "LIVE capture, POST https://ash.backoffice.dutchie.com/api/posv3/user/EmployeeLogin with a username that does not exist, 2026-08-07. Probed with a nonexistent user ON PURPOSE — a wrong password against the real service account risks a lockout that would take the store's POS down.",
+  "_note_status": "HTTP **200**. Not 401. This is the exact shape the old login_employee turned into a truthy ('', '', 0) tuple, so the vulnerability it replaced was live, not theoretical.",
+  "_note_password_echo": "Data ECHOES THE SUBMITTED PASSWORD BACK. Nothing on the login path may ever log a Dutchie response body.",
+  "Result": false,
+  "Message": "Invalid username or password",
+  "Data": {
+    "username": "zzz_not_a_real_employee_9174",
+    "password": "REDACTED-BUT-DUTCHIE-SENDS-IT-IN-CLEAR",
+    "AppId": 2
+  }
+}

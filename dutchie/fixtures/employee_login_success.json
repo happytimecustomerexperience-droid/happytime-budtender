@@ -1,0 +1,21 @@
+{
+  "_source": "LIVE capture, POST https://ash.backoffice.dutchie.com/api/posv3/user/EmployeeLogin, 2026-08-07. Identical body from ash.pos.dutchie.com. SessionGId/SessionId redacted; TraceId varies per call.",
+  "_note_locid": "REQUESTED LocId=3501 (Yakima); Dutchie ANSWERED LocId=3498, which is none of our three stores (3499/3500/3501). EmployeeLogin does NOT scope to the store we ask for, so a successful login is NOT evidence the employee belongs at the picked store.",
+  "Result": true,
+  "Message": "valid pos user",
+  "Data": {
+    "Id": 95602,
+    "UserName": "Inventory_4",
+    "FullName": "Inventory Specialist 4",
+    "SessionGId": "REDACTED-GUID",
+    "SessionId": "REDACTED",
+    "LoginType": "LSP",
+    "PatientAcct": 0,
+    "OnlineStatus": "",
+    "TraceId": "9462943738875083407",
+    "IdentityAssertion": null,
+    "LocId": 3498,
+    "UserId": 95602,
+    "AppId": 2
+  }
+}

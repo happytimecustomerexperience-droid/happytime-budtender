@@ -7,10 +7,15 @@ caller's `if not raw:` guard. Every other Dutchie call in this repo checks
 gets in. So the test that matters most here is
 `test_a_200_carrying_a_rejection_is_a_rejection`.
 """
+import json
+from pathlib import Path
+
 import pytest
 
 from dutchie.login import (DutchieAuthRejected, DutchieAuthUnavailable,
                            authenticate_employee)
+
+FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
 
 class FakeResp:
@@ -97,3 +102,63 @@ def test_a_transport_error_is_unavailable(monkeypatch):
 def test_a_non_json_200_is_unavailable(monkeypatch):
     with pytest.raises(DutchieAuthUnavailable):
         _run(monkeypatch, FakeResp(status=200, body=None, text="<html>"))
+
+
+# ── the same questions, against what Dutchie ACTUALLY sent ────────────────────
+# Everything above is a shape I reasoned my way to. These two run the classifier
+# over bodies captured from the live API on 2026-08-07, so the success and
+# rejection paths are pinned to reality rather than to my guess about it.
+
+def _fixture(name):
+    raw = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+    return {k: v for k, v in raw.items() if not k.startswith("_")}
+
+
+def test_the_real_rejection_dutchie_sends_is_a_rejection(monkeypatch):
+    """Dutchie rejects with **HTTP 200 + Result:false**, not a 401.
+
+    That is precisely the body the old `login_employee` converted into a truthy
+    ("", "", 0) — so the hole this class replaced was live, not hypothetical. The
+    real response also carries a __cf_bm cookie, which means "got a cookie" alone
+    was never evidence of a session.
+    """
+    with pytest.raises(DutchieAuthRejected):
+        _run(monkeypatch, FakeResp(status=200, body=_fixture("employee_login_rejected.json"),
+                                   cookies={"__cf_bm": "x"}))
+
+
+def test_the_real_success_dutchie_sends_is_accepted(monkeypatch):
+    got = _run(monkeypatch, FakeResp(
+        status=200, body=_fixture("employee_login_success.json"),
+        cookies={"LLSession": "x", ".AspNet.SharedCookie": "y", "__cf_bm": "z"}))
+    assert got["user_id"] == 95602
+    assert got["session_gid"] == "REDACTED-GUID"
+
+
+def test_dutchie_echoes_the_password_back_so_nothing_may_log_the_body():
+    """The rejection body contains the submitted password IN CLEAR.
+
+    Not a hypothetical: it is in the captured fixture. This test exists so that
+    anyone who later adds `logger.warning(..., resp.text)` to the login path has to
+    delete an explicitly-named guard to do it.
+    """
+    body = json.loads((FIXTURES / "employee_login_rejected.json").read_text(encoding="utf-8"))
+    assert "password" in body["Data"], "fixture no longer proves the echo — re-capture"
+
+    import inspect
+
+    from dutchie import login as login_mod
+    src = inspect.getsource(login_mod.authenticate_employee)
+    assert "logger." not in src, "authenticate_employee must never log — the body carries the password"
+
+
+def test_a_login_at_one_store_is_not_proof_of_belonging_to_it():
+    """We asked for LocId 3501 (Yakima); Dutchie answered LocId 3498.
+
+    3498 is none of our three stores (3499 / 3500 / 3501), so EmployeeLogin does NOT
+    scope to the location we send. A successful sign-in therefore proves WHO someone
+    is, never WHERE they are entitled to stand. Anything that later tries to treat
+    the store picker as an authorisation boundary has to contend with this.
+    """
+    data = _fixture("employee_login_success.json")["Data"]
+    assert data["LocId"] not in (3499, 3500, 3501)

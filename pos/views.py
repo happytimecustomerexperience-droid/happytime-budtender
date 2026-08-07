@@ -235,25 +235,22 @@ def login_view(request):
         # No authenticate() call happened, so name the backend explicitly.
         auth_login(request, user, backend="django.contrib.auth.backends.ModelBackend")
         request.session["dutchie_user_id"] = identity["user_id"]
-        if True:
-            role = request.POST.get("role")
-            role = role if role in ("budtender", "door") else "budtender"
-            if request.user.is_superuser:
-                role = "admin"                # privilege is server-side, never the client's word
-            register_id = str(request.POST.get("register") or "")
-            request.session["role"] = role
-            request.session["store"] = store
-            request.session["register_id"] = register_id
-            try:
-                ss = StaffSession.objects.create(
-                    user=request.user, username=request.user.username, role=role,
-                    store=store, register_id=register_id,
-                    register_name=_register_name(store, register_id), ip=_client_ip(request))
-                request.session["staff_session_id"] = ss.id
-            except Exception as exc:
-                logger.warning("StaffSession create failed: %s", exc)
-            tracking.track(request, "login")
-            return redirect("door" if role == "door" else "screen")
+        # The posted role is a REQUEST, not a decision — see dutchie_auth.role_for.
+        role = dutchie_auth.role_for(request.user, request.POST.get("role"))
+        register_id = str(request.POST.get("register") or "")
+        request.session["role"] = role
+        request.session["store"] = store
+        request.session["register_id"] = register_id
+        try:
+            ss = StaffSession.objects.create(
+                user=request.user, username=request.user.username, role=role,
+                store=store, register_id=register_id,
+                register_name=_register_name(store, register_id), ip=_client_ip(request))
+            request.session["staff_session_id"] = ss.id
+        except Exception as exc:
+            logger.warning("StaffSession create failed: %s", exc)
+        tracking.track(request, "login")
+        return redirect("door" if role == "door" else "screen")
     else:
         form = AuthenticationForm(request)
     return render(request, "pos/login.html", {"form": form, **_login_pickers()})
@@ -1978,14 +1975,24 @@ def cart_submit(request):
     if not (store and acct_id and cart):
         ctx["error"] = "need a store, a selected customer (AcctId), and at least one item"
         return render(request, "pos/_submit_result.html", ctx)
+    # THE ONE CHECK THE MACHINE CANNOT DO. The barcode carries no photograph, so a
+    # clean scan proves a card is genuine and 21+ — never that it belongs to the
+    # person holding it, which is the actual thing WAC 314-55-150 asks a licensee to
+    # establish. Asked per SALE rather than remembered per customer, because a
+    # remembered tick goes stale the moment the next person steps up and there is no
+    # reliable event that says "different human now".
+    if not request.POST.get("photo_match"):
+        ctx["error"] = ("Confirm the photo on the ID matches the person in front of "
+                        "you before submitting.")
+        return render(request, "pos/_submit_result.html", ctx)
     try:
         result = _client(store).submit_cart(int(acct_id), cart)
         record_write(store.name, "submit", ok=True, acct_id=int(acct_id),
                      shipment_id=result["shipment_id"],
-                     summary=f"{len(cart)} items -> Ready for pickup",
+                     summary=f"{len(cart)} items -> Ready for pickup (photo match confirmed)",
                      username=getattr(request.user, "username", ""), staff_session_id=shift_id)
         total = _cart_ctx(cart)["cart_total"]
-        tracking.track(request, "checkout", detail=f"{len(cart)} items",
+        tracking.track(request, "checkout", detail=f"{len(cart)} items, photo match confirmed",
                        shipment_id=result["shipment_id"], total=total)
         tracking.end_visit(request, "checked_out", shipment_id=result["shipment_id"],
                            cart_total=total)

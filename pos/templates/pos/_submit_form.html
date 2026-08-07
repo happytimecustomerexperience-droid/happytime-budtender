@@ -1,0 +1,22 @@
+{% comment %}
+  The ONE submit control, included by every page that can check a customer out
+  (_shell.html's cart drawer, customer_preview, customer_full, product). It exists as
+  an include so that a page cannot ship a Submit button without the gate attached —
+  the previous four copies were identical, which is exactly how they drift.
+
+  The barcode has no photograph on it. A clean scan proves the card is real and the
+  holder is 21+; it cannot prove the card is THEIRS, which is the thing WAC 314-55-150
+  actually asks a licensee to establish. So the last thing before a sale is the one
+  judgement only the person at the counter can make.
+
+  Unticked on every render and enforced in cart_submit: a box that remembered the last
+  answer, or that lived only in the browser, would be decoration. `required` is for
+  instant feedback, not for the gate.
+{% endcomment %}
+<form hx-post="{% url 'cart_submit' %}" hx-target="#submit-result">
+  <label class="photomatch">
+    <input type="checkbox" name="photo_match" value="1" required>
+    <span>The photo on the ID is the person in front of me</span>
+  </label>
+  <button type="submit" class="submit">Submit → Ready for pickup</button>
+</form>
