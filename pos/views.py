@@ -1772,8 +1772,6 @@ def _load_draft_lines(request, draft, store):
     return loaded, skipped
 
 
-@login_required
-@require_http_methods(["POST"])
 def _find_phone_cart(needle: str):
     """A saved order, by PHONE NUMBER or by draft token.
 
@@ -1806,6 +1804,8 @@ def _find_phone_cart(needle: str):
     return PhoneCartDraft.objects.filter(draft_token=needle).first()
 
 
+@login_required
+@require_http_methods(["POST"])
 def phone_cart_claim(request):
     """Load a released phone-cart draft into the normal POS session cart.
 
