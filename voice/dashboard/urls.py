@@ -9,9 +9,13 @@ from __future__ import annotations
 from django.urls import path
 
 from . import views
+from .playground import playground, playground_send
 
 urlpatterns = [
     path("", views.overview, name="dash-overview"),
+    # agent test console — text / browser mic / real Vapi web call
+    path("playground/", playground, name="dash-playground"),
+    path("playground/send", playground_send, name="dash-playground-send"),
     path("analytics/", views.analytics_dashboard, name="dash-analytics"),
     # agents
     path("agents/", views.agent_config, name="dash-agents"),

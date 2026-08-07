@@ -136,6 +136,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ── Vapi surface (03-CONVENTIONS.md §3.3) ─────────────────────────────
 VAPI_PRIVATE_KEY = os.environ.get("VAPI_PRIVATE_KEY", "")
+# Browser-safe publishable key — the ONLY Vapi key allowed to reach a page. Used by the staff
+# test console to open a real web call; the private key must never be rendered client-side.
+VAPI_PUBLIC_KEY = os.environ.get("VAPI_PUBLIC_KEY", "")
 VAPI_WEBHOOK_SECRET = os.environ.get("VAPI_WEBHOOK_SECRET", "")
 VAPI_SQUAD_ID = os.environ.get("VAPI_SQUAD_ID", "")
 VAPI_PHONE_NUMBER_ID = os.environ.get("VAPI_PHONE_NUMBER_ID", "")

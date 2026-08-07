@@ -13,6 +13,8 @@ from django.urls import reverse
 # (route name, reverse kwargs) — every named dash-* route, with a placeholder per captured arg.
 DASH_ROUTES = [
     ("dash-overview", {}),
+    ("dash-playground", {}),
+    ("dash-playground-send", {}),
     ("dash-analytics", {}),
     ("dash-agents", {}),
     ("dash-agent-save", {"pk": 1}),

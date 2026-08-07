@@ -1,0 +1,250 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Agent test console — Happy Time Voice{% endblock %}
+
+{% comment %}
+Staff test console. Left = the conversation (type / mic / real Vapi call), right = the trace:
+every tool the agent fired, the args it derived, what came back, and whether the answer was
+grounded. The text + mic paths run the SAME brain as the phone; the Vapi button runs a real
+web call through Vapi's own speech stack. See dashboard/playground.py for the boundary notes.
+{% endcomment %}
+
+{% block content %}
+<div class="row between" style="margin-bottom:12px;">
+  <div>
+    <h1>Agent test console</h1>
+    <div class="muted">Same brain as the phone and the website chat. Every turn is logged to
+      <a href="{% url 'dash-call-log' %}">the call log</a> under a <code>pg-</code> id.</div>
+  </div>
+  <div class="row">
+    <label style="margin:0;"><span class="lt">Store</span>
+      <select id="store">{% for s in stores %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select>
+    </label>
+    <label style="margin:0;"><span class="lt">Caller phone (optional — tests recognition)</span>
+      <input id="phone" placeholder="+15095551234" autocomplete="off">
+    </label>
+  </div>
+</div>
+
+<div class="grid" style="grid-template-columns: 1fr 1fr;">
+
+  {# ── left: the conversation ─────────────────────────────────────────────── #}
+  <div class="card" style="display:flex;flex-direction:column;min-height:520px;">
+    <div class="row between" style="margin-bottom:10px;">
+      <h2 style="margin:0;">Conversation</h2>
+      <div class="row" style="gap:8px;">
+        <label style="margin:0;font-size:12px;" class="muted">
+          <input type="checkbox" id="tts" style="width:auto;" checked> speak replies
+        </label>
+        <button class="btn" id="reset">New session</button>
+      </div>
+    </div>
+
+    <div id="bubbles" class="bubbles" style="flex:1;overflow-y:auto;max-height:420px;padding-right:4px;">
+      <div class="bubble assistant muted">Type below, hold the mic, or start a real Vapi call.</div>
+    </div>
+
+    <div class="row" style="margin-top:12px;gap:8px;flex-wrap:nowrap;">
+      <input id="msg" placeholder="Ask what a caller would ask…" autocomplete="off" style="flex:1;">
+      <button class="btn" id="mic" title="Browser speech-to-text">🎤</button>
+      <button class="btn btn-primary" id="send">Send</button>
+    </div>
+    <div class="muted" id="status" style="font-size:12px;margin-top:6px;min-height:16px;"></div>
+
+    <hr style="border:0;border-top:1px solid var(--border);margin:14px 0;">
+
+    <div class="row between" style="margin-bottom:8px;">
+      <h2 style="margin:0;">Real Vapi web call</h2>
+      {% if vapi_ready %}<span class="badge green">ready</span>
+      {% else %}<span class="badge amber">not configured</span>{% endif %}
+    </div>
+    {% if vapi_ready %}
+      <div class="muted" style="font-size:12px;margin-bottom:8px;">
+        Goes through Vapi's own speech-to-text, model and voice — the truest match to the phone.
+        Costs Vapi minutes, and the transcript lands in the call log via the webhook.
+      </div>
+      <div class="row" style="gap:8px;">
+        <button class="btn btn-primary" id="vapi-start">Start Vapi call</button>
+        <button class="btn" id="vapi-stop" disabled>Hang up</button>
+        <span class="muted" id="vapi-status" style="font-size:12px;"></span>
+      </div>
+    {% else %}
+      <div class="muted" style="font-size:12px;">
+        Needs <code>VAPI_PUBLIC_KEY</code> in the environment{% if not vapi_assistant_id %}
+        and a provisioned FAQ assistant (run <code>manage.py provision_vapi</code>){% endif %}.
+        The private key is never sent to the browser. Text and mic work without it.
+      </div>
+    {% endif %}
+  </div>
+
+  {# ── right: the trace ───────────────────────────────────────────────────── #}
+  <div class="card" style="min-height:520px;">
+    <div class="row between" style="margin-bottom:10px;">
+      <h2 style="margin:0;">Tool trace</h2>
+      <button class="btn" id="run-all" title="Walk every pathway in order">Run all pathways</button>
+    </div>
+    <div class="muted" style="font-size:12px;margin-bottom:10px;">
+      One-click probes — each routes down a different branch of the agent.
+    </div>
+    <div class="row" style="gap:6px;margin-bottom:12px;">
+      {% for label, text in probes %}
+        <button class="btn probe" data-text="{{ text }}" style="font-size:12px;padding:4px 9px;">{{ label }}</button>
+      {% endfor %}
+    </div>
+    <div id="trace"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const SEND_URL = "{% url 'dash-playground-send' %}";
+  let callId = null;
+  let history = [];
+
+  const csrf = () => (document.cookie.match(/(^|;)\s*csrftoken=([^;]+)/) || [])[2] || "";
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  function bubble(role, text) {
+    const el = document.createElement("div");
+    el.className = "bubble " + (role === "user" ? "user" : "assistant");
+    el.textContent = text;
+    $("bubbles").appendChild(el);
+    $("bubbles").scrollTop = $("bubbles").scrollHeight;
+  }
+
+  function speak(text) {
+    if (!$("tts").checked || !window.speechSynthesis || !text) return;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  }
+
+  // One trace card per turn: the routing decision up top, then every tool with its args.
+  function trace(sent, d) {
+    const tone = d.escalation_required ? "red" : (d.grounded ? "green" : "amber");
+    const tools = (d.tool_results || []).map((t) => `
+      <details style="margin-top:6px;">
+        <summary style="cursor:pointer;font-size:12px;"><code>${esc(t.tool)}</code></summary>
+        <div class="muted" style="font-size:11px;margin-top:4px;">args</div>
+        <pre style="font-size:11px;overflow-x:auto;margin:2px 0;">${esc(JSON.stringify(t.args || {}, null, 1))}</pre>
+        <div class="muted" style="font-size:11px;">result</div>
+        <pre style="font-size:11px;overflow-x:auto;margin:2px 0;max-height:220px;">${esc(JSON.stringify(t.result || {}, null, 1))}</pre>
+      </details>`).join("");
+    const card = document.createElement("div");
+    card.className = "card";
+    card.style.marginBottom = "10px";
+    card.innerHTML = `
+      <div class="row between">
+        <strong style="font-size:13px;">${esc(sent)}</strong>
+        <span class="muted" style="font-size:11px;">${d.latency_ms} ms</span>
+      </div>
+      <div class="row" style="gap:6px;margin:6px 0;">
+        <span class="badge blue">${esc(d.intent || "—")}</span>
+        <span class="badge ${tone}">${d.grounded ? "grounded" : "ungrounded"}</span>
+        ${d.escalation_required ? '<span class="badge red">escalate</span>' : ""}
+        <span class="badge slate">${esc(d.safe_next_action || "—")}</span>
+      </div>
+      <div style="font-size:12px;">${esc(d.answer || "")}</div>
+      ${(d.sources || []).length ? `<div class="muted" style="font-size:11px;margin-top:4px;">sources: ${esc((d.sources || []).map((s) => s.title || s.kind).join(", "))}</div>` : ""}
+      ${tools}`;
+    $("trace").prepend(card);
+  }
+
+  async function send(text) {
+    if (!text.trim()) return;
+    bubble("user", text);
+    $("msg").value = "";
+    $("status").textContent = "thinking…";
+    try {
+      const r = await fetch(SEND_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+        body: JSON.stringify({
+          message: text, store: $("store").value, phone: $("phone").value,
+          call_id: callId, history: history,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) { $("status").textContent = "error: " + (d.error || r.status); return; }
+      callId = d.call_id;
+      history.push({ role: "user", content: text }, { role: "assistant", content: d.answer });
+      bubble("assistant", d.answer);
+      trace(text, d);
+      speak(d.answer);
+      $("status").innerHTML = `session <code>${esc(callId)}</code> — ${history.length / 2} turn(s)`;
+    } catch (e) {
+      $("status").textContent = "request failed: " + e;
+    }
+  }
+
+  $("send").onclick = () => send($("msg").value);
+  $("msg").onkeydown = (e) => { if (e.key === "Enter") send($("msg").value); };
+  $("reset").onclick = () => {
+    callId = null; history = [];
+    $("bubbles").innerHTML = ""; $("trace").innerHTML = ""; $("status").textContent = "new session";
+  };
+  document.querySelectorAll(".probe").forEach((b) => { b.onclick = () => send(b.dataset.text); });
+
+  // Walk every pathway in order — sequential so the trace reads top-to-bottom.
+  $("run-all").onclick = async () => {
+    const probes = [...document.querySelectorAll(".probe")];
+    for (const b of probes) { await send(b.dataset.text); }
+    $("status").textContent = `ran ${probes.length} pathway probes`;
+  };
+
+  // ── browser mic (Web Speech API — transcribes locally, then sends as text) ──
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    $("mic").disabled = true;
+    $("mic").title = "This browser has no Web Speech API — use Chrome or Edge";
+  } else {
+    const rec = new SR();
+    rec.lang = "en-US"; rec.interimResults = false; rec.maxAlternatives = 1;
+    let listening = false;
+    rec.onresult = (e) => send(e.results[0][0].transcript);
+    rec.onerror = (e) => { $("status").textContent = "mic error: " + e.error; };
+    rec.onend = () => { listening = false; $("mic").textContent = "🎤"; };
+    $("mic").onclick = () => {
+      if (listening) { rec.stop(); return; }
+      listening = true; $("mic").textContent = "⏹"; $("status").textContent = "listening…";
+      rec.start();
+    };
+  }
+})();
+</script>
+
+{% if vapi_ready %}
+{# Real Vapi web call — Vapi's own ASR/model/TTS. Publishable key only; the webhook does the logging. #}
+<script type="module">
+  import Vapi from "https://esm.sh/@vapi-ai/web";
+  const vapi = new Vapi("{{ vapi_public_key|escapejs }}");
+  const status = document.getElementById("vapi-status");
+  const start = document.getElementById("vapi-start");
+  const stop = document.getElementById("vapi-stop");
+  const log = (t) => { status.textContent = t; };
+
+  start.onclick = async () => {
+    start.disabled = true; log("connecting…");
+    try { await vapi.start("{{ vapi_assistant_id|escapejs }}"); }
+    catch (e) { log("failed: " + e); start.disabled = false; }
+  };
+  stop.onclick = () => vapi.stop();
+
+  vapi.on("call-start", () => { log("live — talk now"); stop.disabled = false; });
+  vapi.on("call-end", () => { log("call ended — see the call log"); start.disabled = false; stop.disabled = true; });
+  vapi.on("error", (e) => { log("error: " + (e && e.message ? e.message : e)); start.disabled = false; });
+  // Mirror Vapi's live transcript into the same bubble column so both paths read the same.
+  vapi.on("message", (m) => {
+    if (m && m.type === "transcript" && m.transcriptType === "final") {
+      const el = document.createElement("div");
+      el.className = "bubble " + (m.role === "user" ? "user" : "assistant");
+      el.textContent = m.transcript;
+      document.getElementById("bubbles").appendChild(el);
+    }
+  });
+</script>
+{% endif %}
+{% endblock %}

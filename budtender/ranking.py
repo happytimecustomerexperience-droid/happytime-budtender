@@ -33,6 +33,9 @@ CATEGORY_BY_SLOTKEY = {
     "cartridge": "vape-cartridges",
     "edible": "edibles",
     "tincture": "tinctures",
+    # The canonical category is "pre-rolls" (dutchie.py), but the slot key was missing here, so
+    # a pre-roll request had no way through even once the voice enum allowed it.
+    "pre-roll": "pre-rolls",
 }
 
 

@@ -13,6 +13,9 @@ from voice.tools import dispatch
 _HUMAN_RE = re.compile(
     r"\b("
     r"human|person|manager|staff|budtender|complain|complaint|refund|"
+    # "money back" / "busted" are how customers actually phrase a dispute. Without them the
+    # category regex wins ("busted vape pen" → cartridge) and the caller gets upsold instead.
+    r"money\s*back|busted|"
     r"defective|broken|bad\s+cart|won'?t\s+fire|doesn'?t\s+work|unacceptable|"
     r"ripped\s+(?:me\s+)?off|rip\s*off|scam|angry|mad|upset|"
     r"wrong\s+(item|product|thing)|"
@@ -22,12 +25,14 @@ _HUMAN_RE = re.compile(
     r")\b",
     re.I,
 )
+# Plural-tolerant: customers say "do you have edibles" and "what concentrates do you have".
+# Only cart|carts spelled both out before, so every other plural fell through to the FAQ.
 _CATEGORY_RE = {
-    "cartridge": re.compile(r"\b(cart|carts|cartridge|vape|vapes|disposable|disposables|510|pod)\b", re.I),
-    "flower": re.compile(r"\b(flower|bud|eighth|ounce|sativa|indica|hybrid)\b", re.I),
-    "edible": re.compile(r"\b(edible|gummy|gummies|chocolate|drink|beverage|mg)\b", re.I),
-    "concentrate": re.compile(r"\b(concentrate|dab|wax|rosin|resin|hash)\b", re.I),
-    "pre-roll": re.compile(r"\b(pre.?roll|joint)\b", re.I),
+    "cartridge": re.compile(r"\b(carts?|cartridges?|vapes?|disposables?|510|pods?)\b", re.I),
+    "flower": re.compile(r"\b(flowers?|buds?|eighths?|ounces?|sativa|indica|hybrid)\b", re.I),
+    "edible": re.compile(r"\b(edibles?|gummy|gummies|chocolates?|drinks?|beverages?|mg)\b", re.I),
+    "concentrate": re.compile(r"\b(concentrates?|dabs?|wax|rosin|resin|hash)\b", re.I),
+    "pre-roll": re.compile(r"\b(pre.?rolls?|joints?)\b", re.I),
 }
 _PRODUCT_SLOT_KEYS = (
     "category",
@@ -74,6 +79,17 @@ _FAQ_FIRST_RE = re.compile(
 _PRICE_MAX_RE = re.compile(r"\b(?:under|below|less than|no more than|up to|max(?:imum)?)\s*\$?\s*(\d+(?:\.\d{1,2})?)\b", re.I)
 _DOH_ONLY_RE = re.compile(r"\b(doh|medical|medically compliant|compliant)\b", re.I)
 _SUBCATEGORY_RE = re.compile(r"\b(indica|sativa|hybrid)\b", re.I)
+# budtender's ranker only knows these three (budtender/engine.py EFFECT_HINTS) and
+# TOOL_SPECS enums to match, so a richer derived effect is DROPPED by _sanitize_args and the
+# ask is ranked blind. Map down instead of losing it. (Upgrade path: teach EFFECT_HINTS
+# sleep/pain/anxiety terms and widen both the enum and this map together.)
+_EFFECT_TO_BUDTENDER = {
+    "relaxed": "relaxed",
+    "sleep": "relaxed",
+    "pain relief": "relaxed",
+    "anxiety relief": "relaxed",
+    "focused": "uplifted",
+}
 _EFFECT_ALIASES = (
     ("sleep", re.compile(r"\b(sleep|sleepy|bedtime|insomnia)\b", re.I)),
     ("relaxed", re.compile(r"\b(relax|relaxed|relaxing|calm|chill|unwind)\b", re.I)),
@@ -199,6 +215,20 @@ def _requires_sources(message: str) -> bool:
     return bool(_SOURCE_REQUIRED_RE.search(message or ""))
 
 
+def _recent_escalation(history) -> bool:
+    """A dispute stays a dispute. Escalation was per-message regex, so a follow-up phrased
+    without a trigger word ("so what are you going to do about it") silently dropped the
+    handoff. Look back over the caller's own recent turns instead."""
+    if not isinstance(history, list):
+        return False
+    for msg in history[-6:]:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        if _HUMAN_RE.search(str(msg.get("content") or "")):
+            return True
+    return False
+
+
 def _prefers_products(message: str, category: str, *, escalation: bool) -> bool:
     return bool(category) and not escalation and not _FAQ_FIRST_RE.search(message or "")
 
@@ -286,14 +316,17 @@ def answer_text_chat(data: dict) -> dict:
         ctx.update(recognition.resolve_caller(phone, ctx) or {})
     else:
         ctx["profile_summary"] = {"has_history": False, "top_categories": [], "price_tier": ""}
-    escalation = bool(_HUMAN_RE.search(message))
+    escalation = bool(_HUMAN_RE.search(message)) or _recent_escalation(history)
     category = str(slots.get("category") or _category_from_text(message)).strip()
     category = _normalize_category(category)
     if not category and not _requires_sources(message):
         category = _profile_top_category(ctx.get("profile_summary"))
     prefer_products = _prefers_products(message, category, escalation=escalation)
-    faq = dispatch("faq_lookup", {"query": message, "store": store}, ctx)
-    tool_results = [{"tool": "faq_lookup", "result": faq}]
+    faq_args = {"query": message, "store": store}
+    faq = dispatch("faq_lookup", faq_args, ctx)
+    # ``args`` rides along so a caller (the staff test console) can see WHICH slots the router
+    # derived, not just what came back — the difference between "wrong answer" and "wrong routing".
+    tool_results = [{"tool": "faq_lookup", "args": faq_args, "result": faq}]
     if faq.get("grounded") and not str(faq.get("answer") or "").strip():
         faq = {"grounded": False, "fallback": faq.get("fallback") or "can't confirm"}
         tool_results[0]["result"] = faq
@@ -302,7 +335,16 @@ def answer_text_chat(data: dict) -> dict:
         faq = {"grounded": False, "fallback": "can't confirm"}
         tool_results[0]["result"] = faq
 
-    if faq.get("grounded") and faq.get("answer") and not prefer_products:
+    # Relevance gate: retrieval always returns its best row, even when that row has nothing to do
+    # with the complaint. On a dispute turn we used to wrap an apology around whatever came back
+    # (an angry "wrong item" caller got read the loyalty-program row, with sources cited, so it
+    # read as authoritative). Only speak a retrieved row mid-dispute when the caller actually
+    # asked something the KB covers.
+    speak_faq = bool(faq.get("grounded") and faq.get("answer") and not prefer_products)
+    if speak_faq and escalation and not _FAQ_FIRST_RE.search(message):
+        speak_faq = False
+
+    if speak_faq:
         answer = str(faq["answer"])
         if escalation:
             answer = f"I'm sorry that happened. {answer} {_staff_followup_hint(store, phone)}"
@@ -354,7 +396,7 @@ def answer_text_chat(data: dict) -> dict:
         if "effect_desired" not in suggest_args:
             effect = _effect_from_text(message)
             if effect:
-                suggest_args["effect_desired"] = effect
+                suggest_args["effect_desired"] = _EFFECT_TO_BUDTENDER.get(effect, effect)
         if "size" not in suggest_args:
             size = _size_from_text(message)
             if size:
@@ -374,7 +416,7 @@ def answer_text_chat(data: dict) -> dict:
             suggest_args,
             ctx,
         )
-        tool_results.append({"tool": "suggest_products", "result": suggest})
+        tool_results.append({"tool": "suggest_products", "args": dict(suggest_args), "result": suggest})
         picks = _normalize_suggest_picks(suggest.get("picks"), category)
         if picks:
             suggest = dict(suggest)

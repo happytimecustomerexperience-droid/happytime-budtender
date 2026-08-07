@@ -1,54 +1,47 @@
-"""Out-the-door (OTD, tax-included) price helpers for spoken picks (ADR-009; 21-SPEC §5.3).
+"""Out-the-door (OTD, tax-included) price helpers for spoken picks.
 
-budtender returns a PRE-TAX ``price`` today (``serializers.public_product`` has no ``price_otd``
-field — TODO-B1). The agent MUST speak the out-the-door price (what the customer pays), never the
-pre-tax net (ADR-009). Until budtender ships a native ``price_otd``, the voice repo uplifts the
-pre-tax ``price`` here — a tiny, deterministic, single-source-of-truth module with the per-store WA
-rates as named constants (21-SPEC §5.3 + risk "OTD tax rates duplicated").
+**The menu price IS the out-the-door price. Nothing is added.**
 
-WA tax model (mirrors the marketing_dashboard tax-inclusive customer-facing convention): a 37%
-excise on the base, then per-store local sales tax on the ``base + excise`` total. The multiplier is
-``1 + excise + local·(1 + excise)``. The rates are per-store (the website/dashboard convention):
-Yakima 8.4% / Mt Vernon 8.8% / Pullman 8.9% local; an unknown/combined store uses no local (excise
-only), matching budtender's engine-default no-local behavior.
+This module used to uplift budtender's ``price`` by a WA excise + local-sales-tax multiplier
+(Yakima ×1.48508), on the ADR-009 assumption that budtender returned a PRE-TAX price. That
+assumption was wrong for this dispensary, and the agent was quoting roughly 48% over the real
+price on every single call — a $38 eighth was spoken as "56 dollars and 43 cents".
 
-**Leak-safe:** the OTD uplift adds NO cost/margin — it derives from the allowlisted ``price`` only.
+Corrected 2026-08-07 against hard evidence, see ``bundles/tax.py``: this account's Dutchie is
+configured ``taxInclusivePricing: true``, verified from a real Yakima pickup cart read out of
+Dutchie's own ``computeWithPriceCartV2`` response — menu prices $27.00 + $25.00 + $15.00 checked
+out at exactly $67.00, and Dutchie's menu says "*All taxes included in price." Two statutes make
+that the legal shelf price: RCW 69.50.535(1)(b) (the 37% excise must be reflected in the quoted
+shelf price) and RCW 82.08.050 / WAC 458-20-107 (a quoted price excludes sales tax UNLESS the
+seller advertises tax-included, which Dutchie does on every product page for this account).
+
+So ``otd()` is now identity-with-rounding. It is kept as a function, rather than deleted, because
+it is the ONE place the "what does the customer actually pay" question is answered for voice — if
+the account is ever reconfigured to tax-exclusive pricing, this is the single line to change.
+
+Deliberately NOT done here: splitting the total into Dutchie's Subtotal/Taxes lines. Reproducing
+that split from the captured cart lands ~3c off on a $67 order (Dutchie rounds per item, per tax
+type), and a spoken tax figure that disagrees with the receipt is worse than no tax figure.
+
+**Leak-safe:** derives from the allowlisted ``price`` only — no cost/margin.
 """
 
 from __future__ import annotations
 
-# WA cannabis excise (pass-through; applied first, on the pre-tax base).
-WA_EXCISE = 0.37
 
-# Per-store local sales tax (applied on base + excise). A store not in the map → no local
-# (excise only) — the engine-default "combined" behavior (21-SPEC §5.3).
-LOCAL_SALES_TAX = {
-    "yakima": 0.084,
-    "mount-vernon": 0.088,
-    "pullman": 0.089,
-}
+def otd(price: float | int | None, store: str | None = None) -> float:
+    """The out-the-door price the customer pays — the menu price, unchanged.
 
-
-def otd_multiplier(store: str | None) -> float:
-    """The OTD multiplier for a store: ``1 + excise + local·(1 + excise)``.
-
-    Yakima → 1 + 0.37 + 0.084·1.37 = 1.48508. An unknown/combined store → excise only (1.37)."""
-    local = LOCAL_SALES_TAX.get((store or "").strip().lower(), 0.0)
-    return round((1.0 + WA_EXCISE) * (1.0 + local), 5)
-
-
-def otd(price: float | int | None, store: str | None) -> float:
-    """Uplift a pre-tax ``price`` to the out-the-door figure for ``store`` (ADR-009).
-
-    Deterministic + monotonic: ``otd(p) >= p`` for any positive ``p``. A None/non-positive price
-    returns ``0.0`` (no fabricated number — Numbers-Guard). Rounded to cents (what's spoken)."""
+    ``store`` is accepted and ignored: the price is tax-inclusive at every store, and keeping the
+    parameter means callers do not change if per-store behaviour ever diverges again. A
+    None/non-positive price returns ``0.0`` (no fabricated number — Numbers-Guard)."""
     try:
         p = float(price)
     except (TypeError, ValueError):
         return 0.0
     if p <= 0:
         return 0.0
-    return round(p * otd_multiplier(store), 2)
+    return round(p, 2)
 
 
 def spoken(amount: float | int | None) -> str:

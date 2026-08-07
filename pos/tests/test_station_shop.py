@@ -13,6 +13,8 @@ customer standing there.
 
 Dutchie is never hit — the register client and inventory are monkeypatched.
 """
+from datetime import timedelta
+
 import pytest
 from django.contrib.auth.models import User
 from django.urls import reverse
@@ -310,3 +312,45 @@ class TestCredibleThcFilter:
         a, b = self._flower(22.0), self._flower(22.0)
         b["strain"] = "Gelato"
         assert len(query([a, b], None, {"strain": "Gelato"})) == 1
+
+
+class TestSavedOrderByPhone:
+    """A budtender has the customer's phone, not a `pc-…` token."""
+
+    def test_a_phone_number_finds_the_saved_order(self, auth):
+        _sess(auth, role="budtender", store="yakima")
+        d = _draft(contact_phone="5094206999")
+        r = auth.post(reverse("phone_cart_claim"), {"draft_token": "509-420-6999"})
+        assert r["HX-Redirect"] == reverse("shop")
+        d.refresh_from_db()
+        assert d.status == PhoneCartDraft.Status.CLAIMED
+
+    def test_country_code_and_punctuation_do_not_matter(self, auth):
+        _sess(auth, role="budtender", store="yakima")
+        _draft(contact_phone="(509) 420-6999")
+        r = auth.post(reverse("phone_cart_claim"), {"draft_token": "+1 509 420 6999"})
+        assert r["HX-Redirect"] == reverse("shop")
+
+    def test_the_token_still_works_for_the_queue_panel(self, auth):
+        # The queue panel posts a hidden draft_token; that must not regress.
+        _sess(auth, role="budtender", store="yakima")
+        d = _draft(contact_phone="5094206999")
+        r = auth.post(reverse("phone_cart_claim"), {"draft_token": d.draft_token})
+        assert r["HX-Redirect"] == reverse("shop")
+
+    def test_the_newest_order_wins_for_a_repeat_customer(self, auth):
+        _sess(auth, role="budtender", store="yakima")
+        old = _draft(contact_phone="5094206999")
+        old.released_at = timezone.now() - timedelta(days=2)
+        old.save(update_fields=["released_at"])
+        new = _draft(contact_phone="5094206999")
+        auth.post(reverse("phone_cart_claim"), {"draft_token": "5094206999"})
+        new.refresh_from_db(); old.refresh_from_db()
+        assert new.status == PhoneCartDraft.Status.CLAIMED
+        assert old.status == PhoneCartDraft.Status.RELEASED
+
+    def test_an_unknown_number_says_so_without_erroring(self, auth):
+        _sess(auth, role="budtender", store="yakima")
+        r = auth.post(reverse("phone_cart_claim"), {"draft_token": "5095550000"})
+        assert r.status_code == 200
+        assert "No saved order" in r.content.decode()

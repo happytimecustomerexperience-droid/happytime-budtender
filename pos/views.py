@@ -1774,6 +1774,38 @@ def _load_draft_lines(request, draft, store):
 
 @login_required
 @require_http_methods(["POST"])
+def _find_phone_cart(needle: str):
+    """A saved order, by PHONE NUMBER or by draft token.
+
+    Budtenders have the customer in front of them, not a `pc-…` token — the token
+    box only ever worked because the queue panel filled it in. Typing the number
+    they just read off the counter is the actual gesture, so digits win:
+    ten digits are matched against `contact_phone` (normalised, since it is stored
+    however the shopper typed it), and anything else falls back to the token so the
+    queue panel's hidden field keeps working unchanged.
+
+    Newest first: a returning customer's older, already-collected orders must never
+    shadow the one they are standing here for.
+    """
+    needle = (needle or "").strip()
+    if not needle:
+        return None
+    live = PhoneCartDraft.objects.filter(
+        status__in=(PhoneCartDraft.Status.RELEASED, PhoneCartDraft.Status.OPEN))
+
+    digits = "".join(c for c in needle if c in "0123456789")
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) == 10:
+        for draft in live.order_by("-released_at", "-updated_at"):
+            stored = "".join(c for c in (draft.contact_phone or "") if c in "0123456789")
+            if stored.endswith(digits):
+                return draft
+        return None
+
+    return PhoneCartDraft.objects.filter(draft_token=needle).first()
+
+
 def phone_cart_claim(request):
     """Load a released phone-cart draft into the normal POS session cart.
 
@@ -1782,10 +1814,10 @@ def phone_cart_claim(request):
     """
     _require_not_door(request)
     token = str(request.POST.get("draft_token") or "").strip()
-    draft = PhoneCartDraft.objects.filter(draft_token=token).first()
+    draft = _find_phone_cart(token)
     if not draft:
         ctx = _cart_ctx(request.session.get("cart", []))
-        ctx["add_error"] = "Phone cart not found."
+        ctx["add_error"] = "No saved order for that phone number."
         return render(request, "pos/_cart.html", ctx)
     if draft.status not in {PhoneCartDraft.Status.RELEASED, PhoneCartDraft.Status.OPEN}:
         ctx = _cart_ctx(request.session.get("cart", []))

@@ -39,7 +39,8 @@
   </form>
   <button type="button" class="ghost" hx-post="{% url 'guest_start' %}" hx-target="#profile">Guest</button>
   <form hx-post="{% url 'phone_cart_claim' %}" hx-target="#cart" class="grow ac-form">
-    <input class="grow" name="draft_token" placeholder="Phone cart token..." autocomplete="off">
+    <input class="grow" name="draft_token" type="tel" inputmode="tel"
+           placeholder="Saved order — customer's phone number" autocomplete="off">
     <button type="submit">Load phone cart</button>
   </form>
   <div id="guests" class="ac-results"></div>

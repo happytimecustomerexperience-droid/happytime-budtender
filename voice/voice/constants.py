@@ -138,7 +138,11 @@ TOOL_SPECS = {
                 "store": {"type": "string", "enum": ["yakima", "mount-vernon", "pullman"]},
                 "category": {
                     "type": "string",
-                    "enum": ["flower", "concentrate", "cartridge", "edible", "tincture"],
+                    # "pre-roll" was missing while chat.py derived it, so _sanitize_args dropped
+                    # the category and the handler then failed its own required-field check —
+                    # every pre-roll ask answered "nothing in stock". budtender maps it in
+                    # CATEGORY_BY_SLOTKEY.
+                    "enum": ["flower", "concentrate", "cartridge", "edible", "tincture", "pre-roll"],
                 },
                 "subcategory": {"type": "string"},
                 "size": {"type": "string"},
