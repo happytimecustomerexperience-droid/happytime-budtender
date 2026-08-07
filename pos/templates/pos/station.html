@@ -1,0 +1,58 @@
+{% extends "pos/_shell.html" %}
+{% block title %}Station — Budtender POS{% endblock %}
+
+{% comment %}
+  THE STATION. What a budtender sees when they pick the tablet up: who is waiting,
+  which online orders are unclaimed, and the three ways to check someone in (queue
+  claim, ID scan, name/phone lookup).
+
+  There is deliberately no menu here. Checking a customer in is the job on this
+  screen, and every path that resolves one answers with HX-Redirect to `shop`
+  (see _advance_to_shop in views.py), so the tablet moves on by itself.
+{% endcomment %}
+
+{% block body %}
+{% if role != "door" %}
+<div id="queue" class="queuewrap" hx-get="{% url 'queue_panel' %}" hx-trigger="load, every 5s">
+  {% include "pos/_queue_panel.html" %}
+</div>
+
+<div class="customerbar">
+  <form hx-post="{% url 'scan' %}" hx-target="#profile" hx-encoding="multipart/form-data">
+    <input type="file" name="images" accept="image/*" capture="environment" multiple aria-label="Scan ID">
+    <button type="button" class="ghost idscan__toggle" data-target="screen-idscan">Scan barcode on device</button>
+    <div id="screen-idscan" class="idscan" hidden>
+      <video class="idscan__video" autoplay playsinline muted></video>
+      <p id="screen-idscan-status" class="muted" style="margin-top:8px"></p>
+      <div class="idscan__actions">
+        <button type="button" class="ghost idscan__close" data-target="screen-idscan">Close scanner</button>
+      </div>
+    </div>
+    <input type="hidden" id="id_payload" name="id_payload" value="">
+    <button type="submit" class="ghost">Scan ID</button>
+  </form>
+  <form hx-post="{% url 'lookup' %}" hx-target="#guests"
+        hx-trigger="submit, keyup changed delay:350ms" class="grow ac-form">
+    <input class="grow" name="phone" placeholder="Search customer by phone…" inputmode="tel" autocomplete="off">
+    <input class="grow" name="name" placeholder="Or search by name…" autocomplete="off">
+    <button type="submit">Find</button>
+  </form>
+  <button type="button" class="ghost" hx-post="{% url 'guest_start' %}" hx-target="#profile">Guest</button>
+  <form hx-post="{% url 'phone_cart_claim' %}" hx-target="#cart" class="grow ac-form">
+    <input class="grow" name="draft_token" placeholder="Phone cart token..." autocomplete="off">
+    <button type="submit">Load phone cart</button>
+  </form>
+  <div id="guests" class="ac-results"></div>
+  <div id="profile">
+    {% if acct_id %}
+      <span class="muted">{{ acct_name|default:"Guest" }} is checked in —
+        <a class="link" href="{% url 'shop' %}">go to the menu</a>.</span>
+    {% else %}
+      <span class="muted">No customer selected — claim from the queue, scan, search, or continue as guest.</span>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<main><p class="muted" style="padding:20px">Door role — use <a class="link" href="{% url 'door' %}">Door check-in</a>.</p></main>
+{% endif %}
+{% endblock %}

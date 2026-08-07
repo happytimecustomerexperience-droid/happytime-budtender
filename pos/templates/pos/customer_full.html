@@ -22,7 +22,7 @@
 </header>
 
 <nav class="crumbs" aria-label="Breadcrumb">
-  <a href="{% url 'screen' %}">Menu</a>
+  <a href="{% url 'shop' %}">Menu</a>
   <span class="sep">›</span>
   <a href="{% url 'customer' %}">{{ acct_name|default:"Customer" }}</a>
   <span class="sep">›</span>
@@ -41,7 +41,7 @@
           {% if cust.city or cust.state %} · 📍 {{ cust.city }}{% if cust.city and cust.state %}, {% endif %}{{ cust.state }}{% endif %}
         </div>
         <div class="actions">
-          <a class="restartbtn" href="{% url 'screen' %}" style="background:var(--amber)">🛍 Shop for {{ acct_name|default:"customer" }}</a>
+          <a class="restartbtn" href="{% url 'shop' %}" style="background:var(--amber)">🛍 Shop for {{ acct_name|default:"customer" }}</a>
           <a class="viewfull" href="{% url 'customer' %}">← Back to preview</a>
         </div>
       </div>

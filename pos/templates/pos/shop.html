@@ -1,0 +1,24 @@
+{% extends "pos/_shell.html" %}
+{% block title %}Menu — Budtender POS{% endblock %}
+
+{% comment %}
+  THE SHOP. Only reachable with a customer checked in (the `shop` view redirects to
+  the station otherwise), so the menu can personalise and the cart can actually be
+  submitted.
+
+  The menu itself is loaded by htmx from the `menu` view, which reads live register
+  inventory through pos.catalog — the same source and the same filters the public
+  storefront uses.
+{% endcomment %}
+
+{% block navback %}
+<a class="link" href="{% url 'screen' %}">← Station</a>
+{% endblock %}
+
+{% block body %}
+<main>
+  <div id="menu" hx-get="{% url 'menu' %}{% if initial_cat %}?cat={{ initial_cat }}{% endif %}" hx-trigger="load, customerChanged from:body">
+    <p class="muted">Loading menu…</p>
+  </div>
+</main>
+{% endblock %}

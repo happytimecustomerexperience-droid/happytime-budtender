@@ -1,10 +1,18 @@
-{% load static %}
-<!doctype html>
+{% load static %}<!doctype html>
+{% comment %}
+  Shared chrome for the two budtender screens. Split out when the single combined
+  page became a STATION (queue / check-in) and a SHOP (menu / cart): both need the
+  same header, the same cart drawer and the same scripts, and keeping two copies of
+  that in sync by hand is how the two screens drift apart.
+
+  Django's {% templatetag openComment %} #} is SINGLE-LINE ONLY — a multi-line one
+  renders as visible page text, which shipped once on the live queue panel.
+{% endcomment %}
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Budtender POS</title>
+  <title>{% block title %}Budtender POS{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -25,6 +33,11 @@
   {% endif %}
   <span class="spacer"></span>
   {% if role != "door" %}
+    {% comment %}
+      Station is the home screen, so it is always one tap away from the shop — a
+      budtender who needs to see the queue mid-sale should never have to restart.
+    {% endcomment %}
+    {% block navback %}{% endblock %}
     <a class="link" href="{% url 'door' %}">Door check-in</a>
     <button type="button" class="cartbtn" data-cart-open>🛒 Cart <span class="badge" id="cart-badge">{{ cart|length }}</span></button>
     {% if acct_id %}
@@ -40,46 +53,7 @@
   <a class="link" href="{% url 'logout' %}">Sign out</a>
 </header>
 
-{% if role != "door" %}
-<div id="queue" class="queuewrap" hx-get="{% url 'queue_panel' %}" hx-trigger="load, every 5s">
-  {% include "pos/_queue_panel.html" %}
-</div>
-
-<div class="customerbar">
-  <form hx-post="{% url 'scan' %}" hx-target="#profile" hx-encoding="multipart/form-data">
-    <input type="file" name="images" accept="image/*" capture="environment" multiple aria-label="Scan ID">
-    <button type="button" class="ghost idscan__toggle" data-target="screen-idscan">Scan barcode on device</button>
-    <div id="screen-idscan" class="idscan" hidden>
-      <video class="idscan__video" autoplay playsinline muted></video>
-      <p id="screen-idscan-status" class="muted" style="margin-top:8px"></p>
-      <div class="idscan__actions">
-        <button type="button" class="ghost idscan__close" data-target="screen-idscan">Close scanner</button>
-      </div>
-    </div>
-    <input type="hidden" id="id_payload" name="id_payload" value="">
-    <button type="submit" class="ghost">Scan ID</button>
-  </form>
-  <form hx-post="{% url 'lookup' %}" hx-target="#guests"
-        hx-trigger="submit, keyup changed delay:350ms" class="grow ac-form">
-    <input class="grow" name="phone" placeholder="Search customer by phone…" inputmode="tel" autocomplete="off">
-    <input class="grow" name="name" placeholder="Or search by name…" autocomplete="off">
-    <button type="submit">Find</button>
-  </form>
-  <button type="button" class="ghost" hx-post="{% url 'guest_start' %}" hx-target="#profile">Guest</button>
-  <form hx-post="{% url 'phone_cart_claim' %}" hx-target="#cart" class="grow ac-form">
-    <input class="grow" name="draft_token" placeholder="Phone cart token..." autocomplete="off">
-    <button type="submit">Load phone cart</button>
-  </form>
-  <div id="guests" class="ac-results"></div>
-  <div id="profile">{% if not acct_id %}<span class="muted">No customer selected — claim from the queue, scan, search, or continue as guest.</span>{% endif %}</div>
-</div>
-{% endif %}
-
-<main>
-  <div id="menu" hx-get="{% url 'menu' %}{% if initial_cat %}?cat={{ initial_cat }}{% endif %}" hx-trigger="load, customerChanged from:body">
-    <p class="muted">Loading menu…</p>
-  </div>
-</main>
+{% block body %}{% endblock %}
 
 {% if role != "door" %}
 <!-- cart drawer -->

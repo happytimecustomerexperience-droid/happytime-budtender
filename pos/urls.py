@@ -5,6 +5,7 @@ from . import dashboards, views
 urlpatterns = [
     path("", views.begin, name="begin"),
     path("pos/", views.screen, name="screen"),
+    path("shop/", views.shop, name="shop"),
     path("start/", views.start, name="start"),
     path("end/", views.end_session, name="end"),
     path("login/", views.login_view, name="login"),

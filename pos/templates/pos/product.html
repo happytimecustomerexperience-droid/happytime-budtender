@@ -23,9 +23,9 @@
 
 {% if not missing %}
 <nav class="crumbs" aria-label="Breadcrumb">
-  <a href="{% url 'screen' %}">Menu</a>
+  <a href="{% url 'shop' %}">Menu</a>
   {% if p.cat_label %}<span class="sep">›</span>
-  <a href="{% url 'screen' %}?cat={{ p.cat_key }}">{{ p.cat_label }}</a>{% endif %}
+  <a href="{% url 'shop' %}?cat={{ p.cat_key }}">{{ p.cat_label }}</a>{% endif %}
   <span class="sep">›</span>
   <span class="here">{{ p.name }}</span>
 </nav>
@@ -33,7 +33,7 @@
 
 <main>
 {% if missing %}
-  <div class="banner err">Product unavailable. <a href="{% url 'screen' %}">Back to menu</a></div>
+  <div class="banner err">Product unavailable. <a href="{% url 'shop' %}">Back to menu</a></div>
 {% else %}
   <div class="detail">
     <!-- HERO -->

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 import os
 import sys
 from collections import Counter
@@ -271,7 +272,9 @@ def _start_session(request, acct_id, name, phone, how="lookup", **meta):
     allowed[str(acct_id)] = {"name": name or "", "phone": phone or ""}
     request.session["guests"] = allowed
     tracking.start_visit(request, acct_id=acct_id, name=name, phone=phone, how=how, **meta)
-    return redirect("screen")
+    # A customer is now selected, so go straight to the menu rather than back to the
+    # station — the station's whole job was picking this person.
+    return redirect("shop")
 
 
 def _normalize_name(value):
@@ -599,13 +602,55 @@ def start(request):
 
 
 # â”€â”€ POS screen (requires an active session) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def _advance_to_shop(resp):
+    """Send an htmx response on to the menu.
+
+    Customer selection happens on the STATION screen, which has no menu on it — so
+    every path that resolves a customer (claim, scan, guest, load order) has to move
+    the tablet to /pos/shop/. HX-Redirect makes htmx do a real client-side navigation
+    rather than swapping a fragment into a page that no longer shows it.
+    """
+    resp["HX-Redirect"] = reverse("shop")
+    return resp
+
+
 @login_required
 def screen(request):
-    # The screen is the hub: budtenders land here to see the QUEUE + claim / scan / lookup.
-    # The menu only personalizes once a customer is selected (acct_id). Door browses read-only.
+    """The STATION — queue, orders waiting, scan, lookup. No menu.
+
+    Split out from the old single page because this runs on a tablet at the counter:
+    the budtender's first job is to see who is waiting and check someone in, and a
+    4,700-product grid underneath that is noise until a customer exists. The menu
+    lives at `shop` and is only reachable once one does.
+    """
     role = _role(request)
     store_name = request.session.get("store") or ""
-    return render(request, "pos/screen.html", {
+    return render(request, "pos/station.html", {
+        "stores": list(_stores().keys()),
+        "active": request.session.get("store"),
+        "cart": request.session.get("cart", []),
+        "acct_id": request.session.get("acct_id"),
+        "acct_name": request.session.get("acct_name"),
+        "role": role,
+        "queue": list(_store_queue(store_name)) if role != "door" else [],
+        "phone_carts": _phone_cart_queue(store_name) if role != "door" else [],
+    })
+
+
+@login_required
+def shop(request):
+    """The MENU, for a customer who is already checked in.
+
+    Gated on acct_id: landing here with nobody selected means the session was
+    restarted or the tablet was reloaded mid-shift, and the honest answer is to send
+    them back to the station rather than show a menu that cannot be checked out.
+    """
+    role = _role(request)
+    if role == "door":
+        return redirect("door")
+    if not request.session.get("acct_id"):
+        return redirect("screen")
+    return render(request, "pos/shop.html", {
         "stores": list(_stores().keys()),
         "active": request.session.get("store"),
         "cart": request.session.get("cart", []),
@@ -613,8 +658,6 @@ def screen(request):
         "acct_name": request.session.get("acct_name"),
         "initial_cat": request.GET.get("cat", ""),
         "role": role,
-        "queue": list(_store_queue(store_name)) if role != "door" else [],
-        "phone_carts": _phone_cart_queue(store_name) if role != "door" else [],
     })
 
 
@@ -753,7 +796,7 @@ def profile(request):
         "history": load_customer_history(acct_id=acct, phone=phone, name=name),
     })
     resp["HX-Trigger"] = "customerChanged"  # re-rank the menu For-You
-    return resp
+    return _advance_to_shop(resp)
 
 
 @login_required
@@ -997,12 +1040,32 @@ def claim(request, visit_id):
                     dutchie_acct_id=int(v.acct_id) if str(v.acct_id or "").isdigit() else None)
     ShopEvent.objects.create(visit=v, kind="claimed", budtender=request.user.username,
                              acct_id=v.acct_id, detail=v.wait_display)
+
+    # If this person already ordered online, their cart is waiting — load it here so
+    # the budtender doesn't have to spot the separate "Orders waiting" row and match
+    # it up by hand with the customer in front of them.
+    draft = _waiting_draft_for(store.name if store else "", acct_id=v.acct_id, phone=v.phone)
+    order_note = ""
+    if draft:
+        loaded, skipped = _load_draft_lines(request, draft, store)
+        draft.status = PhoneCartDraft.Status.CLAIMED
+        draft.claimed_at = timezone.now()
+        audit = draft.audit or []
+        audit.append({"at": timezone.now().isoformat(), "action": "pos_claim_via_queue",
+                      "loaded_lines": loaded, "skipped": skipped[:20], "visit": v.id})
+        draft.audit = audit[-100:]
+        draft.save(update_fields=["status", "claimed_at", "audit", "updated_at"])
+        order_note = f"Loaded their online order — {loaded} item{'' if loaded == 1 else 's'}."
+        if skipped:
+            order_note += " Needs manual review: " + ", ".join(skipped[:3])
+
     resp = render(request, "pos/_profile.html", {
         "acct_id": v.acct_id, "scan": {"accts_name": v.acct_name, "phone": v.phone},
         "history": load_customer_history(acct_id=v.acct_id, phone=v.phone, name=v.acct_name),
+        "order_note": order_note,
     })
     resp["HX-Trigger"] = "customerChanged"
-    return resp
+    return _advance_to_shop(resp)
 
 
 @login_required
@@ -1026,7 +1089,7 @@ def guest_start(request):
     resp = render(request, "pos/_profile.html",
                   {"acct_id": gid, "scan": {"accts_name": "Guest", "phone": ""}})
     resp["HX-Trigger"] = "customerChanged"
-    return resp
+    return _advance_to_shop(resp)
 
 
 # -- customer profile (2 pages: preview + full transaction history) ------------
@@ -1277,7 +1340,7 @@ def _customer_ctx(request, full):
                             params.append(f"cat={str(r.get('category')).strip().lower()}")
                         if r.get("subcategory"):
                             params.append(f"subcat={str(r.get('subcategory')).strip().lower()}")
-                        r["menu_link"] = reverse("screen") + ("?" + "&".join(params) if params else "")
+                        r["menu_link"] = reverse("shop") + ("?" + "&".join(params) if params else "")
                     r["similar_rows"] = []
                     if not r["in_stock"]:
                         cands = []
@@ -1601,6 +1664,75 @@ def cart_remove(request):
     return render(request, "pos/_cart.html", _cart_ctx(cart))
 
 
+def _waiting_draft_for(store_name, *, acct_id=None, phone=None):
+    """A released online order belonging to this person at this store, or None.
+
+    Matched on Dutchie account id first, then on the phone's last 10 digits — the
+    same identity `bundles.customers` resolves an order by. Without this, someone
+    who ordered online and then walked in was claimed off the door queue with an
+    EMPTY cart, and the budtender had to notice the separate "Orders waiting" row
+    and load it by hand — with the customer standing there.
+    """
+    if not store_name:
+        return None
+    qs = PhoneCartDraft.objects.filter(
+        location_slug=dutchie_stores.location_slug(store_name),
+        status=PhoneCartDraft.Status.RELEASED,
+    )
+    digits = re.sub(r"[^0-9]", "", str(phone or ""))[-10:]
+    match = None
+    if acct_id:
+        match = qs.filter(dutchie_acct_id=str(acct_id)).order_by("-released_at").first()
+    if match is None and len(digits) == 10:
+        match = qs.filter(contact_phone__endswith=digits).order_by("-released_at").first()
+    return match
+
+
+def _load_draft_lines(request, draft, store):
+    """Draft lines -> session cart. Returns (loaded, skipped_names).
+
+    Extracted from `phone_cart_claim` so claiming a queued CUSTOMER can populate the
+    cart identically to claiming the order directly — one code path, so the two can
+    never drift into pricing the same order differently.
+    """
+    cart = request.session.get("cart", [])
+    skipped, loaded = [], 0
+    for line in draft.lines or []:
+        if not isinstance(line, dict):
+            continue
+        product_id = line.get("product_id")
+        p = catalog.find_item(store.name, product_id=product_id) if store and product_id else None
+        if not p:
+            skipped.append(line.get("name") or line.get("sku") or "item")
+            continue
+        item = {k: p.get(k) for k in _TRUSTED_ITEM_KEYS}
+        item["Discount"] = 0.0
+        try:
+            item["Cnt"] = max(1, min(99, int(line.get("quantity") or 1)))
+        except (TypeError, ValueError):
+            item["Cnt"] = 1
+        # Same live per-serial confirmation `cart_add` does for a walk-in. Without it
+        # a claimed online order was priced off the browse cache while an identical
+        # walk-in add got a live check — two prices for one product in one POS.
+        serial = p.get("SerialNo")
+        if store and serial:
+            try:
+                live = PosRegisterClient.parse_price_check(_client(store).price_check(serial))
+                if live["price"] is not None:
+                    item["UnitPrice"] = live["price"]
+            except Exception as exc:
+                logger.warning("price_check failed for %s (using cached price): %s", serial, exc)
+        cart.append(item)
+        loaded += 1
+        tracking.track(request, "item_add", product=item, price=item.get("UnitPrice"),
+                       qty=item["Cnt"], brand=p.get("brand"),
+                       category=p.get("cat_key") or p.get("category"),
+                       subcategory=p.get("subcategory"), bucket=p.get("bucket"),
+                       source_recommendation_type="phone_cart")
+    request.session["cart"] = cart
+    return loaded, skipped
+
+
 @login_required
 @require_http_methods(["POST"])
 def phone_cart_claim(request):
@@ -1626,31 +1758,8 @@ def phone_cart_claim(request):
     # to the FIRST store — a Mount Vernon draft would load against Yakima stock.
     request.session["store"] = dutchie_stores.store_key(draft.location_slug)
     store = _active_store(request)
+    loaded, skipped = _load_draft_lines(request, draft, store)
     cart = request.session.get("cart", [])
-    skipped = []
-    loaded = 0
-    for line in draft.lines or []:
-        if not isinstance(line, dict):
-            continue
-        product_id = line.get("product_id")
-        p = catalog.find_item(store.name, product_id=product_id) if store and product_id else None
-        if not p:
-            skipped.append(line.get("name") or line.get("sku") or "item")
-            continue
-        item = {k: p.get(k) for k in _TRUSTED_ITEM_KEYS}
-        item["Discount"] = 0.0
-        try:
-            item["Cnt"] = max(1, min(99, int(line.get("quantity") or 1)))
-        except (TypeError, ValueError):
-            item["Cnt"] = 1
-        cart.append(item)
-        loaded += 1
-        tracking.track(request, "item_add", product=item, price=item.get("UnitPrice"),
-                       qty=item["Cnt"], brand=p.get("brand"),
-                       category=p.get("cat_key") or p.get("category"),
-                       subcategory=p.get("subcategory"), bucket=p.get("bucket"),
-                       source_recommendation_type="phone_cart")
-    request.session["cart"] = cart
     draft.status = PhoneCartDraft.Status.CLAIMED
     draft.claimed_at = timezone.now()
     # Attach the customer. cart_submit refuses to run without an AcctId, so a
@@ -1687,7 +1796,7 @@ def phone_cart_claim(request):
         notes.append("Some items need manual review: " + ", ".join(skipped[:3]))
     if notes:
         ctx["add_error"] = " ".join(notes)
-    return render(request, "pos/_cart.html", ctx)
+    return _advance_to_shop(render(request, "pos/_cart.html", ctx))
 
 
 @login_required

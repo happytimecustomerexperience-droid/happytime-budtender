@@ -83,7 +83,10 @@ def test_start_phone_match_sets_session_and_redirects(auth, monkeypatch):
     monkeypatch.setattr(V, "_client", lambda s: FakeClient(guests={"Data": [
         {"Guest_id": 710000001, "Name": "Jane Doe", "PhoneNo": "5095550100"}]}))
     r = auth.post(reverse("start"), {"phone": "5095550100", "store": "yakima"}, SERVER_NAME="localhost")
-    assert r.status_code == 302 and r.url == reverse("screen")
+    # `shop`, not `screen`: starting a session HAS selected a customer, and the
+    # station's only job is picking one. Sending them back there would make the
+    # budtender tap through an empty check-in screen to reach the menu.
+    assert r.status_code == 302 and r.url == reverse("shop")
     assert auth.session["acct_id"] == 710000001 and auth.session["acct_phone"] == "5095550100"
 
 
@@ -523,5 +526,5 @@ def test_start_continue_as_guest(auth, monkeypatch):
 
     monkeypatch.setattr(V, "_client", lambda s: GC())
     r = auth.post(reverse("start"), {"guest": "1", "store": "yakima"}, SERVER_NAME="localhost")
-    assert r.status_code == 302 and r.url == reverse("screen")
+    assert r.status_code == 302 and r.url == reverse("shop")   # see the phone-match test
     assert auth.session["acct_id"] == 47532853 and auth.session["acct_name"] == "Guest"

@@ -2,6 +2,12 @@
 <div id="guests" hx-swap-oob="true" class="ac-results"></div>
 {% if error %}<span class="err">{{ error }}</span>{% endif %}
 {% if warn %}<span class="warn">{{ warn }}</span>{% endif %}
+{% comment %}
+  Set when claiming a queued customer who ALSO had an online order waiting — their
+  cart is already loaded by the time this renders, and staff needs to know that
+  rather than discovering it in the drawer.
+{% endcomment %}
+{% if order_note %}<span class="badge-ok">{{ order_note }}</span>{% endif %}
 {% if scan or acct_id %}
   <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
     <strong>{{ scan.accts_name|default:"Customer" }}</strong>
