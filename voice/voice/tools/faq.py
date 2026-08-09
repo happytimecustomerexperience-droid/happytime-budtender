@@ -94,6 +94,11 @@ def _grounded(query: str, store: str | None, topic: str = "") -> dict | None:
     from kb import semantic
 
     ranked = semantic.rank_faq(query, store=store, top_k=3, topic=topic)
+    # NOTE: deliberately NO unconstrained fallback when a topic scope returns nothing. Tried it;
+    # it re-introduced the exact bug the scope exists to kill — "what time do you close today"
+    # went back to confidently reciting the July specials row. When the KB genuinely has no
+    # confirmed hours row, declining and offering a human is the correct answer, and the fix is
+    # DATA (seed the store's hours via the dashboard), not a looser retrieval rule.
     if not ranked:
         return None
     top_row, top_score = ranked[0]
