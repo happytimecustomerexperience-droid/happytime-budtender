@@ -245,7 +245,9 @@ def login_view(request):
             ss = StaffSession.objects.create(
                 user=request.user, username=request.user.username, role=role,
                 store=store, register_id=register_id,
-                register_name=_register_name(store, register_id), ip=_client_ip(request))
+                register_name=_register_name(store, register_id), ip=_client_ip(request),
+                dutchie_permissions=identity.get("permissions") or [],
+                dutchie_permissions_known=bool(identity.get("permissions_known")))
             request.session["staff_session_id"] = ss.id
         except Exception as exc:
             logger.warning("StaffSession create failed: %s", exc)

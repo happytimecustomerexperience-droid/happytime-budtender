@@ -1,6 +1,8 @@
 {
   "_source": "LIVE capture, POST https://ash.backoffice.dutchie.com/api/posv3/user/EmployeeLogin, 2026-08-07. Identical body from ash.pos.dutchie.com. SessionGId/SessionId redacted; TraceId varies per call.",
-  "_note_locid": "REQUESTED LocId=3501 (Yakima); Dutchie ANSWERED LocId=3498, which is none of our three stores (3499/3500/3501). EmployeeLogin does NOT scope to the store we ask for, so a successful login is NOT evidence the employee belongs at the picked store.",
+  "_note_locid": "CORRECTED 2026-08-09. An earlier note here read the LocId wrong. 3498 IS Yakima — that is what production .env says, and registers/get on 3498 returns the six tills seen in the browser capture. The 3501 the first probe sent came from a stale LOCAL .env.dutchie; asking Dutchie for registers at 3501 returns an EMPTY list, so 3501 is not a Happy Time location at all and Dutchie simply fell back to the user's own.",
+  "_note_login_is_not_location_scoped": "Still true, but on better evidence: the REAL Dutchie POS sends EmployeeLogin as {username, password, url, appId} with NO LocId and NO LspId (browser capture, 2026-08-09). The login is an identity check, not a location grant, so a success says WHO and never WHERE.",
+  "_note_permissions": "EmployeeLogin carries no role — but Dutchie DOES have permissions, at POST /api/permissions/getV2 (408 entries for our service account, incl. LogintoPOS). It answers only for the authenticated session's own user; asking for any other UserId is refused.",
   "Result": true,
   "Message": "valid pos user",
   "Data": {

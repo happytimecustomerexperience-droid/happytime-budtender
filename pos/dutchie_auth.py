@@ -28,8 +28,8 @@ import logging
 
 from django.contrib.auth.models import User
 
-from dutchie.login import (DutchieAuthRejected, DutchieAuthUnavailable,
-                           authenticate_employee)
+from dutchie.login import (LOGIN_TO_POS, DutchieAuthRejected, DutchieAuthUnavailable,
+                           authenticate_employee, employee_permissions)
 from dutchie.stores import get_store
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 BAD_CREDENTIALS = "That Dutchie username or password wasn't accepted for this store."
 UNAVAILABLE = ("Can't reach Dutchie to verify your sign-in. This is not a wrong "
                "password — try again, and tell a manager if it persists.")
+# Distinct from BAD_CREDENTIALS on purpose: the password was RIGHT. Telling someone
+# to re-type it would waste their shift on a problem only a manager can fix.
+NO_POS_ACCESS = ("Your Dutchie account isn't allowed to use a register at this store. "
+                 "Ask a manager to grant POS access in Dutchie.")
 
 
 class LoginRejected(Exception):
@@ -75,6 +79,21 @@ def verify(store_key: str, username: str, password: str) -> dict:
     except DutchieAuthUnavailable as exc:
         logger.warning("dutchie auth unavailable for store=%s: %s", store_key, exc)
         raise LoginUnavailable(UNAVAILABLE) from None
+
+    # One call on the employee's OWN session, before we drop it. This is the only
+    # moment we can ask — Dutchie refuses to report permissions for anyone but the
+    # authenticated user, so the shared service credential cannot look staff up.
+    perms = employee_permissions(store.base_url, got, lsp_id=int(store.lsp_id),
+                                 loc_id=int(store.loc_id), org_id=int(store.org_id))
+    if perms is not None and LOGIN_TO_POS not in perms:
+        # A DEFINITE no from Dutchie: this account is not allowed on a register.
+        logger.info("dutchie denies %s POS access at store=%s", "user", store_key)
+        raise LoginRejected(NO_POS_ACCESS)
+    got["permissions"] = sorted(perms) if perms is not None else []
+    got["permissions_known"] = perms is not None
+    # The session was borrowed for that one question; the shift runs on the store's
+    # service credential from here.
+    got.pop("cookie_header", None)
     return got
 
 
@@ -92,11 +111,19 @@ def role_for(user: User, requested: str) -> str:
     checkout by not choosing `door`. The eight `_require_not_door` guards on cart,
     claim and checkout only ever bound people who opted into being bound.
 
-    Dutchie cannot settle this for us. A live capture of `EmployeeLogin` (see
-    dutchie/fixtures/employee_login_success.json) carries Id, UserName, FullName,
-    LoginType and session material — and no permission, role, group or access-level
-    field of any kind, at either the backoffice or the POS origin. So the only
-    honest source of "this person works the door" is one we keep ourselves.
+    CORRECTED 2026-08-09. An earlier version of this docstring said Dutchie has no
+    permission data. That was true of the EmployeeLogin RESPONSE and false of
+    Dutchie: `/api/permissions/getV2` returns a real per-user permission set (408
+    entries for our service account). `verify()` now reads it at sign-in and refuses
+    anyone Dutchie says may not use a register.
+
+    It still cannot settle door-vs-budtender, for a concrete reason: we have exactly
+    one Dutchie credential to look at, and it holds `Administrator`. Until a real
+    door employee signs in we do not know WHICH permission separates them — every
+    candidate (`SaveOrders`, `POSManager`, `EditPOSCustomerStatus`) is a guess, and a
+    guessed permission gate either locks out budtenders or admits door staff. The
+    permission set is recorded on every shift so the answer arrives as data. Until
+    then the group below is the honest source, and it is one a manager controls.
 
     Deliberately one-directional: the group can only ever REMOVE the ability to
     sell. There is no group that grants it, because that would mean a mistake in

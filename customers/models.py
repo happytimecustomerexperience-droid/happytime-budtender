@@ -71,6 +71,14 @@ class StaffSession(models.Model):
     login_at = models.DateTimeField(auto_now_add=True, db_index=True)
     logout_at = models.DateTimeField(null=True, blank=True)
     ip = models.GenericIPAddressField(null=True, blank=True)
+    # What Dutchie said this employee may do, read once at sign-in on their own
+    # session. Recorded rather than acted on beyond the LogintoPOS gate: with only
+    # an Administrator credential to look at we cannot yet tell which permission
+    # separates a door person from a budtender, and guessing would either lock out
+    # budtenders or admit door staff. A few real shifts turn that into data.
+    # Empty list + dutchie_permissions_known False means Dutchie gave no answer.
+    dutchie_permissions = models.JSONField(default=list, blank=True)
+    dutchie_permissions_known = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-login_at"]

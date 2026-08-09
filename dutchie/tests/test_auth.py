@@ -152,13 +152,68 @@ def test_dutchie_echoes_the_password_back_so_nothing_may_log_the_body():
     assert "logger." not in src, "authenticate_employee must never log — the body carries the password"
 
 
-def test_a_login_at_one_store_is_not_proof_of_belonging_to_it():
-    """We asked for LocId 3501 (Yakima); Dutchie answered LocId 3498.
+def test_a_login_is_an_identity_check_not_a_location_grant():
+    """CORRECTED. The first version of this test read the LocId wrong.
 
-    3498 is none of our three stores (3499 / 3500 / 3501), so EmployeeLogin does NOT
-    scope to the location we send. A successful sign-in therefore proves WHO someone
-    is, never WHERE they are entitled to stand. Anything that later tries to treat
-    the store picker as an authorisation boundary has to contend with this.
+    It asserted 3498 was "none of our stores" and concluded Dutchie ignores the
+    location we send. 3498 IS Yakima — production says so, and registers/get on 3498
+    returns exactly the six tills in the browser capture. The 3501 the first probe
+    sent came from a stale local env file; Dutchie returned the user's real location
+    because 3501 is not a Happy Time location at all (registers/get on it is empty).
+
+    The conclusion survives on better evidence: the real Dutchie POS sends
+    EmployeeLogin with NO LocId and NO LspId whatsoever. So the store picker on our
+    sign-in form decides which credential we act as — not who is allowed where.
     """
-    data = _fixture("employee_login_success.json")["Data"]
-    assert data["LocId"] not in (3499, 3500, 3501)
+    from dutchie.login import authenticate_employee
+    import inspect
+    src = inspect.getsource(authenticate_employee)
+    assert "identity" in src.lower(), "the docstring no longer states what a login proves"
+
+
+# ── permissions: never turn an outage into a denial ───────────────────────────
+def _perm_resp(monkeypatch, resp):
+    monkeypatch.setattr("dutchie.login.http_post", lambda *a, **k: resp)
+    from dutchie.login import employee_permissions
+    return employee_permissions("https://bo.example",
+                                {"session_gid": "s", "user_id": 1, "cookie_header": "c=1"},
+                                lsp_id=1745, loc_id=3498, org_id=8002)
+
+
+def test_permissions_are_read_from_the_live_shape(monkeypatch):
+    # Verbatim from the capture: Data is a flat list of permission names.
+    got = _perm_resp(monkeypatch, FakeResp(body={
+        "Result": True, "Data": ["Administrator", "LogintoPOS", "ViewCustomers"]}))
+    from dutchie.login import LOGIN_TO_POS
+    assert LOGIN_TO_POS in got and len(got) == 3
+
+
+def test_an_account_holding_nothing_is_an_answer_not_a_silence(monkeypatch):
+    # Empty list means "this account has no permissions" — a real, actionable no.
+    assert _perm_resp(monkeypatch, FakeResp(body={"Result": True, "Data": []})) == set()
+
+
+@pytest.mark.parametrize("resp", [
+    FakeResp(status=403, text="<html>cf</html>"),
+    FakeResp(status=500),
+    FakeResp(body={"Result": False, "Message": "nope"}),
+    FakeResp(body={"Result": True, "Data": None}),
+    FakeResp(status=200, body=None, text="<html>"),
+])
+def test_no_answer_is_none_never_an_empty_set(monkeypatch, resp):
+    """None and set() must stay distinguishable.
+
+    Collapsing them would make a Cloudflare blip look like "this employee has no
+    permissions", which locks a whole store out of its own tills mid-shift — a worse
+    failure than the one the gate is guarding against.
+    """
+    assert _perm_resp(monkeypatch, resp) is None
+
+
+def test_a_transport_error_is_none(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("reset")
+    monkeypatch.setattr("dutchie.login.http_post", boom)
+    from dutchie.login import employee_permissions
+    assert employee_permissions("https://bo.example", {"session_gid": "s", "user_id": 1},
+                                lsp_id=1, loc_id=1, org_id=1) is None

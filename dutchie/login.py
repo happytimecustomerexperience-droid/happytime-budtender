@@ -49,9 +49,13 @@ def authenticate_employee(base_url: str, username: str, password: str,
     ("", "", 0) hole was reachable in production, not theoretical. The rejection body
     also ECHOES THE SUBMITTED PASSWORD, which is why nothing in here logs.
 
-    NOT confirmed, and deliberately not enforced: we sent LocId 3501 and Dutchie
-    answered LocId 3498. EmployeeLogin does not scope to the location we ask for, so
-    a success proves WHO, never WHERE.
+    The login is an IDENTITY check, not a location grant: the real Dutchie POS sends
+    EmployeeLogin with no LocId and no LspId at all (browser capture, 2026-08-09), so
+    a success proves WHO, never WHERE. We still pass them because the endpoint accepts
+    them and other calls need the pair — but nothing may read a success as "this
+    person belongs at this store".
+
+    For what this employee is ALLOWED to do, see `employee_permissions` below.
     """
     url = urljoin(base_url.rstrip("/") + "/", "api/posv3/user/EmployeeLogin")
     payload = {"UserName": username, "Password": password, "AppId": 2,
@@ -103,6 +107,53 @@ def authenticate_employee(base_url: str, username: str, password: str,
     if not session_gid or user_id <= 0 or not cookie_header:
         raise DutchieAuthRejected("no session issued")
     return {"user_id": user_id, "session_gid": session_gid, "cookie_header": cookie_header}
+
+
+# The permission every POS user must hold. Dutchie's own name for it, verbatim.
+LOGIN_TO_POS = "LogintoPOS"
+
+
+def employee_permissions(base_url: str, identity: dict, *, lsp_id: int, loc_id: int,
+                         org_id: int, timeout: int = 20) -> set[str] | None:
+    """What Dutchie says THIS employee may do, or None if it would not say.
+
+    POST /api/permissions/getV2 -> Data: ["Administrator", "LogintoPOS", ...].
+
+    It must be called with the EMPLOYEE'S OWN session, which is the only reason
+    `authenticate_employee` hands back a cookie header we otherwise discard. Probed
+    live: Dutchie answers for the session's own user and REFUSES (403) any request
+    naming a different UserId, so this cannot be asked on someone else's behalf and
+    the service account cannot look staff up. One call, at sign-in, then the session
+    is dropped — no password is retained and nothing is re-minted mid-shift.
+
+    None means "no answer", never "no permissions". The caller must not read an
+    outage as a denial: a Cloudflare blip that locked a store out of its own till
+    mid-shift would be a worse failure than the one this is guarding against, and
+    the person has already proved their identity to get this far.
+    """
+    url = urljoin(base_url.rstrip("/") + "/", "api/permissions/getV2")
+    body = {"SessionId": identity.get("session_gid", ""), "LspId": str(lsp_id),
+            "LocId": str(loc_id), "OrgId": str(org_id),
+            "UserId": str(identity.get("user_id", ""))}
+    try:
+        resp = http_post(url, json=body, timeout=timeout, headers=_headers(
+            base_url, **{"Accept": "application/json, text/plain, */*",
+                         "Content-Type": "application/json",
+                         "cookie": identity.get("cookie_header", "")}))
+        if resp.status_code >= 400:
+            logger.info("permissions/getV2 HTTP %s — treating as no answer", resp.status_code)
+            return None
+        data = resp.json() if resp.content else {}
+    except Exception as exc:
+        logger.info("permissions/getV2 unavailable: %s", type(exc).__name__)
+        return None
+    if not isinstance(data, dict) or data.get("Result") is False:
+        return None
+    rows = data.get("Data")
+    if not isinstance(rows, list):
+        return None
+    # An empty list IS an answer — it means this account holds nothing.
+    return {str(r) for r in rows if r}
 
 
 def _cookies_from(resp) -> str:
