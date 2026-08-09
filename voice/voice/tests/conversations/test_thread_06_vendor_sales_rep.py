@@ -19,11 +19,13 @@ def test_wholesale_rep_never_reaches_the_vendor_path(convo, fake_bt):
     c = convo(store="yakima")
 
     # 1 — he opens the way a rep opens: name, company, and who he wants.
+    # FIXED (retrieval-precision follow-up): this used to ground confidently on an unrelated KB
+    # row (his question was never addressed either way). The relevance floor now declines rather
+    # than guess, so he gets the honest human-handoff fallback instead.
     t = c.say("hi this is Marcus with Cascade Crest Distribution, is your buyer available")
     assert t.tools == ["faq_lookup"], "the only routes are FAQ and product search — no vendor tool"
     assert t.intent == "greeting_other", "there is no vendor intent label to land on"
-    assert t.grounded and t.sources, "it answers confidently anyway"
-    # ...but the confident answer is about something else entirely: his question is never addressed.
+    assert t.grounded is False
     assert not any(
         word in t.answer.lower() for word in ("buyer", "purchasing", "receiving", "wholesale")
     ), f"answered a B2B question with an unrelated KB row: {t.answer!r}"
@@ -38,13 +40,13 @@ def test_wholesale_rep_never_reaches_the_vendor_path(convo, fake_bt):
     assert "notify_vendor_callback" not in t.tools
 
     # 3 — he corrects the misread from turn 2. It does not help.
+    # FIXED (retrieval-precision follow-up): this used to ground on the online-order FAQ (never
+    # mentioning "manifest" either way). The relevance floor now declines instead of guessing.
     t = c.say("no I'm not shopping, I need to send over a manifest and get a purchase order placed")
     assert t.tools == ["faq_lookup"], "the correction routes nowhere new"
     assert t.intent == "general_faq", "'order' matches the FAQ-first regex, not a vendor route"
-    assert t.grounded
-    assert "manifest" not in t.answer.lower(), (
-        f"he asked about a manifest and got the online-order FAQ: {t.answer!r}"
-    )
+    assert t.grounded is False
+    assert "manifest" not in t.answer.lower()
 
     # 4 — he escalates the human way, and trips the complaint detector on the word "manager".
     t = c.say("can you give me the purchasing manager's direct line then")
@@ -114,16 +116,17 @@ def test_rep_calls_pullman_back_and_the_kb_promises_a_callback_nobody_logs(convo
 
     c = convo(store="pullman")
 
+    # FIXED (retrieval-precision follow-up): this used to ground confidently on the retail "no
+    # delivery" FAQ. The relevance floor now declines instead of guessing at a B2B question.
     t = c.say("morning, Marcus again from Cascade Crest, who handles purchasing over there")
     assert t.raw["store"] == "pullman", "store scoping still applies to a vendor call"
     assert t.intent == "greeting_other"
-    assert "no delivery" in t.answer.lower(), (
-        f"a delivery vendor is told we don't deliver (the retail pickup FAQ): {t.answer!r}"
-    )
+    assert t.grounded is False
 
+    # FIXED (retrieval-precision follow-up): this used to ground on an unrelated row too.
     t = c.say("I've got a Metrc transfer manifest I need to send before the truck rolls")
     assert t.intent == "greeting_other", "a manifest hand-off isn't even labelled a FAQ"
-    assert t.grounded
+    assert t.grounded is False
     assert "manifest" not in t.answer.lower() and "metrc" not in t.answer.lower()
     assert vendor_flow.normalize_reason(t.said) == vendor_flow.REASON_MANIFEST
 

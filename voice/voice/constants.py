@@ -122,6 +122,12 @@ TOOL_SPECS = {
             "properties": {
                 "query": {"type": "string"},
                 "store": {"type": "string", "enum": ["yakima", "mount-vernon", "pullman"]},
+                # Constrains retrieval to the subject the caller actually asked about (enum-only —
+                # _sanitize_args drops any value outside it). "" = unconstrained, today's behaviour.
+                "topic": {
+                    "type": "string",
+                    "enum": ["hours_location", "specials", "return_policy", ""],
+                },
             },
             "required": ["query"],
         },

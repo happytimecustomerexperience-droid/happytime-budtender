@@ -99,14 +99,13 @@ def test_first_timer_asks_how_much_is_too_much(convo, fake_bt):
     assert _mg_figures(t5.answer) == set()
 
     # ── 6. The last worry of every first-timer. ─────────────────────────────────────
+    # FIXED (retrieval-precision follow-up): onset time used to be answered, confidently and
+    # "grounded", with the unrelated order-pickup ETA row (the dosing row that does answer it was
+    # retrieved but ranked below and never spoken). The relevance floor now declines instead of
+    # guessing — still honest, though ideally the dosing row would rank first instead (out of
+    # scope: that is a ranking-quality gap, not a false-confidence one).
     t6 = c.say("and how long before I feel it")
-    titles = [s["title"] for s in t6.sources]
-    # FINDING: onset time is answered, confidently and "grounded", with the order-pickup ETA —
-    # the dosing row that does answer it is retrieved but ranked below and never spoken.
-    assert t6.grounded is True
-    assert titles[0] == "How long until my order is ready?"
-    assert "peak / re-dose" in titles
-    assert "15 minutes" in t6.answer and "pickup" in t6.answer.lower()
+    assert t6.grounded is False
     assert _mg_figures(t6.answer) == set()
 
     assert len(c.turns) == 6

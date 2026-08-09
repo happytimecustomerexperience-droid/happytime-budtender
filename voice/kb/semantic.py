@@ -72,18 +72,55 @@ def _store_scoped(prefix: str) -> bool:
     return prefix in ("faq", "sf")
 
 
-def _build_corpus(store: str | None):
-    """Build the store-scoped corpus: a list of (chunk_id, chunk_text) and a parallel
-    {chunk_id: row} map. Store filtering happens HERE so a Yakima caller never gets a
-    Pullman-hours chunk (22-SPEC §4.1)."""
+# Topic constraint (voice/chat.py already classifies hours_location/specials/return_policy from
+# the caller's own words; faq_lookup honours it here). Maps a topic name to the {ModelName:
+# (field, {allowed values})} that row type uses to carry that subject. A model NOT listed for a
+# topic has no clean topic-bearing field for it and is excluded outright rather than guessed at
+# — e.g. EducationDoc/BlogDoc/WeightTypeTaxonomy carry no hours/specials/returns field, so a
+# topic-constrained hours query never surfaces a taxonomy row.
+TOPIC_ROW_FIELDS: dict[str, dict[str, tuple[str, frozenset[str]]]] = {
+    "hours_location": {
+        "FAQEntry": ("topic", frozenset({"hours"})),
+        "StoreFact": ("kind", frozenset({"hours", "address", "phone"})),
+    },
+    "specials": {
+        "FAQEntry": ("topic", frozenset({"specials"})),
+        "StoreFact": ("kind", frozenset({"special"})),
+    },
+    "return_policy": {
+        "FAQEntry": ("topic", frozenset({"returns"})),
+        "PolicyDocument": ("kind", frozenset({"return_policy"})),
+    },
+}
+
+
+def _topic_allows(topic: str, model_name: str, row) -> bool:
+    """True when ``row`` carries the field value that puts it in ``topic``. A model with no
+    entry for this topic (no clean topic-bearing field) never passes."""
+    rule = TOPIC_ROW_FIELDS.get(topic, {}).get(model_name)
+    if rule is None:
+        return False
+    field, allowed = rule
+    return (getattr(row, field, "") or "") in allowed
+
+
+def _build_corpus(store: str | None, topic: str = ""):
+    """Build the store-scoped (and, when ``topic`` is given, topic-scoped) corpus: a list of
+    (chunk_id, chunk_text) and a parallel {chunk_id: row} map. Store filtering happens HERE so a
+    Yakima caller never gets a Pullman-hours chunk (22-SPEC §4.1); topic filtering happens HERE
+    too so BOTH the keyword and embedding ranking paths inherit it for free."""
     items: list[tuple[str, str]] = []
     row_by_id: dict[str, object] = {}
     for prefix, Model in _models():
+        if topic and Model.__name__ not in TOPIC_ROW_FIELDS.get(topic, {}):
+            continue  # no clean topic field for this row type — exclude, don't guess
         for row in Model.objects.filter(is_active=True):
             if _store_scoped(prefix) and store:
                 row_store = (getattr(row, "store", "") or "").strip()
                 if row_store and row_store != store:
                     continue  # per-store row for a different store
+            if topic and not _topic_allows(topic, Model.__name__, row):
+                continue
             chunk_id = f"{prefix}{row.pk}"
             items.append((chunk_id, row.chunk_text()))
             row_by_id[chunk_id] = row
@@ -136,7 +173,12 @@ def _keyword_fallback(query: str, items: list[tuple[str, str]], row_by_id: dict,
     Used when retrieval is disabled OR Gemini auth/API is unavailable. Score = overlap of
     query tokens with chunk tokens + a small boost for paraphrase/synonym hits + the row's
     weight/100 as a tiebreak. STILL grounded — returns real KB rows, just lower paraphrase
-    recall. Mirrors swedish-bot's "embedding error → keep a deterministic answer" pattern."""
+    recall. Mirrors swedish-bot's "embedding error → keep a deterministic answer" pattern.
+
+    The RAW score alone is not a relevance signal across rows of different subject matter — a
+    single incidental shared word can still out-score a genuinely on-topic row (the "today's
+    special" paraphrase problem). ``relevance_coverage`` below is the independent floor for that;
+    it re-derives coverage from the query text directly rather than trusting this score."""
     q_tokens = set(_tokens(query, drop_stop=True))
     if not q_tokens:
         return []
@@ -162,14 +204,51 @@ def _keyword_fallback(query: str, items: list[tuple[str, str]], row_by_id: dict,
     return [(row_by_id[cid], score) for score, cid in scored[:top_k]]
 
 
-def rank_faq(query: str, store: str | None = None, top_k: int = 3) -> list[tuple[object, float]]:
-    """Top-k KB rows for the query, store-scoped. Empty on no corpus; degrade-safe on
-    embedding error (keyword fallback). Each element = (model_instance, cosine|keyword_score).
+# A first naive floor ("reject any match with fewer than 2 overlapping content tokens") broke
+# legitimate SHORT queries — "what are your hours" has exactly one content word ("hours") once
+# stopwords drop, so a flat >=2 threshold rejected its own only, correct, signal. It also let
+# tokenizer debris through: "won't"/"I'll" split on the apostrophe into stray 1-2-letter
+# fragments ("t", "ll") that happen to recur across unrelated rows and inflate overlap counts
+# that mean nothing. ``_LEXICAL_MIN_LEN`` drops those fragments from the floor's own token set
+# (ranking above is untouched — it still scores every token, including short ones).
+_LEXICAL_MIN_LEN = 3
+
+
+def _content_words(text: str) -> set[str]:
+    return {t for t in _tokens(text, drop_stop=True) if len(t) >= _LEXICAL_MIN_LEN}
+
+
+def relevant_enough(query: str, row) -> bool:
+    """RELEVANCE FLOOR for unconstrained retrieval (22-SPEC follow-up) — deliberately independent
+    of the ranking score above; it re-derives relevance from the raw query text against the
+    winning row's chunk text, so it gates BOTH the keyword and the embedding (cosine) ranking
+    paths alike. Passes when the row shares AT LEAST TWO of the query's distinctive content
+    words with it ("a cartridge ... won't fire" ↔ the WAC row's "a vape cart that won't fire"),
+    OR — for a short query with only one content word — that one word IS the shared word ("what
+    are your hours" ↔ "hours"). Rejects a row that shares just ONE incidental word out of several
+    ("best" in "just give me your best guess", "bring" in "alright, I'll bring the box in").
+    False when the query has no content words at all (never confident on nothing)."""
+    q = _content_words(query)
+    if not q:
+        return False
+    chunk_text = row.chunk_text() if hasattr(row, "chunk_text") else str(row)
+    overlap = q & _content_words(chunk_text)
+    return len(overlap) >= 2 or overlap == q
+
+
+def rank_faq(
+    query: str, store: str | None = None, top_k: int = 3, topic: str = ""
+) -> list[tuple[object, float]]:
+    """Top-k KB rows for the query, store-scoped and — when ``topic`` is one of
+    ``hours_location``/``specials``/``return_policy`` — topic-scoped (empty/absent = today's
+    unconstrained behaviour). Empty on no corpus; degrade-safe on embedding error (keyword
+    fallback). Each element = (model_instance, cosine|keyword_score).
 
     Adapts swedish-bot rank_guides (corpus build → embed → cosine → top-k)."""
     if not (query or "").strip():
         return []
-    items, row_by_id = _build_corpus(store)
+    topic = (topic or "").strip()
+    items, row_by_id = _build_corpus(store, topic)
     if not items:
         return []
     if not enabled():

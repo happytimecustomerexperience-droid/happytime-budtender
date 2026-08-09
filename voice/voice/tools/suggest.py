@@ -19,6 +19,7 @@ House invariants (binding):
 from __future__ import annotations
 
 import logging
+import re
 
 from voice import pricing
 from voice import recognition
@@ -156,7 +157,19 @@ def _spoken_summary(picks: list[dict]) -> str:
     name = top.get("name") or "this one"
     brand = top.get("brand")
     price = top.get("price_otd")
-    lead = f"My top pick is the {brand} {name}" if brand else f"My top pick is the {name}"
+    # Don't double the brand when `name` already leads with it (case/punctuation-insensitive) —
+    # e.g. name="Cannaquench Sparkling 5mg", brand="Cannaquench" must not read "Cannaquench
+    # Cannaquench Sparkling 5mg".
+    if brand:
+        norm_name = re.sub(r"[^a-z0-9]+", "", name.lower())
+        norm_brand = re.sub(r"[^a-z0-9]+", "", brand.lower())
+        brand_repeated = bool(norm_brand) and norm_name.startswith(norm_brand)
+    else:
+        brand_repeated = False
+    if brand and not brand_repeated:
+        lead = f"My top pick is the {brand} {name}"
+    else:
+        lead = f"My top pick is the {name}"
     why = (top.get("why_this") or "").strip()
     if why:
         lead += f" — {why}"

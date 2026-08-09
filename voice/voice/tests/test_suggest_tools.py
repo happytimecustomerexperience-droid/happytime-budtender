@@ -108,6 +108,40 @@ def test_speakable_pick_drops_non_allowlist_fields():
     assert "stock_on_hand" not in pick and "price_was" not in pick
 
 
+def test_spoken_summary_does_not_double_brand_when_name_already_has_it():
+    """Bug: real transcripts said 'the Cannaquench Cannaquench Sparkling 5mg' and 'the Avitas
+    Avitas GSC 0.5g Cart' — the lead-in must not prefix the brand when ``name`` already starts
+    with it (case-insensitively, tolerant of punctuation/whitespace)."""
+    picks = [
+        {
+            "rank": 1,
+            "name": "Cannaquench Sparkling 5mg",
+            "brand": "Cannaquench",
+            "why_this": "",
+            "price_otd": 10.0,
+        }
+    ]
+    lead = suggest._spoken_summary(picks)
+    assert "Cannaquench Cannaquench" not in lead
+    assert lead.startswith("My top pick is the Cannaquench Sparkling 5mg")
+
+
+def test_spoken_summary_still_prefixes_brand_when_name_lacks_it():
+    """'Grow Op Gorilla Glue #4 3.5g' and 'Roller Co Single Pre-roll 1g' are correct as-is — the
+    name does NOT repeat the brand, so the brand prefix must still be added."""
+    picks = [
+        {
+            "rank": 1,
+            "name": "Gorilla Glue #4 3.5g",
+            "brand": "Grow Op",
+            "why_this": "",
+            "price_otd": 10.0,
+        }
+    ]
+    lead = suggest._spoken_summary(picks)
+    assert lead.startswith("My top pick is the Grow Op Gorilla Glue #4 3.5g")
+
+
 def test_suggest_caps_at_three(fake_bt):
     fake_bt.search_results = [
         dict(_ROW, sku=f"S{i}", brand=f"Brand{i}", strain=f"Strain{i}") for i in range(6)

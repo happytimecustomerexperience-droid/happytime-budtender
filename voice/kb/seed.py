@@ -263,9 +263,8 @@ RETURN_POLICY_BODY = (
     "WAC 314-55-079, is a defective product — for example a vape cartridge that won't fire "
     "or a malfunctioning device. A defective product may be exchanged with no time limit, "
     "provided the customer brings the original packaging with a legible lot identification "
-    "number and the purchase receipt. Defective-return disputes, refunds, or any case that "
-    "isn't a clear straightforward defective exchange are handed to a team member "
-    "(escalation) — the agent never promises a refund or adjudicates a dispute itself. "
+    "number and the purchase receipt. Disputes or anything that isn't a clear, straightforward "
+    "defective exchange are handled by a team member. "
     "Cash-back refunds are not given; the remedy is an exchange for an equivalent product."
 )
 

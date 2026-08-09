@@ -69,18 +69,15 @@ def test_caller_presses_for_exact_numbers(convo, fake_bt):
     assert _numbers(t.answer) <= _tool_numbers(t.picks), t.answer
 
     # 3. He drops the product words and asks for a hard total. No category ⇒ the KB route.
+    # FIXED (retrieval-precision follow-up): keyword retrieval used to hand this un-answerable
+    # question a totally unrelated vendor-receiving row (grounded=True, no digits, so Numbers-Guard
+    # technically held — but it was still confidently the wrong row). The relevance floor now
+    # declines outright; the Numbers-Guard core (no invented figure) still holds via the fallback.
     t = c.say("okay but what's my out the door total on the Blue Dream if I grab one")
     assert t.tools == ["faq_lookup"]
     assert t.picks == []
-    # The Numbers-Guard core: the spoken line is the retrieved KB row VERBATIM, so no figure can
-    # be composed — and this row carries no digits at all.
-    assert t.answer == t.result("faq_lookup")["answer"]
+    assert t.grounded is False
     assert not _numbers(t.answer), t.answer
-    assert t.sources and t.sources[0]["kind"] == "store_fact"
-    # FINDING: grounded=True on a question the KB cannot answer — keyword retrieval hands the
-    # retail caller a vendor-receiving row (and speaks its raw chunk prefix, "yakima Yakima ...").
-    assert t.grounded is True
-    assert t.answer.startswith("yakima Yakima vendor receiving:")
 
     # 4. Now the unit count: "how many are left".
     t = c.say("come on, how many of those carts are actually left on the shelf right now")

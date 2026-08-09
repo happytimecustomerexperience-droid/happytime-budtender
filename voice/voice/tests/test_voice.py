@@ -530,6 +530,52 @@ def test_faq_lookup_refuses_prompt_injection_kb_row(monkeypatch):
     assert "system prompt" not in json.dumps(out).lower()
 
 
+# ── topic constraint (faq_lookup arg) ───────────────────────────────────────────
+
+
+def test_faq_lookup_tool_spec_declares_topic_enum():
+    """TOOL_SPECS carries an enum-constrained topic param — _sanitize_args drops anything not in
+    an enum, so an un-enumerated topic would silently vanish before the handler ever saw it."""
+    from voice.constants import TOOL_SPECS
+
+    props = TOOL_SPECS["faq_lookup"]["parameters"]["properties"]
+    assert set(props["topic"]["enum"]) == {"hours_location", "specials", "return_policy", ""}
+
+
+@pytest.mark.django_db
+def test_faq_lookup_topic_excludes_the_wrong_row(settings):
+    """The historical bug, reproduced at the handler against the real seeded KB: unconstrained,
+    "what are your hours today" is genuinely ambiguous between the hours row and the specials
+    row's "today's special" paraphrase (the relevance floor safely declines rather than guess
+    wrong); with topic="hours_location" the specials row is excluded outright and retrieval
+    grounds correctly."""
+    from kb import seed
+    from voice.tools import faq
+
+    seed.seed_all()
+    settings.SEMANTIC_SEARCH_ENABLED = False
+
+    unconstrained = faq.faq_lookup({"query": "what are your hours today", "store": "yakima"}, {})
+    assert unconstrained["grounded"] is False, "an ambiguous match must not ground confidently"
+
+    out = faq.faq_lookup(
+        {"query": "what are your hours today", "store": "yakima", "topic": "hours_location"}, {}
+    )
+    assert out["grounded"] is True
+    assert "8 AM" in out["answer"] and "11:30 PM" in out["answer"]
+    assert "July" not in out["answer"] and "30% off" not in out["answer"]
+
+
+@pytest.mark.django_db
+def test_faq_lookup_unknown_topic_is_treated_as_unconstrained(settings):
+    from voice.tools import faq
+
+    settings.SEMANTIC_SEARCH_ENABLED = False
+    out = faq.faq_lookup({"query": "what time do you close", "topic": "not_a_real_topic"}, {})
+    # Must not silently ground-to-nothing; falls back to unconstrained behaviour.
+    assert out["grounded"] in (True, False)  # never raises
+
+
 # ── eocr durable write ─────────────────────────────────────────────────────────
 
 

@@ -66,13 +66,19 @@ def test_blocked_caller_is_served_without_ever_identifying_them(convo, fake_bt):
     # ── 3. The caller reacts to that price and asks for a second category. ──
     # GAP (see findings): the throwaway "good deal" puts an ``_FAQ_FIRST_RE`` word in the sentence,
     # so ``_prefers_products`` suppresses the product route and the flower ask is dropped on the
-    # floor — no search runs. Worse, the label and the answer then disagree: ``specials`` on top of
-    # a weights-taxonomy definition of "an eighth".
+    # floor — no search runs. "good deal" also reads as chat.py's specials topic, so the answer now
+    # comes out of a topic-constrained retrieval for real (retrieval-precision follow-up): the
+    # label and the SPOKEN content finally agree — both ``specials`` — instead of the old
+    # accidental mismatch where an unconstrained ranker happened to surface the eighth glossary
+    # entry under a wrong ``specials`` label. The underlying mislabel (chat.py reading "good deal"
+    # as a specials ask instead of a flower ask) is still the real bug — out of scope here.
     t = c.say("that's a good deal — how about an eighth of indica flower too?")
     assert t.intent == "specials"
     assert "suggest_products" not in t.tools
     assert len(_searches(fake_bt)) == 1, "the flower ask never reached budtender"
-    assert "3.5 g" in t.answer and "eighth" in t.answer, "the caller is read a glossary entry instead"
+    assert t.grounded is True
+    assert "% off" in t.answer, "the label and the spoken content now agree — a real specials row"
+    assert "3.5 g" not in t.answer, "no longer the accidental eighth-glossary mismatch"
 
     # ── 4. Open-ended ask: with has_history False there is no taste to lean on. ──
     # A recognized caller's ``top_categories`` would turn this into a product_suggestion
@@ -83,9 +89,10 @@ def test_blocked_caller_is_served_without_ever_identifying_them(convo, fake_bt):
     assert len(_searches(fake_bt)) == 1, "no second budtender search was triggered"
     for tell in _CATALOG_TELLS:
         assert tell not in t.answer, "no picks may be voiced on a turn that never reached budtender"
-    # GAP (see findings): nothing in the KB answers "what would you suggest", yet the turn comes
-    # back grounded=True on an unrelated row (WA age/ID limits) instead of asking what they're after.
-    assert t.grounded is True
+    # FIXED (retrieval-precision follow-up): nothing in the KB answers "what would you suggest" —
+    # the old unconstrained ranker used to confidently ground an unrelated row (WA age/ID limits)
+    # anyway. The relevance floor now correctly declines instead of guessing.
+    assert t.grounded is False
 
     # ── 5. The caller reads out a mangled number — the parser must drop it, not forward it. ──
     t = c.say(
@@ -117,9 +124,9 @@ def test_blocked_caller_is_served_without_ever_identifying_them(convo, fake_bt):
     t = c.say("perfect, thanks so much")
     assert t.intent == "greeting_other"
     assert t.tools == ["faq_lookup"]
-    # GAP (see findings): a bare thank-you is answered with a confident, unrelated KB row
-    # (grounded=True) rather than a closing line.
-    assert t.grounded is True
+    # FIXED (retrieval-precision follow-up): a bare thank-you used to be answered with a
+    # confident, unrelated KB row. The relevance floor now declines instead of guessing.
+    assert t.grounded is False
 
     # ── whole-call invariants ──
     assert len(c.turns) == 7

@@ -313,6 +313,136 @@ def test_policy_outranks_faq_on_weight(db, settings):
     assert isinstance(top, m.PolicyDocument), f"weight tiebreak failed: top was {top!r}"
 
 
+# ── C. Topic constraint + relevance floor (retrieval-precision follow-up) ──────
+
+
+@pytest.mark.django_db
+def test_topic_constraint_prevents_wrong_topic_grounding(db, settings):
+    """A caller asking "what time do you close today" must never be answered with the July
+    specials row — the historical bug. Constraining to topic="hours_location" excludes the
+    specials FAQEntry from the corpus entirely, so even though "today" incidentally overlaps its
+    paraphrase, it can never be returned."""
+    from kb import seed, semantic
+
+    seed.seed_all()
+    settings.SEMANTIC_SEARCH_ENABLED = False
+
+    unconstrained = semantic.rank_faq("what are your hours today", store="yakima")
+    hits = semantic.rank_faq("what are your hours today", store="yakima", topic="hours_location")
+    assert hits, "topic-constrained hours query returned nothing"
+    for row, _ in hits:
+        assert type(row).__name__ != "FAQEntry" or getattr(row, "topic", "") == "hours"
+        assert not (type(row).__name__ == "FAQEntry" and getattr(row, "topic", "") == "specials")
+    # Sanity: the specials row DOES compete when unconstrained (proves the constraint is doing
+    # the excluding, not merely coincidence).
+    assert any(
+        type(row).__name__ == "FAQEntry" and getattr(row, "topic", "") == "specials"
+        for row, _ in unconstrained
+    )
+
+
+@pytest.mark.django_db
+def test_topic_constraint_scopes_specials_and_returns(db, settings):
+    from kb import seed, semantic
+
+    seed.seed_all()
+    settings.SEMANTIC_SEARCH_ENABLED = False
+
+    hits = semantic.rank_faq(
+        "what specials do you have going on", store="yakima", topic="specials"
+    )
+    assert hits
+    top, _ = hits[0]
+    assert getattr(top, "topic", getattr(top, "kind", "")) in ("specials", "special")
+
+    hits = semantic.rank_faq(
+        "what's your return policy on cannabis products", store="yakima", topic="return_policy"
+    )
+    assert hits
+    for row, _ in hits:
+        assert (
+            isinstance(row, m.PolicyDocument)
+            or (isinstance(row, m.FAQEntry) and row.topic == "returns")
+        ), f"return_policy topic leaked an off-topic row: {row!r}"
+
+
+@pytest.mark.django_db
+def test_topic_excludes_models_with_no_clean_topic_field(db, settings):
+    """EducationDoc/BlogDoc/WeightTypeTaxonomy carry no hours/specials/returns field — a
+    topic-constrained query must never surface one of them."""
+    from kb import seed, semantic
+
+    seed.seed_all()
+    settings.SEMANTIC_SEARCH_ENABLED = False
+
+    for topic in ("hours_location", "specials", "return_policy"):
+        _, row_by_id = semantic._build_corpus(store=None, topic=topic)
+        leaked = {
+            type(row).__name__
+            for row in row_by_id.values()
+            if type(row).__name__ in ("EducationDoc", "BlogDoc", "WeightTypeTaxonomy")
+        }
+        assert not leaked, f"{topic} leaked {leaked}"
+
+
+@pytest.mark.django_db
+def test_empty_topic_is_unconstrained(db, settings):
+    """topic="" (absent/blank) must behave exactly like today — no filtering."""
+    from kb import seed, semantic
+
+    seed.seed_all()
+    settings.SEMANTIC_SEARCH_ENABLED = False
+
+    a = semantic.rank_faq("do you take cards debit payment", store="yakima")
+    b = semantic.rank_faq("do you take cards debit payment", store="yakima", topic="")
+    assert [r.pk for r, _ in a] == [r.pk for r, _ in b]
+
+
+@pytest.mark.django_db
+def test_relevance_floor_rejects_incidental_single_word_overlap(db, settings):
+    """Real production failures: a single incidental shared word must not ground a confident
+    answer when the rest of the query has nothing to do with the matched row."""
+    from kb import seed, semantic
+
+    seed.seed_all()
+    settings.SEMANTIC_SEARCH_ENABLED = False
+
+    for query in ("just give me your best guess", "alright, I'll bring the box in"):
+        hits = semantic.rank_faq(query, store="yakima")
+        assert hits, f"{query!r} unexpectedly returned nothing at the ranking layer"
+        top, _ = hits[0]
+        assert not semantic.relevant_enough(query, top), (
+            f"{query!r} cleared the relevance floor against {top!r} — a wrong row would ground"
+        )
+
+
+@pytest.mark.django_db
+def test_relevance_floor_keeps_legitimate_short_and_long_matches(db, settings):
+    """Must NOT regress recall: a short on-topic query whose one content word IS the match, and a
+    longer query that shares several distinctive content words with the right row, both clear the
+    floor — including the tokenizer's own contraction fragments ("won't" → "won"/"t") not being
+    mistaken for real signal, and not costing the genuine "cartridge"/"fire" overlap the match."""
+    from kb import seed, semantic
+
+    seed.seed_all()
+    settings.SEMANTIC_SEARCH_ENABLED = False
+
+    hits = semantic.rank_faq("what are your hours", store="yakima")
+    top, _ = hits[0]
+    assert semantic.relevant_enough("what are your hours", top)
+
+    hits = semantic.rank_faq("do I need to bring my ID", store="yakima")
+    top, _ = hits[0]
+    assert semantic.relevant_enough("do I need to bring my ID", top)
+
+    query = (
+        "hi, I picked up a cartridge at your Yakima store two days ago and it won't fire at all"
+    )
+    hits = semantic.rank_faq(query, store="yakima")
+    top, _ = hits[0]
+    assert semantic.relevant_enough(query, top), f"a real defect complaint must ground: {top!r}"
+
+
 @pytest.mark.django_db
 def test_reindex_returns_chunk_count(seeded_semantic):
     """B5: reindex() returns the chunk count == the number of active KB rows."""
@@ -423,6 +553,24 @@ def test_wa_law_accuracy():
     assert limits["concentrate"] == "7 grams"
     assert limits["solid edibles"] == "16 ounces"
     assert limits["liquid edibles"] == "72 ounces"
+
+
+@pytest.mark.django_db
+def test_return_policy_body_has_no_agent_directed_copy():
+    """Bug: RETURN_POLICY_BODY is read verbatim to callers by faq_lookup — it must contain ONLY
+    customer-facing copy, never operator/agent instructions like 'the agent never promises' or
+    '(escalation)'. The customer-facing 'exchange, not cash back' remedy must still be present."""
+    from kb import seed
+
+    seed.seed_all()
+    pol = m.PolicyDocument.objects.get(kind="return_policy")
+    lowered = pol.body.lower()
+    assert "the agent" not in lowered
+    assert "escalation" not in lowered
+    assert "adjudicat" not in lowered
+    # policy substance must survive the cleanup
+    assert "cash-back refunds are not given" in lowered
+    assert "exchange" in lowered
 
 
 @pytest.mark.django_db

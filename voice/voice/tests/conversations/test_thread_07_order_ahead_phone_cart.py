@@ -39,8 +39,10 @@ def test_order_ahead_for_pickup_never_reaches_the_phone_cart(convo, fake_bt):
     assert cart_pick["sku"] == "CT-JETTY-1G"
     assert cart_pick["price_otd"] == 35.0, "spoken price is the menu price — tax-inclusive Dutchie account"
     assert "cost" not in cart_pick and "margin" not in cart_pick
-    # Documents the doubled-brand read-back: brand is prefixed onto a name that already carries it.
-    assert "Jetty Jetty Blue Dream" in t.answer
+    # The brand is NOT re-prefixed onto a name that already carries it (fixed — was "Jetty Jetty
+    # Blue Dream").
+    assert "Jetty Jetty Blue Dream" not in t.answer
+    assert "the Jetty Blue Dream 1g Cart" in t.answer
 
     # 3. Second item, named by product — the caller says "raspberry gummies", the router only hears
     #    a category, so the cheapest edible (a beverage) comes back on top.
@@ -66,13 +68,13 @@ def test_order_ahead_for_pickup_never_reaches_the_phone_cart(convo, fake_bt):
     assert "held until end of business" in t.answer
     assert "Marcus" not in t.answer, "the pickup name is never captured or read back"
 
-    # 5. The caller asks point blank whether anything is being held. Grounded — at the loyalty row.
+    # 5. The caller asks point blank whether anything is being held.
+    # FIXED (retrieval-precision follow-up): keyword retrieval used to answer this hold question
+    # with the unrelated loyalty-rewards row. The relevance floor now declines instead of guessing.
     t = c.say("so is anything actually being held for me right now, or do I have to redo it on the website")
     assert t.tools == ["faq_lookup"]
-    assert t.grounded is True
-    assert "loyalty" in t.sources[0]["title"].lower(), "keyword retrieval answers a hold question with rewards"
+    assert t.grounded is False
     assert "hold" not in t.answer.lower() and "staged" not in t.answer.lower()
-    assert t.next_action == "answer", "a confidently-wrong grounded answer never offers a human"
 
     # 6. One last try, phrased as a commitment to pay at the counter. Still nothing staged.
     t = c.say("okay just put me down for the two of them and I'll pay when I show up")

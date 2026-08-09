@@ -47,18 +47,22 @@ def test_mount_vernon_call_then_the_pullman_call(convo, fake_bt):
     # Retrieval IS store-scoped: the only per-store hours row in play is Mount Vernon's.
     assert "Mt Vernon hours" in _titles(t1)
     assert "Yakima hours" not in _titles(t1) and "Pullman hours" not in _titles(t1)
-    # GAP: the row the agent actually SPEAKS is the global three-locations FAQ, which quotes
-    # Yakima's clock time and gives Mount Vernon no closing time at all.
-    assert "8AM to 11:30PM" in t1.answer, "today a Mt Vernon caller is read Yakima's hours"
-    assert "9 AM" not in t1.answer, "Mt Vernon's own 9 AM-10 PM row is cited but never spoken"
+    # FIXED (retrieval-precision follow-up): the row the agent actually SPOKE used to be the global
+    # three-locations FAQ (Yakima's clock time, no Mount Vernon closing time at all) even though
+    # Mount Vernon's own hours row was the one cited. chat.py now passes topic="hours_location",
+    # which excludes that global FAQ from the corpus entirely, so the cited row is the spoken one.
+    assert "9 AM" in t1.answer and "10 PM" in t1.answer, "Mt Vernon's own hours row is now spoken"
+    assert "8AM to 11:30PM" not in t1.answer, "no longer reads Yakima's hours to a Mt Vernon caller"
 
-    # 2 ── directions. GAP: the winning row is a global site FAQ with Yakima hard-coded in its
-    # body, so store scoping structurally cannot save it — Dana is sent to the Yakima address.
+    # 2 ── directions. FIXED (retrieval-precision follow-up): the winning row used to be a global
+    # site FAQ with Yakima hard-coded in its body — Dana was confidently sent to the Yakima
+    # address. topic="hours_location" now excludes that global FAQ, and the correct Mt Vernon
+    # address row has no lexical bridge to "and where are you located" for the keyword fallback to
+    # find, so retrieval safely declines instead of confidently sending her to the wrong address.
     t2 = mv.say(SCRIPT[1])
-    assert t2.intent == "hours_location" and t2.grounded
-    assert _titles(t2) == ["What's the closest weed store to me in Yakima?"]
-    assert YAKIMA_ADDRESS in t2.answer
-    assert MV_ADDRESS not in t2.answer, "a Mt Vernon caller asking where we are gets Yakima"
+    assert t2.intent == "hours_location"
+    assert t2.grounded is False
+    assert YAKIMA_ADDRESS not in t2.answer, "no longer sent to Yakima's address"
 
     # 3 ── the address, asked plainly. Store-scoped, and correct.
     t3 = mv.say(SCRIPT[2])
@@ -181,10 +185,11 @@ def test_a_store_we_dont_have_is_dropped_not_passed_through(convo, fake_bt):
     assert t1.result("faq_lookup")["store"] == ""
     assert t1.raw["store"] == ""
     assert t1.raw["contact_hint"] is None, "no store and no phone → nothing to hand staff"
-    # GAP: dropping the store changes nothing about the spoken hours — Dana still hears Yakima's
-    # clock time, and the now-unscoped corpus still cites one arbitrary store's row to a caller
-    # who has no store at all.
-    assert "8AM to 11:30PM" in t1.answer
+    # GAP (still present, changed shape): dropping the store changes nothing about WHICH store's
+    # hours get spoken — Dana still hears one arbitrary store's clock time. FIXED in kind (retrieval-
+    # precision follow-up): topic="hours_location" now excludes the wrong global Yakima-quoting FAQ,
+    # so the arbitrary pick is at least a REAL, single-store hours row instead of a mismatched one.
+    assert "8AM to 11:30PM" not in t1.answer, "no longer the mismatched global Yakima-quoting FAQ"
     assert "Mt Vernon hours" in _titles(t1)
 
     t2 = c.say(SCRIPT[2])

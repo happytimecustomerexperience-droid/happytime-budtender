@@ -251,7 +251,45 @@ def _prefers_products(message: str, category: str, *, escalation: bool) -> bool:
 # without re-deriving the route. Derived from the SAME signals the router acts on.
 _RETURN_RE = re.compile(r"\b(returns?|refund|exchange|money\s*back|policy)\b", re.I)
 _SPECIALS_RE = re.compile(r"\b(specials?|deals?|discounts?|sale|promo|coupon|bogo)\b", re.I)
-_HOURS_LOC_RE = re.compile(r"\b(hours?|open|opening|close|closing|location|address|directions?|phone|parking|where\s+are)\b", re.I)
+_HOURS_LOC_RE = re.compile(
+    # "located" / "closed" were missing, so "where exactly are you located" classified as nothing
+    # and retrieval answered it with whatever row ranked first.
+    r"\b(hours?|open|opening|close|closing|closed|location|located|address|directions?|"
+    r"phone|parking|where\s+are)\b",
+    re.I,
+)
+
+# A follow-up that refines the previous ask rather than starting a new one. These carry the
+# caller's category forward: "keep it under 40 though" used to derive no category at all, fall
+# out of the product path, and get answered with the state health warning.
+_REFINEMENT_RE = re.compile(
+    r"\b(cheaper|cheapest|less\s+expensive|lower|smaller|bigger|larger|stronger|weaker|"
+    r"something\s+else|anything\s+else|other\s+options?|different|instead)\b",
+    re.I,
+)
+
+
+def _is_refinement(message: str) -> bool:
+    """A bare price word is NOT a refinement — "set those aside under the name Marcus" says
+    "under" and means nothing about budget. A price ceiling only counts when it names a number,
+    which is exactly what _PRICE_MAX_RE already requires."""
+    if _REFINEMENT_RE.search(message or ""):
+        return True
+    return _price_max_from_text(message) is not None
+
+
+def _carried_category(history) -> str:
+    """The category from the caller's own most recent turn that named one. Only consulted for a
+    refinement, so an unrelated new question never gets dragged back onto the shelf."""
+    if not isinstance(history, list):
+        return ""
+    for msg in reversed(history[-8:]):
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        category = _normalize_category(_category_from_text(str(msg.get("content") or "")))
+        if category:
+            return category
+    return ""
 
 
 def _faq_topic(message: str) -> str:
@@ -350,10 +388,27 @@ def answer_text_chat(data: dict) -> dict:
     escalation = escalation_now or carried
     category = str(slots.get("category") or _category_from_text(message)).strip()
     category = _normalize_category(category)
+    # A refinement belongs to the ask before it. Carry the category so "keep it under 40 though"
+    # re-runs the search instead of falling through to whatever the FAQ ranks first.
+    # ...but only when the message is a bare refinement. A question that also reads as an FAQ
+    # ("can I order ahead and pick it up?") contains refinement words incidentally and must stay
+    # on the FAQ path — same guard _prefers_products uses.
+    if (
+        not category
+        and _is_refinement(message)
+        and not _requires_sources(message)
+        and not _FAQ_FIRST_RE.search(message)
+    ):
+        category = _carried_category(history)
     if not category and not _requires_sources(message):
         category = _profile_top_category(ctx.get("profile_summary"))
     prefer_products = _prefers_products(message, category, escalation=escalation)
+    # The router already classifies the subject; retrieval was never told, so "what time do you
+    # close today" came back with the July specials row. Pass it so retrieval can be constrained.
     faq_args = {"query": message, "store": store}
+    faq_topic = _faq_topic(message)
+    if faq_topic:
+        faq_args["topic"] = faq_topic
     faq = dispatch("faq_lookup", faq_args, ctx)
     # ``args`` rides along so a caller (the staff test console) can see WHICH slots the router
     # derived, not just what came back — the difference between "wrong answer" and "wrong routing".
