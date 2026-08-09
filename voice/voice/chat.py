@@ -81,7 +81,12 @@ _FAQ_FIRST_RE = re.compile(
 # dispute vocabulary, so gating on it alone silenced the on-topic return-policy answer a caller
 # asking "do I need the receipt and the box?" should get.
 _DISPUTE_TOPIC_RE = re.compile(
-    r"\b(returns?|refund|money\s*back|exchange|policy|receipt|packaging|box|"
+    # "box" is deliberately NOT here. It is too weak a dispute signal on its own ("alright, I'll
+    # bring the box in" is a closing acknowledgement, not a question), and opening the gate for it
+    # let retrieval answer with whatever row shared a common word — the "Do I need to bring ID?"
+    # row came back for that sentence on the strength of "bring" alone. "receipt"/"packaging"
+    # carry the same intent without the collision.
+    r"\b(returns?|refund|money\s*back|exchange|policy|receipt|packaging|"
     r"defective|broken|busted|warranty|replacements?|replace|damaged)\b",
     re.I,
 )

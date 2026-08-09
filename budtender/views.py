@@ -985,6 +985,13 @@ class PhoneCartUpsertView(APIView):
                 location_slug=location,
                 phone_hash=_hash_phone(raw_phone),
                 phone_last4=_phone_last4(raw_phone),
+                # The callback number rides on the draft so the register can auto-resolve the
+                # customer at claim time — pos/views.py's claim gate keys on contact_phone, and
+                # without it a voice-staged order lands anonymous and staff re-look-up by hand on
+                # every single call. Same field the web-order path already sets (bundles/views.py),
+                # and the draft self-expires in 12h, so this is not new retention of a raw number
+                # beyond what a pending order already needs to be fulfillable.
+                contact_phone=raw_phone,
                 pickup_name=str(data.get("pickup_name") or "").strip()[:120],
                 expires_at=timezone.now() + timedelta(hours=12),
             )

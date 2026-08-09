@@ -37,6 +37,39 @@ def _product(**kw):
 
 
 @override_settings(HHT_BACKEND_TOKEN=TOKEN)
+def test_voice_staged_draft_carries_the_callback_number_for_register_autoresolve(client):
+    """A voice-staged order used to land at the register anonymous.
+
+    The draft stored only phone_hash + last4, so the claim gate in pos/views.py (which keys on
+    contact_phone / dutchie_acct_id) never fired and staff had to look the customer up by hand on
+    every call. The web-order path already set contact_phone; the voice path now does too.
+    """
+    _product()
+
+    resp = client.post(
+        "/api/v1/phone-cart/upsert",
+        data=json.dumps({
+            "call_id": "call-link-1",
+            "store": "yakima",
+            "phone": "+15095551234",
+            "action": "add_item",
+            "sku": "SKU-1",
+            "quantity": 1,
+        }),
+        content_type="application/json",
+        **_auth(),
+    )
+    assert resp.status_code == 200
+
+    draft = PhoneCartDraft.objects.get(call_id="call-link-1")
+    assert draft.contact_phone == "+15095551234", "register cannot auto-resolve without this"
+    # The hash + last4 discipline is unchanged — this adds the callback number a pending order
+    # needs to be fulfillable, it does not replace the hashed identity.
+    assert draft.phone_last4 == "1234"
+    assert draft.phone_hash and draft.phone_hash != "+15095551234"
+
+
+@override_settings(HHT_BACKEND_TOKEN=TOKEN)
 def test_phone_cart_api_stages_quotes_and_releases_without_dutchie_write(client):
     _product()
 
