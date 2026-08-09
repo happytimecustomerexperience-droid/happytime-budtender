@@ -81,15 +81,18 @@ def test_mount_vernon_call_then_the_pullman_call(convo, fake_bt):
     assert _titles(t4)[0] == "Mt Vernon phone"
 
     # 5 ── specials. GAP: store-blind. The KB holds per-store special rows (Pullman runs 30% on
-    # edibles, Mount Vernon 20%) but the global FAQ row wins, so Dana hears every store's deal and
-    # is then asked which store she's at — five turns after we already knew.
+    # edibles, Mount Vernon 20%) but the global FAQ row still wins the top spot, so Dana hears every
+    # store's deal and is then asked which store she's at — five turns after we already knew.
+    # CHANGED (retrieval-precision follow-up): topic="specials" now narrows the corpus to
+    # specials-only rows, so the per-store rows compete directly and DO surface among the sources
+    # — just not as the top (spoken) one, so the GAP itself is unchanged.
     t5 = mv.say(SCRIPT[4])
     assert t5.intent == "specials" and t5.grounded
     assert "20% off at Yakima and Mount Vernon" in t5.answer
     assert "30% off at Pullman" in t5.answer, "a Mt Vernon caller is read Pullman's deal"
     assert "Tell me which store you're shopping at" in t5.answer
-    assert not any(title.startswith("July:") for title in _titles(t5)), (
-        "the per-store special rows never surface"
+    assert any(title.startswith("July:") for title in _titles(t5)), (
+        "topic constraint now surfaces the per-store special rows as sources"
     )
 
     # 6 ── a product ask: the store must reach the inventory search AND the OTD tax rate.
@@ -111,11 +114,15 @@ def test_mount_vernon_call_then_the_pullman_call(convo, fake_bt):
     p1 = pu.say(SCRIPT[0])
     assert p1.args("faq_lookup")["store"] == "pullman"
     assert "Pullman hours" in _titles(p1) and "Mt Vernon hours" not in _titles(p1)
-    # GAP again, and identically: the spoken hours answer does not differ by store at all.
-    assert p1.answer == t1.answer
+    # FIXED (retrieval-precision follow-up): the spoken hours answer now DOES differ by store.
+    assert p1.answer != t1.answer
+    assert "9 AM" in p1.answer and "10 PM" in p1.answer, "Pullman's own hours row is now spoken"
 
     p2 = pu.say(SCRIPT[1])
-    assert p2.answer == t2.answer, "GAP: 'where are you located' is Yakima's answer for everyone"
+    # Both decline now (no lexical bridge to either store's address row) — the fallback text is
+    # store-independent, so they're still byte-identical, just for a different (safer) reason.
+    assert p2.answer == t2.answer
+    assert p2.grounded is False
     assert PULLMAN_ADDRESS not in p2.answer
 
     p3 = pu.say(SCRIPT[2])

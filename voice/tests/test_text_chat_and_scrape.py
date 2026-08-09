@@ -305,7 +305,14 @@ def test_site_scrape_maps_pages_and_validates(monkeypatch, settings):
     assert StoreFact.objects.filter(store="yakima", kind="hours").exists()
     assert run.changes["created"] >= 3
 
-    specials = dispatch("faq_lookup", {"query": "what specials are on today?", "store": "yakima"}, {"store": "yakima"})
+    # topic="specials" — mirroring what chat.py's own classifier derives for this message —
+    # constrains retrieval to specials-only rows (retrieval-precision follow-up); called bare like
+    # this with no topic, "on today" alone no longer clears the relevance floor.
+    specials = dispatch(
+        "faq_lookup",
+        {"query": "what specials are on today?", "store": "yakima", "topic": "specials"},
+        {"store": "yakima"},
+    )
     assert specials["grounded"] is True
     assert "Monday flower special" in specials["answer"]
     assert specials["sources"][0]["source_url"] == "https://happytimeweed.com/specials"
