@@ -136,6 +136,24 @@ def test_the_station_is_the_other_screen_entirely(client, dutchie):
     assert 'id="cart-drawer"' in body                      # and it CAN sell
 
 
+def test_both_screens_open_the_camera_on_load(client, dutchie):
+    """The door screen is the one that scans all day, and it was the one that didn't.
+
+    The station got a live preview; the door kept the camera folded behind a "Scan
+    barcode on device" button, because they were two copies of the same widget. They
+    are one include now, and this is the assertion that notices if they split again.
+    """
+    sign_in(client, "budtender")
+    station = client.get(reverse("screen"), SERVER_NAME="localhost").content.decode()
+    client.logout()
+    sign_in(client, "door")
+    doorway = client.get(reverse("door"), SERVER_NAME="localhost").content.decode()
+    for name, body in (("station", station), ("door", doorway)):
+        assert 'data-autostart="1"' in body, f"the {name} camera does not open on load"
+        assert 'class="idscan__guide"' in body, f"the {name} scanner has no framing guide"
+        assert 'name="id_payload"' in body, f"the {name} scanner posts no decoded barcode"
+
+
 def test_a_door_shift_cannot_reach_the_station_or_the_queue_feed(client, dutchie):
     sign_in(client, "door")
     station = client.get(reverse("screen"), SERVER_NAME="localhost").content.decode()

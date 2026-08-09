@@ -21,22 +21,18 @@
   <a class="link" href="{% url 'logout' %}">Sign out</a>
 </header>
 
-<div class="auth" style="max-width:460px">
+{# 460px was sized for a form with the camera hidden behind a button. It is a live #}
+{# preview now, and a door person reads it at arm's length on a tablet. #}
+<div class="auth" style="max-width:640px">
   <div class="card">
     <h2 style="font-size:14px">Check in a customer</h2>
     <p class="hint" style="margin-top:4px">Scan an ID to review, complete, create, refresh, and queue a profile. Or look up an existing customer by phone or name without scanning.</p>
 
     <form id="doorform" hx-post="{% url 'door_scan' %}" hx-target="#door-result" enctype="multipart/form-data" class="stack"
           hx-on::after-request="if(event.detail.successful) this.reset()">
-      <label style="display:block;font-size:12px;color:var(--sage);margin:10px 0 4px">Scan ID (camera)</label>
-      <input type="file" name="images" accept="image/*" capture="environment" multiple style="width:100%">
-      <button type="button" class="ghost idscan__toggle" data-target="door-idscan">Scan barcode on device</button>
-      <div id="door-idscan" class="idscan" hidden>
-        <video class="idscan__video" autoplay playsinline muted></video>
-        <p id="door-idscan-status" class="muted" style="margin-top:8px"></p>
-        <div class="idscan__actions"><button type="button" class="ghost idscan__close" data-target="door-idscan">Close scanner</button></div>
-      </div>
-      <input type="hidden" id="id_payload" name="id_payload" value="">
+      <label style="display:block;font-size:12px;color:var(--sage);margin:10px 0 4px">Scan ID</label>
+      <span class="muted scanhint">Hold the <strong>back</strong> of the card in the frame — the barcode side.</span>
+      {% include "pos/_idscan.html" with dom_id="door-idscan" %}
       <label style="display:block;font-size:12px;color:var(--sage);margin:12px 0 4px">Phone (optional)</label>
       <input type="tel" name="phone" inputmode="tel" placeholder="509" style="width:100%" autocomplete="tel">
       <label style="display:block;font-size:12px;color:var(--sage);margin:12px 0 4px">Name (optional)</label>
