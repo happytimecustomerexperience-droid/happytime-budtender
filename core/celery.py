@@ -12,7 +12,11 @@ app.autodiscover_tasks()
 app.conf.beat_schedule = {
     "sync-inventory-all-stores": {
         "task": "budtender.tasks.sync_inventory_all",
-        "schedule": 600.0,  # every 10 minutes — keeps stock/availability accurate
+        # Every 10 minutes, but the task itself is a no-op outside the Pacific
+        # store-sync window (STORE_SYNC_WINDOW_START/END, default 07:30-23:30) —
+        # see budtender.tasks.any_store_open_or_warming. Keeps stock/availability
+        # accurate while every store is open, without pulling Dutchie overnight.
+        "schedule": 600.0,
     },
     # Safety net: even if the frequent sync above stalls, force a fresh pull for
     # any store whose inventory is ≥24h old, so suggestions never come from stale

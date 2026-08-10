@@ -93,6 +93,16 @@ EMAIL_BACKEND = (
 HHT_VOICE_BASE_URL = env("HHT_VOICE_BASE_URL", "")
 HHT_VOICE_TIMEOUT = int(env("HHT_VOICE_TIMEOUT", "5"))
 
+# Window (HH:MM, America/Los_Angeles) during which the FREQUENT inventory sync
+# (budtender.tasks.sync_inventory_all) actually runs — outside it every store is
+# closed and the sync is a cheap no-op instead of a live Dutchie pull. Default is
+# the union of all store hours (yakima 08:00-23:30, mount-vernon/pullman
+# 09:00-22:00) plus a 30-min pre-open warm-up margin. Does NOT gate
+# ensure_inventory_fresh, the ≥24h staleness safety net, which must always be
+# able to run. See budtender.tasks.any_store_open_or_warming.
+STORE_SYNC_WINDOW_START = env("STORE_SYNC_WINDOW_START", "07:30")
+STORE_SYNC_WINDOW_END = env("STORE_SYNC_WINDOW_END", "23:30")
+
 
 def _prod_guard_errors(secret_key: str, backend_token: str,
                        bundle_secret: str = "unchecked") -> list[str]:

@@ -5,9 +5,11 @@ any gap until credentials are wired in.
 """
 from __future__ import annotations
 
+import logging
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as dt_time, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from celery import shared_task
 from django.conf import settings
@@ -19,7 +21,45 @@ from customers.models import Customer as CachedCustomer
 from . import dutchie, live_stock
 from .models import STORES, CustomerProfile, Product, SuggestedProduct, SyncState
 
+logger = logging.getLogger(__name__)
+
 STORE_SLUGS = [s[0] for s in STORES]
+
+# ── store-hours gate for the FREQUENT sync ───────────────────────────────────
+# Store hours (America/Los_Angeles), seeded StoreFact rows: yakima 08:00-23:30,
+# mount-vernon 09:00-22:00, pullman 09:00-22:00. The gate uses the UNION of all
+# store hours plus a 30-min pre-open warm-up margin, so inventory is already
+# fresh when the first store unlocks and keeps syncing until the last closes.
+# Overridable so the owner can change hours without a code edit.
+STORE_TZ = ZoneInfo("America/Los_Angeles")
+DEFAULT_STORE_SYNC_WINDOW_START = "07:30"  # earliest open (08:00) minus 30 min
+DEFAULT_STORE_SYNC_WINDOW_END = "23:30"    # latest close (yakima)
+
+
+def _parse_hhmm(value: str) -> dt_time:
+    hh, mm = value.split(":")
+    return dt_time(int(hh), int(mm))
+
+
+def any_store_open_or_warming(now: datetime | None = None) -> bool:
+    """True if, right now (America/Los_Angeles), at least one store is open or
+    about to open within its pre-open warm-up margin — the window in which the
+    frequent inventory sync is worth running. Outside it, every store is closed
+    and a sync would just burn a Dutchie API call for no one to see.
+
+    Always converts to America/Los_Angeles explicitly (never server-local time)
+    so this is correct regardless of the host's timezone, including across the
+    PST/PDT boundary. `now` is UTC if omitted; pass a tz-aware datetime to test.
+
+    Window is `STORE_SYNC_WINDOW_START`..`STORE_SYNC_WINDOW_END` settings
+    (HH:MM, Pacific), defaulting to 07:30-23:30.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    local_time = now.astimezone(STORE_TZ).time()
+    start = _parse_hhmm(getattr(settings, "STORE_SYNC_WINDOW_START", DEFAULT_STORE_SYNC_WINDOW_START))
+    end = _parse_hhmm(getattr(settings, "STORE_SYNC_WINDOW_END", DEFAULT_STORE_SYNC_WINDOW_END))
+    return start <= local_time <= end
 
 # How stale the inventory may get before a fresh pull is forced. Suggestions are
 # only ever drawn from in-stock products, so keeping this fresh is what prevents
@@ -126,6 +166,13 @@ def sync_inventory(location_slug: str) -> int:
 
 @shared_task
 def sync_inventory_all() -> dict:
+    if not any_store_open_or_warming():
+        logger.info(
+            "sync_inventory_all: skipping — outside the %s-%s Pacific store-sync window",
+            getattr(settings, "STORE_SYNC_WINDOW_START", DEFAULT_STORE_SYNC_WINDOW_START),
+            getattr(settings, "STORE_SYNC_WINDOW_END", DEFAULT_STORE_SYNC_WINDOW_END),
+        )
+        return {"skipped": "stores_closed"}
     counts = {s: sync_inventory(s) for s in STORE_SLUGS}
     # Re-bucket products on every inventory refresh so margins/velocity stay current.
     classify_products_all()
