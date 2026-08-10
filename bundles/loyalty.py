@@ -43,6 +43,9 @@ TIERS = [(125, 10), (250, 15), (450, 20), (600, 25), (900, 30)]
 # search — the number is theirs, the store is an accident of where they first shopped.
 STORES = ("yakima", "mount-vernon", "pullman")
 
+# Shown only when someone has more than one profile, so "which one?" has an answer.
+STORE_LABELS = {"yakima": "Yakima", "mount-vernon": "Mount Vernon", "pullman": "Pullman"}
+
 
 def percent_for(points: float) -> int:
     """What `points` redeems for, as a percentage off the basket. 0 below the first
@@ -93,8 +96,8 @@ def _details(location_slug: str, acct_id: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def balance_for_phone(phone: str) -> tuple[str, dict | None]:
-    """(state, balance) where state is found / none / unavailable.
+def balance_for_phone(phone: str) -> tuple[str, list[dict] | None]:
+    """(state, accounts) where state is found / none / unavailable.
 
     THREE outcomes, not two, and the third is the point. "We have no account for
     that number" and "we could not reach the register" are different facts, and a
@@ -110,18 +113,19 @@ def balance_for_phone(phone: str) -> tuple[str, dict | None]:
     matched. One store erroring downgrades the whole answer to `unavailable`,
     because a number registered at the store we failed to reach is not absent.
 
-    EVERY matching profile is checked and the LARGEST balance wins. Dutchie holds
-    duplicates on one phone (measured: 1887.24 and 419.33 on the same number), so
-    taking the first would show a customer the smaller of their own two balances.
-    Largest, not the sum: they are separate accounts and the register redeems from
-    one of them, so adding them up would promise a discount that cannot be given.
+    EVERY matching profile is returned, biggest first. Dutchie holds duplicates on
+    one phone (measured: 1887.24 and 419.33 on the same number). Showing only one —
+    whether the first or the largest — quietly hides a balance the customer really
+    has, and picking for them means they arrive at the counter expecting a number
+    that isn't the one the budtender is looking at. Owner is deduplicating (2026-08-
+    10) and asked for both to show meanwhile, which is also the thing that makes the
+    duplicates visible rather than silently papered over.
 
-    Returns ONLY what the page shows. The Dutchie guest row behind this carries DOB,
-    address, email and full purchase history; naming the four fields here rather than
-    passing the row through means a field added upstream cannot silently widen it.
+    NOT summed: separate accounts, and the register redeems from one, so adding them
+    would promise a discount nobody at the counter can give.
     """
     every_store_answered = True
-    best: tuple[float, dict] | None = None
+    found: list[dict] = []
     for slug in STORES:
         try:
             accts = _accounts_for_phone(slug, phone)
@@ -136,22 +140,32 @@ def balance_for_phone(phone: str) -> tuple[str, dict | None]:
                 logger.warning("loyalty details unavailable at %s", slug, exc_info=True)
                 every_store_answered = False
                 continue
-            pts = float(row.get("LoyaltyPoints") or 0)
-            if best is None or pts > best[0]:
-                best = (pts, row)
+            found.append(_account(slug, row))
 
-    if best is not None:
-        points, row = best
-        # `IsLoyaltyMember` IS DELIBERATELY NOT READ. Every registered customer is a
-        # member (owner, 2026-08-10), yet this field came back False for all 40 real
-        # customers sampled — including one holding 1095.32 points. It disagrees with
-        # the truth, so gating the page on it would show nothing to everybody.
-        # Reaching this line at all already means we found them, which is the same
-        # thing as "they are in the programme".
-        return "found", {
-            "points": int(points),          # balances are fractional; the counter rounds down
-            "tier_name": (row.get("LoyaltyTierName") or "").strip(),
-            "percent": percent_for(points),
-            "next": next_tier(points),
-        }
+    if found:
+        found.sort(key=lambda a: a["points"], reverse=True)
+        return "found", found
     return ("none" if every_store_answered else "unavailable"), None
+
+
+def _account(location_slug: str, row: dict) -> dict:
+    """One profile's balance, and only what the page shows.
+
+    The Dutchie row behind this carries DOB, address, email and full purchase
+    history; naming the fields here rather than passing the row through means a
+    field added upstream cannot silently widen the page.
+    """
+    # `IsLoyaltyMember` IS DELIBERATELY NOT READ. Every registered customer is a
+    # member (owner, 2026-08-10), yet this field came back False for all 40 real
+    # customers sampled — including one holding 1095.32 points. It disagrees with the
+    # truth, so gating the page on it would show nothing to everybody. Reaching this
+    # line at all already means we found them, which is the same thing as "they are
+    # in the programme".
+    points = float(row.get("LoyaltyPoints") or 0)
+    return {
+        "points": int(points),          # balances are fractional; the counter rounds down
+        "tier_name": (row.get("LoyaltyTierName") or "").strip(),
+        "percent": percent_for(points),
+        "next": next_tier(points),
+        "store": STORE_LABELS.get(location_slug, location_slug),
+    }

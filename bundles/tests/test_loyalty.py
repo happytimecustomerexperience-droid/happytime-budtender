@@ -78,18 +78,18 @@ class TheLookupTells(TestCase):
         self.assertIn("125", body)          # the ladder is on the page unprompted
 
     def test_a_member_sees_points_and_what_they_are_worth(self):
-        with patch.object(loyalty, "balance_for_phone", return_value=("found", {
-                "points": 500, "tier_name": "Gold",
-                "percent": 20, "next": (100, 25)})):
+        with patch.object(loyalty, "balance_for_phone", return_value=("found", [{
+                "points": 500, "tier_name": "Gold", "store": "Yakima",
+                "percent": 20, "next": (100, 25)}])):
             body = self._post().content.decode()
         self.assertIn("500", body)
         self.assertIn("20% off", body)      # never a number without its offer
         self.assertIn("100 more points", body)
 
     def test_a_balance_below_the_first_rung_says_so_plainly(self):
-        with patch.object(loyalty, "balance_for_phone", return_value=("found", {
-                "points": 40, "tier_name": "",
-                "percent": 0, "next": (85, 10)})):
+        with patch.object(loyalty, "balance_for_phone", return_value=("found", [{
+                "points": 40, "tier_name": "", "store": "Yakima",
+                "percent": 0, "next": (85, 10)}])):
             body = self._post().content.decode()
         self.assertIn("Not enough to redeem yet", body)
 
@@ -106,29 +106,42 @@ class TheLookupTells(TestCase):
              patch("bundles.loyalty._details", return_value=row):
             state, got = loyalty.balance_for_phone("5095551212")
         self.assertEqual(state, "found")
-        self.assertEqual(got["points"], 1095)
-        self.assertEqual(got["percent"], 30)          # top rung
-        self.assertIsNone(got["next"])
-        self.assertNotIn("is_member", got, "a field that is False for real members is a trap")
+        self.assertEqual(got[0]["points"], 1095)
+        self.assertEqual(got[0]["percent"], 30)       # top rung
+        self.assertIsNone(got[0]["next"])
+        self.assertNotIn("is_member", got[0], "a field False for real members is a trap")
 
-    def test_duplicate_profiles_on_one_number_show_the_larger_balance(self):
+    def _two_profiles(self):
+        return (patch("bundles.loyalty._accounts_for_phone",
+                      side_effect=lambda slug, ph: ["A", "B"] if slug == "yakima" else []),
+                patch("bundles.loyalty._details",
+                      side_effect=lambda slug, acct: {"LoyaltyPoints": 419.33 if acct == "A"
+                                                      else 1887.24}))
+
+    def test_duplicate_profiles_on_one_number_are_all_returned(self):
         """MEASURED 2026-08-10: one real phone number returned TWO Dutchie guests,
-        carrying 1887.24 and 419.33 points. Taking the first match — which is what a
-        name autofill does, quite correctly — would have shown this customer 419
-        while 1887 sat on their other profile, with nothing hinting there was more.
+        carrying 1887.24 and 419.33 points. Showing one of them — first OR largest —
+        hides a balance the customer really has, and picking for them means they
+        reach the counter expecting a number the budtender isn't looking at.
 
-        Largest, never the sum: they are separate accounts and the register redeems
-        from one, so 2306 would promise a discount nobody can actually give.
+        Biggest first, and never summed: separate accounts, redeemed one at a time,
+        so 2306 would promise a discount nobody can give.
         """
-        with patch("bundles.loyalty._accounts_for_phone",
-                   side_effect=lambda slug, ph: ["A", "B"] if slug == "yakima" else []), \
-             patch("bundles.loyalty._details",
-                   side_effect=lambda slug, acct: {"LoyaltyPoints": 419.33 if acct == "A"
-                                                   else 1887.24}):
+        accts, details = self._two_profiles()
+        with accts, details:
             state, got = loyalty.balance_for_phone("5095551212")
         self.assertEqual(state, "found")
-        self.assertEqual(got["points"], 1887)
-        self.assertEqual(got["percent"], 30)
+        self.assertEqual([a["points"] for a in got], [1887, 419])
+
+    def test_both_balances_are_on_the_page_and_are_not_added_up(self):
+        accts, details = self._two_profiles()
+        with accts, details:
+            body = self._post().content.decode()
+        self.assertIn("1887", body)
+        self.assertIn("419", body)
+        self.assertIn("2 accounts", body)
+        self.assertIn("points don't combine", body)
+        self.assertNotIn("2306", body, "the two balances were summed")
 
     def test_a_balance_is_found_even_if_a_sibling_profile_errors(self):
         # One unreadable duplicate must not hide the balance on the other.
@@ -141,7 +154,7 @@ class TheLookupTells(TestCase):
                    side_effect=lambda slug, ph: ["A", "B"] if slug == "yakima" else []), \
              patch("bundles.loyalty._details", side_effect=flaky):
             state, got = loyalty.balance_for_phone("5095551212")
-        self.assertEqual((state, got["points"]), ("found", 300))
+        self.assertEqual((state, got[0]["points"]), ("found", 300))
 
     # ── the three outcomes ───────────────────────────────────────────────────
     def test_an_unknown_number_is_told_so_plainly(self):
@@ -230,7 +243,7 @@ class TheSearchSpansEveryStore(TestCase):
         with patch("bundles.loyalty._accounts_for_phone", side_effect=only_pullman), \
              patch("bundles.loyalty._details", return_value={"LoyaltyPoints": 300.0}) as det:
             state, got = loyalty.balance_for_phone("5095551212")
-        self.assertEqual((state, got["points"]), ("found", 300))
+        self.assertEqual((state, got[0]["points"]), ("found", 300))
         self.assertEqual(det.call_args[0][0], "pullman")
 
     def test_one_store_being_down_does_not_hide_a_balance_held_at_another(self):
@@ -241,7 +254,7 @@ class TheSearchSpansEveryStore(TestCase):
 
         with patch("bundles.loyalty._accounts_for_phone", side_effect=yakima_explodes), \
              patch("bundles.loyalty._details", return_value={"LoyaltyPoints": 300.0}):
-            self.assertEqual(loyalty.balance_for_phone("5095551212")[1]["points"], 300)
+            self.assertEqual(loyalty.balance_for_phone("5095551212")[1][0]["points"], 300)
 
     def test_the_biggest_balance_wins_across_stores_too(self):
         # Duplicates are not confined to one store: the same person can hold a
@@ -251,4 +264,4 @@ class TheSearchSpansEveryStore(TestCase):
              patch("bundles.loyalty._details",
                    side_effect=lambda slug, acct: {"LoyaltyPoints": 900.0 if slug == "pullman"
                                                    else 100.0}):
-            self.assertEqual(loyalty.balance_for_phone("5095551212")[1]["points"], 900)
+            self.assertEqual(loyalty.balance_for_phone("5095551212")[1][0]["points"], 900)

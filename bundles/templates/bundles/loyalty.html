@@ -23,32 +23,48 @@
 
   {% if state %}
     {% if state == "found" %}
+      {% comment %}
+        One number can carry more than one Dutchie profile — measured, two on the
+        same phone holding 1887 and 419 points. Showing only one of them hides a
+        balance the customer really has and sets them up to expect a number the
+        budtender isn't looking at, so every profile is listed. They are NOT added
+        up: separate accounts, redeemed one at a time.
+      {% endcomment %}
+      {% if result|length > 1 %}
+        <p class="loyalty-multi">This number has {{ result|length }} accounts. They're separate —
+          points don't combine, so a budtender redeems from one of them.</p>
+      {% endif %}
+
+      {% for acct in result %}
       <section class="loyalty-card">
-        <p class="loyalty-eyebrow">Your balance</p>
-        <p class="loyalty-points">{{ result.points }}<span>points</span></p>
+        <p class="loyalty-eyebrow">
+          {% if result|length > 1 %}{{ acct.store }} account{% else %}Your balance{% endif %}
+        </p>
+        <p class="loyalty-points">{{ acct.points }}<span>points</span></p>
 
         {% comment %}
           A points figure alone is a number, not an offer — so the balance never
           appears without what it redeems for. Below the first rung that is honestly
           "nothing yet", and saying so is better than implying otherwise.
         {% endcomment %}
-        {% if result.percent %}
-          <p class="loyalty-worth">Worth <strong>{{ result.percent }}% off</strong> your next basket.</p>
+        {% if acct.percent %}
+          <p class="loyalty-worth">Worth <strong>{{ acct.percent }}% off</strong> your next basket.</p>
         {% else %}
           <p class="loyalty-worth muted">Not enough to redeem yet — rewards start at 125 points.</p>
         {% endif %}
 
-        {% if result.tier_name %}<p class="loyalty-tier">{{ result.tier_name }}</p>{% endif %}
+        {% if acct.tier_name %}<p class="loyalty-tier">{{ acct.tier_name }}</p>{% endif %}
 
-        {% if result.next %}
-          <p class="loyalty-next">{{ result.next.0 }} more point{{ result.next.0|pluralize }}
-            to reach {{ result.next.1 }}% off.</p>
+        {% if acct.next %}
+          <p class="loyalty-next">{{ acct.next.0 }} more point{{ acct.next.0|pluralize }}
+            to reach {{ acct.next.1 }}% off.</p>
         {% else %}
           <p class="loyalty-next">You're at the top tier.</p>
         {% endif %}
 
-        <a class="loyalty-cta" href="/custom-order">Start an order →</a>
+        {% if forloop.last %}<a class="loyalty-cta" href="/custom-order">Start an order →</a>{% endif %}
       </section>
+      {% endfor %}
     {% elif state == "none" %}
       {% comment %}
         A clean "no" from every store. Say so plainly — and then say what to do about

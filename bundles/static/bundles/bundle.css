@@ -481,3 +481,9 @@ button:disabled, .is-disabled { opacity: .45; pointer-events: none; }
   .loyalty-form { grid-template-columns: 1fr; }
   .loyalty-points { font-size: 48px; }
 }
+/* Shown only when a number carries more than one profile. Stated before the cards,
+   not after, so nobody adds two balances together on the way down the page. */
+.loyalty-multi { margin: 18px 0 0; padding: 11px 13px; border-radius: 10px;
+                 border: 1px solid var(--line-strong); background: var(--ink);
+                 font-size: 13px; color: var(--sage); line-height: 1.45; }
+.loyalty-card + .loyalty-card { margin-top: 12px; }
