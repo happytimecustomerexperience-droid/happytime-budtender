@@ -60,6 +60,31 @@ def next_tier(points: float) -> tuple[int, int] | None:
     return None
 
 
+def _accounts_for_phone(location_slug: str, phone: str) -> list[str]:
+    """EVERY guest at this store whose number matches — not just the first.
+
+    Dutchie holds duplicate profiles on one phone. Measured 2026-08-10: a single
+    number returned two guests carrying 1887.24 and 419.33 points. `lookup_by_phone`
+    answers with whichever Dutchie listed first, which is fine for autofilling a name
+    and wrong for a balance — a customer would be shown 419 while 1887 sat on their
+    other profile, with nothing on the page hinting there was more.
+
+    Matched on DIGITS, like lookup_by_phone, because Dutchie stores whatever shape
+    the guest was created with.
+    """
+    digits = customers._digits(phone)
+    rows = customers._rows(customers._client(location_slug).guest_search(digits))
+    out = []
+    for row in rows:
+        for key in ("PhoneNo", "Phone", "phone", "CellPhone"):
+            if customers._digits(row.get(key)) == digits:
+                acct = customers._acct_of(row)
+                if acct:
+                    out.append(str(acct))
+                break
+    return out
+
+
 def _details(location_slug: str, acct_id: str) -> dict:
     store = get_store(store_key(location_slug))
     data = PosRegisterClient(store).guest_details_light(int(acct_id)).get("Data") or {}
@@ -85,29 +110,38 @@ def balance_for_phone(phone: str) -> tuple[str, dict | None]:
     matched. One store erroring downgrades the whole answer to `unavailable`,
     because a number registered at the store we failed to reach is not absent.
 
+    EVERY matching profile is checked and the LARGEST balance wins. Dutchie holds
+    duplicates on one phone (measured: 1887.24 and 419.33 on the same number), so
+    taking the first would show a customer the smaller of their own two balances.
+    Largest, not the sum: they are separate accounts and the register redeems from
+    one of them, so adding them up would promise a discount that cannot be given.
+
     Returns ONLY what the page shows. The Dutchie guest row behind this carries DOB,
     address, email and full purchase history; naming the four fields here rather than
     passing the row through means a field added upstream cannot silently widen it.
     """
     every_store_answered = True
+    best: tuple[float, dict] | None = None
     for slug in STORES:
         try:
-            acct_id, _name, status = customers.lookup_by_phone(slug, phone)
+            accts = _accounts_for_phone(slug, phone)
         except Exception:
             logger.warning("loyalty lookup unavailable at %s", slug, exc_info=True)
             every_store_answered = False
             continue
-        if status == "unresolved":       # lookup_by_phone swallowed its own error
-            every_store_answered = False
-            continue
-        if status != "matched" or not acct_id:
-            continue
-        try:
-            row = _details(slug, acct_id)
-        except Exception:
-            logger.warning("loyalty details unavailable at %s", slug, exc_info=True)
-            return "unavailable", None
-        points = float(row.get("LoyaltyPoints") or 0)
+        for acct_id in accts:
+            try:
+                row = _details(slug, acct_id)
+            except Exception:
+                logger.warning("loyalty details unavailable at %s", slug, exc_info=True)
+                every_store_answered = False
+                continue
+            pts = float(row.get("LoyaltyPoints") or 0)
+            if best is None or pts > best[0]:
+                best = (pts, row)
+
+    if best is not None:
+        points, row = best
         # `IsLoyaltyMember` IS DELIBERATELY NOT READ. Every registered customer is a
         # member (owner, 2026-08-10), yet this field came back False for all 40 real
         # customers sampled — including one holding 1095.32 points. It disagrees with

@@ -101,8 +101,8 @@ class TheLookupTells(TestCase):
         Fractional too — the counter rounds down rather than flattering anyone.
         """
         row = {"LoyaltyPoints": 1095.32, "IsLoyaltyMember": False, "LoyaltyTierName": ""}
-        with patch("bundles.loyalty.customers.lookup_by_phone",
-                   return_value=("710000099", "X", "matched")), \
+        with patch("bundles.loyalty._accounts_for_phone",
+                   side_effect=lambda slug, ph: ["710000099"] if slug == "yakima" else []), \
              patch("bundles.loyalty._details", return_value=row):
             state, got = loyalty.balance_for_phone("5095551212")
         self.assertEqual(state, "found")
@@ -110,6 +110,38 @@ class TheLookupTells(TestCase):
         self.assertEqual(got["percent"], 30)          # top rung
         self.assertIsNone(got["next"])
         self.assertNotIn("is_member", got, "a field that is False for real members is a trap")
+
+    def test_duplicate_profiles_on_one_number_show_the_larger_balance(self):
+        """MEASURED 2026-08-10: one real phone number returned TWO Dutchie guests,
+        carrying 1887.24 and 419.33 points. Taking the first match — which is what a
+        name autofill does, quite correctly — would have shown this customer 419
+        while 1887 sat on their other profile, with nothing hinting there was more.
+
+        Largest, never the sum: they are separate accounts and the register redeems
+        from one, so 2306 would promise a discount nobody can actually give.
+        """
+        with patch("bundles.loyalty._accounts_for_phone",
+                   side_effect=lambda slug, ph: ["A", "B"] if slug == "yakima" else []), \
+             patch("bundles.loyalty._details",
+                   side_effect=lambda slug, acct: {"LoyaltyPoints": 419.33 if acct == "A"
+                                                   else 1887.24}):
+            state, got = loyalty.balance_for_phone("5095551212")
+        self.assertEqual(state, "found")
+        self.assertEqual(got["points"], 1887)
+        self.assertEqual(got["percent"], 30)
+
+    def test_a_balance_is_found_even_if_a_sibling_profile_errors(self):
+        # One unreadable duplicate must not hide the balance on the other.
+        def flaky(slug, acct):
+            if acct == "A":
+                raise OSError("row unreadable")
+            return {"LoyaltyPoints": 300.0}
+
+        with patch("bundles.loyalty._accounts_for_phone",
+                   side_effect=lambda slug, ph: ["A", "B"] if slug == "yakima" else []), \
+             patch("bundles.loyalty._details", side_effect=flaky):
+            state, got = loyalty.balance_for_phone("5095551212")
+        self.assertEqual((state, got["points"]), ("found", 300))
 
     # ── the three outcomes ───────────────────────────────────────────────────
     def test_an_unknown_number_is_told_so_plainly(self):
@@ -126,7 +158,7 @@ class TheLookupTells(TestCase):
     def test_a_register_outage_never_says_you_are_not_registered(self):
         """THE distinction. Told they're new, a fifteen-year customer re-registers
         and their points end up split across two accounts."""
-        with patch("bundles.loyalty.customers.lookup_by_phone", side_effect=OSError("down")):
+        with patch("bundles.loyalty._accounts_for_phone", side_effect=OSError("down")):
             body = self._post().content.decode()
         self.assertIn("couldn't check right now", body.lower())
         self.assertNotIn("have this number on file", body)
@@ -136,22 +168,23 @@ class TheLookupTells(TestCase):
         def yakima_down(slug, phone):
             if slug == "yakima":
                 raise OSError("down")
-            return ("", "", "new")
+            return []
 
-        with patch("bundles.loyalty.customers.lookup_by_phone", side_effect=yakima_down):
+        with patch("bundles.loyalty._accounts_for_phone", side_effect=yakima_down):
             state, _ = loyalty.balance_for_phone("5095551212")
         self.assertEqual(state, "unavailable")
 
-    def test_a_swallowed_dutchie_error_is_not_a_clean_no_either(self):
-        # lookup_by_phone catches its own errors and returns `unresolved`; reading
-        # that as "no account" is the same bug wearing a return value.
-        with patch("bundles.loyalty.customers.lookup_by_phone",
-                   return_value=("", "", "unresolved")):
+    def test_an_unreadable_profile_is_not_a_clean_no_either(self):
+        # We found somebody and then could not read their row. That is "don't know",
+        # never "no account" — the same bug wearing a different return value.
+        with patch("bundles.loyalty._accounts_for_phone",
+                   side_effect=lambda slug, ph: ["A"] if slug == "yakima" else []), \
+             patch("bundles.loyalty._details", side_effect=OSError("unreadable")):
             state, _ = loyalty.balance_for_phone("5095551212")
         self.assertEqual(state, "unavailable")
 
     def test_every_store_answering_no_is_a_clean_no(self):
-        with patch("bundles.loyalty.customers.lookup_by_phone", return_value=("", "", "new")):
+        with patch("bundles.loyalty._accounts_for_phone", return_value=[]):
             state, balance = loyalty.balance_for_phone("5095551212")
         self.assertEqual((state, balance), ("none", None))
 
@@ -167,8 +200,8 @@ class TheLookupTells(TestCase):
         row = {"LoyaltyPoints": 500.0, "IsLoyaltyMember": True, "LoyaltyTierName": "Gold",
                "FirstName": "Jane", "LastName": "Doe", "Email": "jane@example.test",
                "DOB": "1990-01-15", "Address": "123 Main St"}
-        with patch("bundles.loyalty.customers.lookup_by_phone",
-                   return_value=("710000099", "Jane Doe", "matched")), \
+        with patch("bundles.loyalty._accounts_for_phone",
+                   side_effect=lambda slug, ph: ["710000099"] if slug == "yakima" else []), \
              patch("bundles.loyalty._details", return_value=row):
             body = self._post().content.decode()
         for secret in ("Jane", "Doe", "jane@example.test", "1990-01-15", "123 Main"):
@@ -192,11 +225,10 @@ class TheSearchSpansEveryStore(TestCase):
 
     def test_a_pullman_signup_is_found_from_the_public_page(self):
         def only_pullman(slug, phone):
-            return ("710000099", "X", "matched") if slug == "pullman" else ("", "", "new")
+            return ["710000099"] if slug == "pullman" else []
 
-        with patch("bundles.loyalty.customers.lookup_by_phone", side_effect=only_pullman), \
-             patch("bundles.loyalty._details", return_value={"LoyaltyPoints": 300.0,
-                                                            "IsLoyaltyMember": True}) as det:
+        with patch("bundles.loyalty._accounts_for_phone", side_effect=only_pullman), \
+             patch("bundles.loyalty._details", return_value={"LoyaltyPoints": 300.0}) as det:
             state, got = loyalty.balance_for_phone("5095551212")
         self.assertEqual((state, got["points"]), ("found", 300))
         self.assertEqual(det.call_args[0][0], "pullman")
@@ -205,8 +237,18 @@ class TheSearchSpansEveryStore(TestCase):
         def yakima_explodes(slug, phone):
             if slug == "yakima":
                 raise OSError("register down")
-            return ("710000099", "X", "matched") if slug == "pullman" else ("", "", "new")
+            return ["710000099"] if slug == "pullman" else []
 
-        with patch("bundles.loyalty.customers.lookup_by_phone", side_effect=yakima_explodes), \
+        with patch("bundles.loyalty._accounts_for_phone", side_effect=yakima_explodes), \
              patch("bundles.loyalty._details", return_value={"LoyaltyPoints": 300.0}):
             self.assertEqual(loyalty.balance_for_phone("5095551212")[1]["points"], 300)
+
+    def test_the_biggest_balance_wins_across_stores_too(self):
+        # Duplicates are not confined to one store: the same person can hold a
+        # profile at two, and the page must show the larger, not the first found.
+        with patch("bundles.loyalty._accounts_for_phone",
+                   side_effect=lambda slug, ph: ["X"] if slug in ("yakima", "pullman") else []), \
+             patch("bundles.loyalty._details",
+                   side_effect=lambda slug, acct: {"LoyaltyPoints": 900.0 if slug == "pullman"
+                                                   else 100.0}):
+            self.assertEqual(loyalty.balance_for_phone("5095551212")[1]["points"], 900)
