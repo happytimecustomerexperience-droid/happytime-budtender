@@ -40,11 +40,14 @@ _PHONEISH_RE = re.compile(r"(?<!\w)(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?\d{3}[\s
 
 def _parse_body(request) -> dict:
     """Parse the JSON body once. request.body is already cached by the signature check, so this
-    re-read is free; a malformed body yields ``{}`` (the dispatcher then 400s on a missing type)."""
+    re-read is free; a malformed OR wrong-shape body (not a JSON object — a list/str/int/null)
+    yields ``{}`` so the dispatcher's existing missing-type path 400s instead of a downstream
+    ``AttributeError`` -> 500."""
     try:
-        return json.loads(request.body or b"{}")
+        data = json.loads(request.body or b"{}")
     except Exception:  # noqa: BLE001
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _resolve_store(message: dict) -> str:
@@ -352,12 +355,24 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
     # webhook returns fast), else runs it INLINE exactly as P2 did (sync fallback; broker-free).
     # Never raises — a summary/email failure must not lose the durable record (ADR-017).
     if VoiceToolCall.objects.filter(call_id=call_id, name="stage_phone_cart").exists():
-        try:
-            from voice.budtender_client import budtender
+        # BUG FIX: Vapi delivery is at-least-once, but the release itself is NOT idempotent on
+        # the budtender side — a redelivered eocr must not release/void a staged order twice.
+        # Reuse VoiceToolCall (already the durable per-call log, unique on
+        # (call_id, tool_call_id, name)) as the release marker: the row is created at most once
+        # per call_id, so only the delivery that wins the insert fires the release.
+        _marker, _created = VoiceToolCall.objects.get_or_create(
+            call_id=call_id,
+            tool_call_id="",
+            name="_phone_cart_released",
+            defaults={"args": {}, "result": {}, "store": store, "source": "webhook"},
+        )
+        if _created:
+            try:
+                from voice.budtender_client import budtender
 
-            budtender().phone_cart_release({"call_id": call_id, "store": store})
-        except Exception:  # noqa: BLE001 - release is best-effort and must not break the webhook
-            logger.warning("phone-cart release failed for %s", call_id, exc_info=True)
+                budtender().phone_cart_release({"call_id": call_id, "store": store})
+            except Exception:  # noqa: BLE001 - release is best-effort and must not break the webhook
+                logger.warning("phone-cart release failed for %s", call_id, exc_info=True)
 
     try:
         from voice import tasks

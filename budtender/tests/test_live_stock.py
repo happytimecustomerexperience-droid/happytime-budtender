@@ -92,6 +92,27 @@ class StockMapTests(_CacheIsolated):
         self.assertNotIn("cost", blob)
         self.assertNotIn("margin", blob)
 
+    def test_dutchie_unreachable_serves_the_stale_snapshot_honestly_labeled(self):
+        """The degradation path when Dutchie can't be reached but we have a prior
+        good pull: NOT silently "cache"/"live", NOT a fabricated number — `source`
+        must say "stale" so the caller can degrade honestly (module docstring)."""
+        # Seed the base cache entry directly (bypassing prime(), which also sets
+        # the ":fresh" flag) so the freshness window has already lapsed, mirroring
+        # what happens after TTL expiry on a real deploy.
+        cache.set(live_stock._key(LOC), [_row(quantity_on_hand=7.0)], live_stock.STALE_TTL)
+        m = live_stock.stock_map(LOC)
+        self.assertEqual(m.source, "stale")
+        self.assertTrue(m.usable)
+        self.assertEqual(m.qty(sku="A"), 7.0)
+
+    def test_dutchie_unreachable_with_no_prior_pull_ever_degrades_to_db_not_a_guess(self):
+        """No cache at all (fresh install / cold store) and the pull fails (the
+        `_offline()` guard makes every pull fail under test) → source="db", the
+        honest "I can't confirm live" signal, not a fabricated stock number."""
+        m = live_stock.stock_map(LOC)
+        self.assertEqual(m.source, "db")
+        self.assertFalse(m.usable)
+
 
 @override_settings(CACHES=CACHES_LOCMEM)
 class PublicProductOverlayTests(_CacheIsolated):

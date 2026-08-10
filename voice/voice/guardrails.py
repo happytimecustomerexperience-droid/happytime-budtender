@@ -79,18 +79,52 @@ def scrub_leak(payload):
 # Phone-like digit run (7+ digits with optional +, spaces, dashes, parens) — masked before any
 # tool-call arg / fetched transcript is PERSISTED (PII discipline, 23-SPEC §3.5: the DB keeps only
 # the peppered hash; a number a caller spoke into a tool arg must never land in cleartext).
-_PHONE_RE = re.compile(r"\+?\d[\d\-.\s()]{5,}\d")
+# Excludes a run immediately after "WAC "/"RCW " (case-insensitive) — a legal citation like
+# "WAC 314-55-079" or dot-separated "RCW 69.50.535" is dash/dot/digit-shaped exactly like a phone
+# number and would otherwise be swallowed whole. ``(?<!\d)`` blocks the match from re-anchoring
+# mid-run one digit later (e.g. matching "14-55-079" once "WAC 3..." is excluded) — without it the
+# WAC/RCW exclusion only protects the first attempt, not the whole citation.
+_PHONE_RE = re.compile(r"(?<!\d)(?<!WAC )(?<!RCW )\+?\d[\d\-.\s()]{5,}\d", re.IGNORECASE)
+
+# Date-of-birth-shaped value: MM/DD/YYYY, MM-DD-YYYY, or YYYY/MM/DD, YYYY-MM-DD — a caller reading
+# out a birthdate for age verification. Requires a 4-digit year in the first or last slot so it
+# can't fire on multi-part numeric codes that don't carry a plausible year (a legal citation like
+# "WAC 314-55-079" has no 4-digit group and is untouched; "RCW 69.50.535" uses dots, not / or -,
+# so it never reaches this pattern at all).
+_DOB_RE = re.compile(
+    r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})\b"
+)
+
+# Street-address-shaped value: a house number, an optional compass prefix (N/S/E/W/NE/...), 1-3
+# words (letters/digits — covers ordinals like "1st"), then a recognized street-type suffix. A
+# caller's delivery/callback address said out loud on the call. KNOWN TRADEOFF: this also masks
+# the STORE's own address when the agent reads it back (e.g. "1315 N 1st St") — accepted, since
+# the redactor has no way to distinguish caller-address from store-address, and over-masking a
+# non-secret is preferable to leaving a caller's home address in the clear.
+_STREET_SUFFIX = (
+    r"St(?:reet)?|Ave(?:nue)?|Rd|Road|Blvd|Boulevard|Dr(?:ive)?|Ln|Lane|Ct|Court|Way|"
+    r"Pl(?:ace)?|Cir(?:cle)?|Ter(?:race)?|Pkwy|Parkway|Hwy|Highway|Loop|Trail"
+)
+_ADDRESS_RE = re.compile(
+    rf"\b\d{{1,5}}\s+(?:[NSEW]{{1,2}}\s+)?(?:[A-Za-z0-9]+\s+){{1,3}}(?:{_STREET_SUFFIX})\b\.?",
+    re.IGNORECASE,
+)
 
 
 def redact_pii(payload):
-    """Structure-preserving mask of phone-like digit runs in every string value. Defense-in-depth
-    for stored tool-call args + transcripts fetched from Vapi. Returns a cleaned copy."""
+    """Structure-preserving mask of phone-like digit runs, DOB-shaped dates, and street addresses
+    in every string value. Defense-in-depth for stored tool-call args + transcripts fetched from
+    Vapi. Deliberately narrow: prices, weights/doses, legal citations, hours, and percentages are
+    NOT touched (see the must-not-redact regression tests) — a greedy matcher here would mangle
+    every stored call log. Returns a cleaned copy."""
     if isinstance(payload, dict):
         return {k: redact_pii(v) for k, v in payload.items()}
     if isinstance(payload, (list, tuple)):
         return [redact_pii(v) for v in payload]
     if isinstance(payload, str):
-        return _PHONE_RE.sub("[redacted]", payload)
+        masked = _ADDRESS_RE.sub("[redacted]", payload)
+        masked = _DOB_RE.sub("[redacted]", masked)
+        return _PHONE_RE.sub("[redacted]", masked)
     return payload
 
 

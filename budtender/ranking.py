@@ -431,9 +431,28 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
         candidates = [p for p in candidates
                       if live.buyable(sku=p.sku, product_id=p.product_id, min_stock=MIN_STOCK)]
     # Granular subtype (rosin / gummies / lollipops…) — a HARD filter when chosen.
+    # voice/chat.py's ``_SUBCATEGORY_RE`` sends indica/sativa/hybrid under this SAME
+    # "subcategory" slot key regardless of category (e.g. "relaxing indica flower"),
+    # but that's strain type, not a form/texture subtype — product_subtype() has no
+    # keywords for it (and none at all for "flower"), so it must be matched against
+    # Product.strain_type instead or the hard filter drops every real result.
     sub = slots.get("subcategory")
-    if sub:
+    if sub in ("indica", "sativa", "hybrid"):
+        candidates = [p for p in candidates if (p.strain_type or "").lower() == sub]
+    elif sub:
         candidates = [p for p in candidates if product_subtype(p.name, p.category) == sub]
+
+    # Category blocklist (HARD): "not a concentrate" / "anything but edibles" must
+    # actually exclude that category, not just fail to steer toward it. Arrives as
+    # slot-key-style strings from voice — normalize through the same map that
+    # turns a requested category into its canonical name, so "concentrate" blocks
+    # the canonical "concentrates". Unknown/garbage entries are ignored rather
+    # than treated as a category (which would filter nothing, or everything).
+    blocklist = slots.get("category_blocklist") or []
+    blocked = {CATEGORY_BY_SLOTKEY.get(b, b) for b in blocklist if b}
+    blocked &= set(CATEGORY_BY_SLOTKEY.values())
+    if blocked:
+        candidates = [p for p in candidates if p.category not in blocked]
     if not premium_intent:
         candidates = [p for p in candidates
                       if lo <= _live_price(live, p) <= hi]

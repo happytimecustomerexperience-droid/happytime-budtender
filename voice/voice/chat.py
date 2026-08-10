@@ -247,6 +247,57 @@ def _prefers_products(message: str, category: str, *, escalation: bool) -> bool:
     return bool(category) and not escalation and not _FAQ_FIRST_RE.search(message or "")
 
 
+# Safety check: MUST run before category routing. _CATEGORY_RE matches ordinary product words
+# ("edibles", "gummy", "chocolate") with no idea it might be sitting inside a poisoning report, an
+# impaired-driving question, or an allergen ask — so without this, _prefers_products short-circuits
+# a safety turn into a sales pitch (verified: "my dog just ate one of the edibles" -> a confident
+# product recommendation). These three checks win over category routing; they add a branch, they
+# do not touch the existing escalation/leak-guard/Numbers-Guard paths.
+_INGESTION_SUBJECT_RE = re.compile(r"\b(dog|cat|pet|child|kid|toddler|baby)\b", re.I)
+_INGESTION_VERB_RE = re.compile(r"\b(ate|ingested|swallowed|got\s+into)\b", re.I)
+_INGESTION_STANDALONE_RE = re.compile(
+    r"\b(overdose|poison(?:ed|ing)?|throwing\s+up|won'?t\s+wake\s+up|unresponsive|emergency|"
+    r"hospital|ambulance|911)\b"
+    r"|too\s+much\s+and\s+(?:he|she|they)\b",
+    re.I,
+)
+_ER_RE = re.compile(r"\bER\b")  # case-sensitive: a bare lowercase "er" is a filler word, not a signal
+# "how long"/"safe" paired with "drive" would also catch "how long until I can drive after this" —
+# that turn is a separate, out-of-scope retrieval-relevance bug (it answers with the wrong FAQ row,
+# not a product pitch), so this only fires on the safe/ok phrasing that actually gets hijacked by
+# the category regex ("is it ok to drive after one gummy").
+_DRIVING_RE = re.compile(r"\b(drive|driving|behind\s+the\s+wheel)\b", re.I)
+_DRIVING_QUALIFIER_RE = re.compile(r"\b(safe|ok|okay)\b", re.I)
+_ALLERGEN_KEYWORD_RE = re.compile(r"\b(allerg(?:ic|y|ies)|nuts?|peanuts?|gluten|dairy|soy)\b", re.I)
+_ALLERGEN_QUALIFIER_RE = re.compile(r"\b(ingredient|ingredients|contain|contains|have|has|free)\b", re.I)
+
+
+def _is_ingestion_emergency(message: str) -> bool:
+    return bool(
+        (_INGESTION_SUBJECT_RE.search(message or "") and _INGESTION_VERB_RE.search(message or ""))
+        or _INGESTION_STANDALONE_RE.search(message or "")
+        or _ER_RE.search(message or "")
+    )
+
+
+def _is_impaired_driving_question(message: str) -> bool:
+    return bool(_DRIVING_RE.search(message or "") and _DRIVING_QUALIFIER_RE.search(message or ""))
+
+
+def _is_allergen_question(message: str) -> bool:
+    return bool(
+        _ALLERGEN_KEYWORD_RE.search(message or "") and _ALLERGEN_QUALIFIER_RE.search(message or "")
+    )
+
+
+def _is_safety_emergency(message: str) -> bool:
+    return (
+        _is_ingestion_emergency(message)
+        or _is_impaired_driving_question(message)
+        or _is_allergen_question(message)
+    )
+
+
 # Coarse conversation-intent label so sibling services can classify + track turns
 # without re-deriving the route. Derived from the SAME signals the router acts on.
 _RETURN_RE = re.compile(r"\b(returns?|refund|exchange|money\s*back|policy)\b", re.I)
@@ -264,7 +315,9 @@ _HOURS_LOC_RE = re.compile(
 # out of the product path, and get answered with the state health warning.
 _REFINEMENT_RE = re.compile(
     r"\b(cheaper|cheapest|less\s+expensive|lower|smaller|bigger|larger|stronger|weaker|"
-    r"something\s+else|anything\s+else|other\s+options?|different|instead)\b",
+    r"something\s+else|anything\s+else|other\s+options?|different|instead|"
+    # "just the medically compliant ones" is a narrowing of the ask before it, not a new subject.
+    r"medically\s+compliant|doh)\b",
     re.I,
 )
 
@@ -283,7 +336,12 @@ def _carried_category(history) -> str:
     refinement, so an unrelated new question never gets dragged back onto the shelf."""
     if not isinstance(history, list):
         return ""
-    for msg in reversed(history[-8:]):
+    # Deliberately a WIDER window than _recent_escalation's. "What were we shopping for" survives
+    # a tangent; a dispute should not. At 8 messages (~4 turns) a caller who asked about flower,
+    # detoured through hours and specials, then said "something a bit stronger" found no category
+    # in window and never reached the shelf at all — a lost sale on any call long enough to have
+    # a normal conversational detour.
+    for msg in reversed(history[-20:]):
         if not isinstance(msg, dict) or msg.get("role") != "user":
             continue
         category = _normalize_category(_category_from_text(str(msg.get("content") or "")))
@@ -346,6 +404,17 @@ def _escalation_answer(store: str, phone: str) -> str:
     )
 
 
+# NEW COPY — REQUIRES OWNER APPROVAL. The generic _escalation_answer ("I can't confirm a return or
+# refund outcome...") is actively wrong for a pet/child ingestion report, so this case gets its own
+# neutral, non-medical line: no diagnosis, no dose, no reassurance the animal/child is fine, just an
+# immediate hand-off to a person or emergency services. Deliberately invents no number.
+def _poison_emergency_answer(store: str, phone: str) -> str:
+    return (
+        "This could be an emergency. Please contact your vet, doctor, or emergency services right "
+        "away — I'm not able to advise on what to do. " + _staff_followup_hint(store, phone)
+    )
+
+
 def _normalize_suggest_picks(picks, category: str) -> list[dict]:
     if not isinstance(picks, list):
         return []
@@ -385,7 +454,12 @@ def answer_text_chat(data: dict) -> dict:
     # message's own category counts here; a profile-derived fallback must not end an escalation.
     message_category = _normalize_category(_category_from_text(message))
     carried = _recent_escalation(history) and not (message_category and not escalation_now)
-    escalation = escalation_now or carried
+    # Safety check runs before category routing and wins over it: an ingestion/poisoning report,
+    # an impaired-driving question, or an allergen ask must never fall through to the ordinary
+    # category regex and become a product pitch.
+    is_poison_emergency = _is_ingestion_emergency(message)
+    safety_hit = is_poison_emergency or _is_safety_emergency(message)
+    escalation = escalation_now or carried or safety_hit
     category = str(slots.get("category") or _category_from_text(message)).strip()
     category = _normalize_category(category)
     # A refinement belongs to the ask before it. Carry the category so "keep it under 40 though"
@@ -452,9 +526,10 @@ def answer_text_chat(data: dict) -> dict:
         }
 
     if escalation:
+        answer = _poison_emergency_answer(store, phone) if is_poison_emergency else _escalation_answer(store, phone)
         return {
             "ok": True,
-            "answer": _escalation_answer(store, phone),
+            "answer": answer,
             "intent": "conflict_resolution",
             "grounded": False,
             "sources": [],

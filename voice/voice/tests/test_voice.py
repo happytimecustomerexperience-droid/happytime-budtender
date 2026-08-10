@@ -622,9 +622,154 @@ def test_end_of_call_report_writes_durable_record(client):
     resp2 = _post_signed(client, payload)
     assert resp2.status_code == 200
     assert VoiceCall.objects.filter(call_id="call_eocr_1").count() == 1
+    # Turns must also upsert in place (update_or_create), not duplicate the transcript.
+    vc.refresh_from_db()
+    assert vc.turns.count() == 2
 
 
 @pytest.mark.django_db
 def test_unknown_message_type_400(client):
     resp = _post_signed(client, {"message": {"type": "no-such-event"}})
     assert resp.status_code == 400
+
+
+# ── BUG 1: a retried eocr must not double-fire the phone-cart release ──────────
+
+
+@pytest.mark.django_db
+def test_end_of_call_report_releases_phone_cart_at_most_once(client, monkeypatch):
+    """Vapi delivery is at-least-once; a redelivered eocr must call phone_cart_release exactly
+    once (a second release could double-void/release a staged customer order)."""
+    from voice.budtender_client import BudtenderClient
+    from voice.models import VoiceToolCall
+
+    call_id = "call_release_once"
+    VoiceToolCall.objects.create(
+        call_id=call_id,
+        tool_call_id="tc_1",
+        name="stage_phone_cart",
+        args={},
+        result={},
+        store="yakima",
+    )
+
+    calls = []
+    monkeypatch.setattr(
+        BudtenderClient, "phone_cart_release", lambda self, payload: calls.append(payload)
+    )
+
+    payload = {
+        "message": {
+            "type": "end-of-call-report",
+            "call": {"id": call_id, "customer": {"number": "+15095551212"}},
+            "durationSeconds": 10,
+            "transcript": "ok",
+            "messages": [],
+        }
+    }
+    resp1 = _post_signed(client, payload)
+    resp2 = _post_signed(client, payload)
+    assert resp1.status_code == 200
+    assert resp2.status_code == 200
+    assert len(calls) == 1
+    assert calls[0]["call_id"] == call_id
+
+
+# ── BUG 2: a valid-JSON-but-wrong-shape body must 400, not 500 ─────────────────
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("raw_body", [b"[]", b"null", b"42"])
+def test_non_dict_json_body_is_400_not_500(client, raw_body):
+    """A signed body that parses to a list/None/int must degrade to the existing
+    unknown-message-type 400 path, never an uncaught 500 from ``body.get``."""
+    sig = signing.compute_signature(raw_body, SECRET)
+    resp = client.post(
+        WEBHOOK_URL,
+        data=raw_body,
+        content_type="application/json",
+        **{"HTTP_X_VAPI_SIGNATURE": sig},
+    )
+    assert resp.status_code == 400
+
+
+# ── #3: store resolution falls back to the default on every malformed map shape ─
+
+
+@pytest.mark.django_db
+def test_resolve_store_falls_back_when_map_absent(settings):
+    from voice.webhooks import _resolve_store
+
+    settings.HHT_DEFAULT_STORE = "yakima"
+    if hasattr(settings, "VAPI_PHONE_NUMBER_STORE_MAP"):
+        del settings.VAPI_PHONE_NUMBER_STORE_MAP
+    message = {"call": {"phoneNumberId": "pn_123"}}
+    assert _resolve_store(message) == "yakima"
+
+
+@pytest.mark.django_db
+def test_resolve_store_falls_back_when_map_is_malformed_json(settings):
+    from voice.webhooks import _resolve_store
+
+    settings.HHT_DEFAULT_STORE = "yakima"
+    settings.VAPI_PHONE_NUMBER_STORE_MAP = "{not valid json"
+    message = {"call": {"phoneNumberId": "pn_123"}}
+    assert _resolve_store(message) == "yakima"
+
+
+@pytest.mark.django_db
+def test_resolve_store_falls_back_when_map_names_unknown_store(settings):
+    from voice.webhooks import _resolve_store
+
+    settings.HHT_DEFAULT_STORE = "yakima"
+    # A typo'd store name in the env var must not silently misattribute the call.
+    settings.VAPI_PHONE_NUMBER_STORE_MAP = json.dumps({"pn_123": "yakimaa"})
+    message = {"call": {"phoneNumberId": "pn_123"}}
+    assert _resolve_store(message) == "yakima"
+
+
+# ── #4: a raising tool handler must degrade to 200 + a structured error result ──
+
+
+@pytest.mark.django_db
+def test_raising_tool_handler_returns_200_with_structured_error(client, monkeypatch):
+    from voice.tools import TOOL_REGISTRY
+
+    def _raises(args, ctx):
+        raise RuntimeError("boom")
+
+    monkeypatch.setitem(TOOL_REGISTRY, "_raises", _raises)
+
+    payload = {
+        "message": {
+            "type": "tool-calls",
+            "call": {"id": "call_raise_1", "customer": {"number": "+15095551212"}},
+            "toolCalls": [
+                {"id": "tc_1", "function": {"name": "_raises", "arguments": {}}},
+            ],
+        }
+    }
+    resp = _post_signed(client, payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data == {
+        "results": [{"toolCallId": "tc_1", "result": {"error": "tool_failed", "tool": "_raises"}}]
+    }
+
+
+# ── #5: tamper-after-sign — HMAC binds to body CONTENT, not just header presence ─
+
+
+@pytest.mark.django_db
+def test_signature_over_one_body_rejects_a_different_body(client):
+    body_a = json.dumps({"message": {"type": "no-such-event"}}).encode()
+    body_b = json.dumps({"message": {"type": "end-of-call-report", "call": {"id": "x"}}}).encode()
+    sig_for_a = signing.compute_signature(body_a, SECRET)
+
+    resp = client.post(
+        WEBHOOK_URL,
+        data=body_b,
+        content_type="application/json",
+        **{"HTTP_X_VAPI_SIGNATURE": sig_for_a},
+    )
+    assert resp.status_code == 401
