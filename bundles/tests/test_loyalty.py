@@ -1,11 +1,16 @@
 """A phone number in, a loyalty balance out, with no login in front of it.
 
-The page answers three ways — found / not registered / couldn't check — and the
-whole point is that the third never collapses into the second. A register outage
-that tells a fifteen-year customer they aren't registered sends them off to sign up
-again, and their points end up split across two accounts.
+The page answers three ways — found / not on file / couldn't check — and the whole
+point is that the third never collapses into the second. A register outage that
+tells a fifteen-year customer we don't have them sends them off to register again,
+and their points end up split across two accounts.
 
-It said "not registered" and "couldn't check" identically until 2026-08-10, so that
+Membership is automatic on registration (owner, 2026-08-10), so there is no state
+where someone is a customer but not a member. "We don't have this number" is
+therefore the only honest version of a no — never "you aren't a member", which would
+send them asking a budtender to join a programme that has no joining step.
+
+It said "not on file" and "couldn't check" identically until 2026-08-10, so that
 someone testing numbers could not learn which are real. The owner asked for the
 plain answer, which makes this a membership oracle; the throttle (5/min, 30/hour
 per IP) is what stops enumeration now, and it was always the control that mattered.
@@ -107,12 +112,16 @@ class TheLookupTells(TestCase):
         self.assertNotIn("is_member", got, "a field that is False for real members is a trap")
 
     # ── the three outcomes ───────────────────────────────────────────────────
-    def test_an_unregistered_number_is_told_so_plainly(self):
+    def test_an_unknown_number_is_told_so_plainly(self):
         # Owner, 2026-08-10. This does make the page a membership oracle; the
         # throttle below is what stops enumeration now.
         with patch.object(loyalty, "balance_for_phone", return_value=("none", None)):
             body = self._post().content.decode()
-        self.assertIn("isn't registered yet", body)
+        self.assertIn("don't have this number on file", body)
+        # NOT "you aren't a member": membership is automatic on registration, so
+        # there is no programme to join and saying otherwise sends someone asking a
+        # budtender for a thing that does not exist.
+        self.assertNotIn("not a member", body.lower())
 
     def test_a_register_outage_never_says_you_are_not_registered(self):
         """THE distinction. Told they're new, a fifteen-year customer re-registers
@@ -120,7 +129,7 @@ class TheLookupTells(TestCase):
         with patch("bundles.loyalty.customers.lookup_by_phone", side_effect=OSError("down")):
             body = self._post().content.decode()
         self.assertIn("couldn't check right now", body.lower())
-        self.assertNotIn("isn't registered", body)
+        self.assertNotIn("have this number on file", body)
 
     def test_one_store_being_down_is_not_a_clean_no(self):
         # A number registered at the store we failed to reach is not absent.

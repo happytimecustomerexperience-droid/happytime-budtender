@@ -9,12 +9,17 @@ Points come from Dutchie's own guest record and nowhere else.
 The field is `LoyaltyPoints` on POST /api/v2/guest/details-light — 49 fields, versus
 131 on /details, and the light row carries everything shown here.
 
-MEASURED, not assumed (40 real customers, 2026-08-10): 7 of 40 hold a balance, the
-largest 1095.32, and they are fractional. `IsLoyaltyMember` was False for all forty,
-the 1095-point holder included, so it is NOT a membership flag and nothing here may
-gate on it — see the note in `balance_for_phone`. The REST API's own
-`isLoyaltyMember` is the mirror-image trap: True for all 29,762 customers, and that
-row carries no points field at all.
+MEMBERSHIP IS AUTOMATIC. Owner, 2026-08-10: "they are all loyalty by default if they
+have registered." So having a Dutchie account IS being in the programme — there is
+no separate opt-in, and no state where someone is a customer but not a member. The
+only question this page can meaningfully ask is "do we have you at all", and then
+"how many points".
+
+That settles two contradictory fields measured on 2026-08-10. The REST API's
+`isLoyaltyMember` is True for all 29,762 customers — which is simply CORRECT, given
+the above. The register's `IsLoyaltyMember` was False for all 40 customers sampled,
+including one holding 1095.32 points, so it is the wrong one and nothing may gate on
+it (see `balance_for_phone`). 7 of those 40 held a balance; they are fractional.
 """
 from __future__ import annotations
 
@@ -103,13 +108,12 @@ def balance_for_phone(phone: str) -> tuple[str, dict | None]:
             logger.warning("loyalty details unavailable at %s", slug, exc_info=True)
             return "unavailable", None
         points = float(row.get("LoyaltyPoints") or 0)
-        # `IsLoyaltyMember` IS DELIBERATELY NOT READ. Measured against 40 real
-        # customers on 2026-08-10: it came back False for every single one —
-        # including the person holding 1095.32 points. Whatever it tracks, it is not
-        # "has a loyalty balance", and gating this page on it would show nothing to
-        # everyone. Same for the REST API's `isLoyaltyMember`, which is True for all
-        # 29,762 customers and equally useless. LoyaltyPoints is the only field here
-        # that carries a fact.
+        # `IsLoyaltyMember` IS DELIBERATELY NOT READ. Every registered customer is a
+        # member (owner, 2026-08-10), yet this field came back False for all 40 real
+        # customers sampled — including one holding 1095.32 points. It disagrees with
+        # the truth, so gating the page on it would show nothing to everybody.
+        # Reaching this line at all already means we found them, which is the same
+        # thing as "they are in the programme".
         return "found", {
             "points": int(points),          # balances are fractional; the counter rounds down
             "tier_name": (row.get("LoyaltyTierName") or "").strip(),

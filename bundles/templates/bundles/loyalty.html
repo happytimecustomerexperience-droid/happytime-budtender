@@ -51,13 +51,19 @@
       </section>
     {% elif state == "none" %}
       {% comment %}
-        A clean "no" from every store. Say so plainly — and then say what to do
-        about it, because "you don't have an account" on its own is a dead end.
+        A clean "no" from every store. Say so plainly — and then say what to do about
+        it, because "we don't have you" on its own is a dead end.
+
+        NOT "you're not a member": membership is automatic on registration (owner,
+        2026-08-10), so there is no separate programme to join and telling someone to
+        sign up for one would send them asking for a thing that doesn't exist. The
+        only real gap is that we don't have them as a customer yet.
       {% endcomment %}
       <section class="loyalty-card">
-        <p class="loyalty-worth">That number isn't registered yet.</p>
-        <p class="muted">No rewards account is set up for it. Ask a budtender to add you
-          on your next visit — it takes a second, and you start earning right away.</p>
+        <p class="loyalty-worth">We don't have this number on file.</p>
+        <p class="muted">Check the digits, or give it to a budtender on your next visit —
+          you're in the rewards programme automatically from your first purchase, and
+          points start adding up straight away.</p>
         <a class="loyalty-cta" href="/custom-order">Browse the menu →</a>
       </section>
     {% else %}
