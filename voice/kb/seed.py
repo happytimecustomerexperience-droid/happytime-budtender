@@ -41,7 +41,16 @@ FAQ_ROWS = [
         "question": "Do you take cards? How do I pay?",
         "answer": "We take cash and debit only, and there's an on-site ATM if you need it.",
         "topic": "payment",
-        "paraphrases": ["credit card", "do you take debit", "ATM", "cash only", "how do I pay"],
+        # The bare-noun paraphrases ("ATM", "credit card") were not enough: retrieval matched
+        # "do you take credit cards" but missed "what payment do you take" and "is there an ATM"
+        # — a row that names an ATM, failing the question "is there an ATM". Full-sentence
+        # phrasings are what callers actually say, and they are what the retriever scores against.
+        "paraphrases": [
+            "credit card", "do you take debit", "ATM", "cash only", "how do I pay",
+            "what payment do you take", "what forms of payment do you accept",
+            "what payment methods do you accept", "is there an ATM", "do you have an ATM on site",
+            "do you take cash", "can I pay with cash",
+        ],
     },
     {
         "key": "delivery",
