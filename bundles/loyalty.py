@@ -7,9 +7,14 @@ been wasted deriving this ladder from it (see alpine-automations conf/account.to
 Points come from Dutchie's own guest record and nowhere else.
 
 The field is `LoyaltyPoints` on POST /api/v2/guest/details-light — 49 fields, versus
-131 on /details, and the light row carries everything shown here. Verified live
-against a real guest record: LoyaltyPoints, IsLoyaltyMember and LoyaltyTierName are
-all present.
+131 on /details, and the light row carries everything shown here.
+
+MEASURED, not assumed (40 real customers, 2026-08-10): 7 of 40 hold a balance, the
+largest 1095.32, and they are fractional. `IsLoyaltyMember` was False for all forty,
+the 1095-point holder included, so it is NOT a membership flag and nothing here may
+gate on it — see the note in `balance_for_phone`. The REST API's own
+`isLoyaltyMember` is the mirror-image trap: True for all 29,762 customers, and that
+row carries no points field at all.
 """
 from __future__ import annotations
 
@@ -98,9 +103,15 @@ def balance_for_phone(phone: str) -> tuple[str, dict | None]:
             logger.warning("loyalty details unavailable at %s", slug, exc_info=True)
             return "unavailable", None
         points = float(row.get("LoyaltyPoints") or 0)
+        # `IsLoyaltyMember` IS DELIBERATELY NOT READ. Measured against 40 real
+        # customers on 2026-08-10: it came back False for every single one —
+        # including the person holding 1095.32 points. Whatever it tracks, it is not
+        # "has a loyalty balance", and gating this page on it would show nothing to
+        # everyone. Same for the REST API's `isLoyaltyMember`, which is True for all
+        # 29,762 customers and equally useless. LoyaltyPoints is the only field here
+        # that carries a fact.
         return "found", {
-            "points": int(points),
-            "is_member": bool(row.get("IsLoyaltyMember")),
+            "points": int(points),          # balances are fractional; the counter rounds down
             "tier_name": (row.get("LoyaltyTierName") or "").strip(),
             "percent": percent_for(points),
             "next": next_tier(points),

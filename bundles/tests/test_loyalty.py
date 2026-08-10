@@ -74,7 +74,7 @@ class TheLookupTells(TestCase):
 
     def test_a_member_sees_points_and_what_they_are_worth(self):
         with patch.object(loyalty, "balance_for_phone", return_value=("found", {
-                "points": 500, "is_member": True, "tier_name": "Gold",
+                "points": 500, "tier_name": "Gold",
                 "percent": 20, "next": (100, 25)})):
             body = self._post().content.decode()
         self.assertIn("500", body)
@@ -83,10 +83,28 @@ class TheLookupTells(TestCase):
 
     def test_a_balance_below_the_first_rung_says_so_plainly(self):
         with patch.object(loyalty, "balance_for_phone", return_value=("found", {
-                "points": 40, "is_member": True, "tier_name": "",
+                "points": 40, "tier_name": "",
                 "percent": 0, "next": (85, 10)})):
             body = self._post().content.decode()
         self.assertIn("Not enough to redeem yet", body)
+
+    def test_a_real_balance_survives_the_membership_flag_being_false(self):
+        """MEASURED 2026-08-10 against 40 real customers: `IsLoyaltyMember` is False
+        for every one of them, INCLUDING the person holding 1095.32 points. Gating on
+        it would show nothing to everybody. The balance is the only fact in the row.
+
+        Fractional too — the counter rounds down rather than flattering anyone.
+        """
+        row = {"LoyaltyPoints": 1095.32, "IsLoyaltyMember": False, "LoyaltyTierName": ""}
+        with patch("bundles.loyalty.customers.lookup_by_phone",
+                   return_value=("710000099", "X", "matched")), \
+             patch("bundles.loyalty._details", return_value=row):
+            state, got = loyalty.balance_for_phone("5095551212")
+        self.assertEqual(state, "found")
+        self.assertEqual(got["points"], 1095)
+        self.assertEqual(got["percent"], 30)          # top rung
+        self.assertIsNone(got["next"])
+        self.assertNotIn("is_member", got, "a field that is False for real members is a trap")
 
     # ── the three outcomes ───────────────────────────────────────────────────
     def test_an_unregistered_number_is_told_so_plainly(self):
