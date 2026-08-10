@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import time
 
-from .session import PosClient
+from .session import DutchieUnavailable, PosClient
 
 logger = logging.getLogger(__name__)
 
@@ -313,11 +313,32 @@ class PosRegisterClient(PosClient):
         return self.post("/api/posv3/maintenance/UpdateTransactionStatus", body)
 
     # ── guest lookup by phone/name (CONFIRMED endpoint) ──────────────────────
+    # Dutchie answers a GENUINE no-match with Result=false and "No matching guests
+    # found" — not an empty Data list. `PosClient.post` turns every Result=false into
+    # DutchieUnavailable, which is right for the rest of the API and wrong here: it
+    # made "nobody has this number" indistinguishable from "the register is down", at
+    # the source, for every caller. Confirmed live 2026-08-10.
+    #
+    # Matched narrowly on purpose. The same endpoint refuses a too-broad query with
+    # "Please Narrow Your Search", which is NOT a no-match and must keep raising —
+    # swallowing every Result=false here would report "no account" for a search that
+    # was never actually run.
+    _NO_MATCH = "no matching guest"
+
     def guest_search(self, query: str) -> dict:
         """POST /api/v2/guest/checkin_search_by_string {SearchString} (phone or name)
-        -> Data:[{Guest_id, Name, PhoneNo, PatientType, DOB, LastTransaction, ...}]."""
+        -> Data:[{Guest_id, Name, PhoneNo, PatientType, DOB, LastTransaction, ...}].
+
+        An empty Data list means Dutchie looked and found nobody. Anything it could
+        not answer still raises."""
         body = {"SearchString": (query or "").strip(), **self.session_block(with_register=False)}
-        data = self.post("/api/v2/guest/checkin_search_by_string", body)
+        try:
+            data = self.post("/api/v2/guest/checkin_search_by_string", body)
+        except DutchieUnavailable as exc:
+            if self._NO_MATCH in str(exc).lower():
+                logger.info("guest_search(%r) -> 0 match(es)", query)
+                return {"Result": True, "Data": []}
+            raise
         n = len((data or {}).get("Data") or []) if isinstance(data, dict) else 0
         logger.info("guest_search(%r) -> %d match(es)", query, n)
         return data
