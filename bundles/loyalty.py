@@ -43,8 +43,10 @@ TIERS = [(125, 10), (250, 15), (450, 20), (600, 25), (900, 30)]
 # search — the number is theirs, the store is an accident of where they first shopped.
 STORES = ("yakima", "mount-vernon", "pullman")
 
-# Shown only when someone has more than one profile, so "which one?" has an answer.
-STORE_LABELS = {"yakima": "Yakima", "mount-vernon": "Mount Vernon", "pullman": "Pullman"}
+# Deliberately NOT labelling an account with the store it was found at. Measured
+# live: the same guest comes back from all three searches, so "found at Yakima" would
+# just mean "Yakima is first in this tuple" — a fact about our loop presented to a
+# customer as a fact about their account.
 
 
 def percent_for(points: float) -> int:
@@ -126,6 +128,7 @@ def balance_for_phone(phone: str) -> tuple[str, list[dict] | None]:
     """
     every_store_answered = True
     found: list[dict] = []
+    seen: set[str] = set()
     for slug in STORES:
         try:
             accts = _accounts_for_phone(slug, phone)
@@ -134,13 +137,23 @@ def balance_for_phone(phone: str) -> tuple[str, list[dict] | None]:
             every_store_answered = False
             continue
         for acct_id in accts:
+            # DEDUPE BY GUEST ID, ACROSS STORES. Measured live: searching one real
+            # number at all three stores returned the SAME two guests each time, so
+            # the page rendered six cards for two accounts and announced "6
+            # accounts". `checkin_search_by_string` is evidently not scoped to the
+            # LocId in the session block the way the rest of the API is. Searching
+            # every store is still right — it costs three cheap reads and covers the
+            # case where it IS scoped — but the results are one set, not three.
+            if acct_id in seen:
+                continue
+            seen.add(acct_id)
             try:
                 row = _details(slug, acct_id)
             except Exception:
                 logger.warning("loyalty details unavailable at %s", slug, exc_info=True)
                 every_store_answered = False
                 continue
-            found.append(_account(slug, row))
+            found.append(_account(row))
 
     if found:
         found.sort(key=lambda a: a["points"], reverse=True)
@@ -148,7 +161,7 @@ def balance_for_phone(phone: str) -> tuple[str, list[dict] | None]:
     return ("none" if every_store_answered else "unavailable"), None
 
 
-def _account(location_slug: str, row: dict) -> dict:
+def _account(row: dict) -> dict:
     """One profile's balance, and only what the page shows.
 
     The Dutchie row behind this carries DOB, address, email and full purchase
@@ -167,5 +180,4 @@ def _account(location_slug: str, row: dict) -> dict:
         "tier_name": (row.get("LoyaltyTierName") or "").strip(),
         "percent": percent_for(points),
         "next": next_tier(points),
-        "store": STORE_LABELS.get(location_slug, location_slug),
     }

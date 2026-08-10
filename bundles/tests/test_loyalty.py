@@ -79,7 +79,7 @@ class TheLookupTells(TestCase):
 
     def test_a_member_sees_points_and_what_they_are_worth(self):
         with patch.object(loyalty, "balance_for_phone", return_value=("found", [{
-                "points": 500, "tier_name": "Gold", "store": "Yakima",
+                "points": 500, "tier_name": "Gold",
                 "percent": 20, "next": (100, 25)}])):
             body = self._post().content.decode()
         self.assertIn("500", body)
@@ -88,7 +88,7 @@ class TheLookupTells(TestCase):
 
     def test_a_balance_below_the_first_rung_says_so_plainly(self):
         with patch.object(loyalty, "balance_for_phone", return_value=("found", [{
-                "points": 40, "tier_name": "", "store": "Yakima",
+                "points": 40, "tier_name": "",
                 "percent": 0, "next": (85, 10)}])):
             body = self._post().content.decode()
         self.assertIn("Not enough to redeem yet", body)
@@ -112,8 +112,10 @@ class TheLookupTells(TestCase):
         self.assertNotIn("is_member", got[0], "a field False for real members is a trap")
 
     def _two_profiles(self):
+        # EVERY store returns the SAME two ids — that is what the live API does, and
+        # the reason the page rendered six cards for two accounts before the dedupe.
         return (patch("bundles.loyalty._accounts_for_phone",
-                      side_effect=lambda slug, ph: ["A", "B"] if slug == "yakima" else []),
+                      side_effect=lambda slug, ph: ["A", "B"]),
                 patch("bundles.loyalty._details",
                       side_effect=lambda slug, acct: {"LoyaltyPoints": 419.33 if acct == "A"
                                                       else 1887.24}))
@@ -131,6 +133,8 @@ class TheLookupTells(TestCase):
         with accts, details:
             state, got = loyalty.balance_for_phone("5095551212")
         self.assertEqual(state, "found")
+        # TWO, not six. All three store searches return the same pair, so without a
+        # dedupe by guest id the page announced "6 accounts" for one person with two.
         self.assertEqual([a["points"] for a in got], [1887, 419])
 
     def test_both_balances_are_on_the_page_and_are_not_added_up(self):
@@ -256,12 +260,22 @@ class TheSearchSpansEveryStore(TestCase):
              patch("bundles.loyalty._details", return_value={"LoyaltyPoints": 300.0}):
             self.assertEqual(loyalty.balance_for_phone("5095551212")[1][0]["points"], 300)
 
-    def test_the_biggest_balance_wins_across_stores_too(self):
-        # Duplicates are not confined to one store: the same person can hold a
-        # profile at two, and the page must show the larger, not the first found.
-        with patch("bundles.loyalty._accounts_for_phone",
-                   side_effect=lambda slug, ph: ["X"] if slug in ("yakima", "pullman") else []), \
-             patch("bundles.loyalty._details",
-                   side_effect=lambda slug, acct: {"LoyaltyPoints": 900.0 if slug == "pullman"
-                                                   else 100.0}):
-            self.assertEqual(loyalty.balance_for_phone("5095551212")[1][0]["points"], 900)
+    def test_the_same_guest_seen_at_two_stores_is_one_account(self):
+        """The bug this closes shipped for one deploy: `checkin_search_by_string`
+        returns the same guests whatever LocId is in the session block, so searching
+        three stores found one person's two profiles three times over and the page
+        announced "6 accounts". Deduped on guest id, and read ONCE — a second read of
+        the same row is a wasted register call as well as a wrong card.
+        """
+        reads = []
+
+        def count_reads(slug, acct):
+            reads.append(acct)
+            return {"LoyaltyPoints": 900.0}
+
+        with patch("bundles.loyalty._accounts_for_phone", return_value=["X"]), \
+             patch("bundles.loyalty._details", side_effect=count_reads):
+            state, got = loyalty.balance_for_phone("5095551212")
+        self.assertEqual(len(got), 1, f"one guest rendered {len(got)} times")
+        self.assertEqual(got[0]["points"], 900)
+        self.assertEqual(reads, ["X"], "the same guest row was fetched more than once")

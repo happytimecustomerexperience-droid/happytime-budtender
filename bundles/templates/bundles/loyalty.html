@@ -38,7 +38,8 @@
       {% for acct in result %}
       <section class="loyalty-card">
         <p class="loyalty-eyebrow">
-          {% if result|length > 1 %}{{ acct.store }} account{% else %}Your balance{% endif %}
+          {% if result|length > 1 %}Account {{ forloop.counter }} of {{ result|length }}
+          {% else %}Your balance{% endif %}
         </p>
         <p class="loyalty-points">{{ acct.points }}<span>points</span></p>
 
