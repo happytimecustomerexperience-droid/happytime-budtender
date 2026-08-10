@@ -84,4 +84,29 @@ if [ ${#FAILED[@]} -eq 0 ]; then
   exit 0
 fi
 log "FAILED STEPS: ${FAILED[*]}"
+
+# Tell a human. Without this the canary is a diary, not an alarm — a failure would sit in a log
+# nobody reads until a customer hits the same bug. Goes to OPS_ALERT_EMAIL (the operator), NOT the
+# per-store STAFF_ALERT_* addresses: a stale KB index or a drifted tool schema is an ops problem,
+# and paging the shop floor about it trains everyone to ignore the alerts that DO matter to them.
+# Best-effort and never fatal: a failed alert must not mask the underlying failure in the exit code.
+log "sending failure alert"
+dc exec -T voice-web python manage.py shell -c "
+import os
+from django.conf import settings
+from django.core.mail import send_mail
+to = os.environ.get('OPS_ALERT_EMAIL') or getattr(settings, 'STAFF_ALERT_EMAIL', '')
+if not to:
+    print('no OPS_ALERT_EMAIL / STAFF_ALERT_EMAIL configured — alert not sent')
+else:
+    send_mail(
+        subject='[Happy Time] daily maintenance FAILED: ${FAILED[*]}',
+        message='Failed steps: ${FAILED[*]}\n\nFull log on the VPS: /var/log/happytime-maintenance.log\n\nThe voice/chat agent may be serving stale or wrong answers until this is resolved.',
+        from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None) or to,
+        recipient_list=[to],
+        fail_silently=True,
+    )
+    print(f'alert sent to {to}')
+" || log "   (alert send failed — original failure still reported below)"
+
 exit 1
