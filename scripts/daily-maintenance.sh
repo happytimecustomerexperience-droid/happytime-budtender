@@ -102,7 +102,11 @@ else:
     send_mail(
         subject='[Happy Time] daily maintenance FAILED: ${FAILED[*]}',
         message='Failed steps: ${FAILED[*]}\n\nFull log on the VPS: /var/log/happytime-maintenance.log\n\nThe voice/chat agent may be serving stale or wrong answers until this is resolved.',
-        from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None) or to,
+        # LEAD_EMAIL_FROM is what crm/sinks.py already sends staff alerts as, and it is a real
+        # deliverable address. DEFAULT_FROM_EMAIL is NOT set in this project, so falling back to
+        # it yields Django's 'webmaster@localhost' and the SMTP provider rejects the message
+        # outright (550 Invalid \`from\` field) — a silently unsendable alert.
+        from_email=getattr(settings, 'LEAD_EMAIL_FROM', 'bot@happytimeweed.com'),
         recipient_list=[to],
         fail_silently=True,
     )
