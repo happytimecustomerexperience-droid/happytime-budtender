@@ -535,21 +535,25 @@ def test_the_mixed_long_call_known_caller_intent_and_pii_floor_hold(convo, fake_
     args = t.args("suggest_products")
     assert args["category"] == "flower", "the refinement tracks the CURRENT (flower) category"
 
-    # 4) Phone-cart style staging ask (known gap: no stage_phone_cart branch in chat.py).
+    # 4) Phone-cart style staging ask.
+    # FIXED 2026-08-10: chat.py now has a stage_phone_cart branch — a known caller's staging ask
+    # on a long call now actually reserves her most recently suggested pick (the last item from
+    # turn 3's refinement, "Sour Diesel 28g" — conservative SKU resolution, see voice/chat.py's
+    # ``_last_suggested_sku``) instead of getting generic FAQ/greeting copy.
     t = _do("can you set that aside for me under my name so it's ready when I get there")
-    assert "stage_phone_cart" not in t.tools
-    # GAP: exactly like thread 07 — the shared text brain has no ``stage_phone_cart`` branch, so a
-    # known caller's staging ask on a long call still gets answered with generic FAQ/greeting
-    # copy instead of anything that actually reserves her picks.
-    assert t.tools == ["faq_lookup"], "no phone-cart staging route exists from answer_text_chat"
+    assert "stage_phone_cart" in t.tools
+    assert t.intent == "phone_cart_staged"
+    assert t.grounded is True
+    assert t.args("stage_phone_cart")["sku"] == "FL-SD-28"
+    assert "Sour Diesel 28g" in t.answer, "names exactly which item it staged"
 
     # 5) A vendor-sounding question dropped into an otherwise-retail call.
+    # FIXED 2026-08-10: chat.py now routes a vendor-shaped aside to notify_vendor_callback instead
+    # of reading it as an ordinary (ungrounded) greeting/FAQ turn — mid-call, not just as an opener.
     t = _do("by the way, does anyone there handle wholesale purchasing for vendors")
-    assert t.tools == ["faq_lookup"], "there is no vendor route from the text brain"
-    # GAP: same as thread 06 — a vendor-sounding question mid-retail-call has no intent label of
-    # its own and no notify_vendor_callback dispatch; it is read as an ordinary (ungrounded)
-    # greeting/FAQ turn.
-    assert "notify_vendor_callback" not in t.tools
+    assert t.tools == ["faq_lookup", "notify_vendor_callback"]
+    assert t.intent == "vendor_callback"
+    assert "notify_vendor_callback" in t.tools
 
     # 6) Back to a product ask — the router picks the thread back up cleanly after the detour.
     t = _do("anyway, what carts do you have around $30", "product_suggestion")
@@ -572,9 +576,10 @@ def test_the_mixed_long_call_known_caller_intent_and_pii_floor_hold(convo, fake_
     # 10) Specials question.
     t = _do("any specials I should know about", "specials")
 
-    # 11) Another vendor-sounding aside, later in the call — must behave the same as turn 5.
+    # 11) Another vendor-sounding aside, later in the call — behaves the same as turn 5.
     t = _do("also I've got a manifest to drop off if that matters")
-    assert "notify_vendor_callback" not in t.tools
+    assert "notify_vendor_callback" in t.tools
+    assert t.intent == "vendor_callback"
 
     # 12) Edibles ask.
     t = _do("switching gears, got any low dose edibles", "product_suggestion")

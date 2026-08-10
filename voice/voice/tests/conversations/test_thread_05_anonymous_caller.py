@@ -51,7 +51,7 @@ def test_blocked_caller_is_served_without_ever_identifying_them(convo, fake_bt):
     assert call["phone"] is None, "NO caller number may reach budtender — that is W_ANON margin-first"
     assert call["session_token"] is None, (
         "recognition nulls the inbound session_token too, so identity can't ride in the back door "
-        "(the payload carried session_token='convo-test')"
+        "(the payload carried the harness's own per-conversation session_token, not a caller identity)"
     )
     assert "resume_by_phone" not in fake_bt.calls
     for pick in t.picks:

@@ -1,13 +1,54 @@
 """Shared text/voice agent brain.
 
 Vapi gets transport-specific webhooks around this; website chat gets this directly.
+
+── TRUST BOUNDARY (2026-08-10) ──────────────────────────────────────────────────────────
+``answer_text_chat`` is reachable directly over HTTP (the Bearer-gated ``/api/voice/chat``,
+``voice/api.py``) and from the staff playground console (``dashboard/playground.py``). Both
+callers are authenticated as "a legitimate client of the service" — NEITHER authenticates
+which end-caller/session a given request belongs to. That distinction matters because a
+conversation turn's ``escalation``/product-``category`` state used to be derived straight
+from a client-supplied ``history`` array (``data["history"]``), with zero check that the
+array actually belonged to the phone/session on the SAME request. A caller (or a buggy/
+malicious client) could hand this endpoint any ``history`` it liked and inherit another
+caller's dispute or shopping context (pinned by ``voice/tests/test_caller_identity_bleed.py``).
+
+TRUSTED — this module's own durable record of a session's turns:
+    ``VoiceCall``/``VoiceTurn`` rows (``voice/models.py``), keyed on ``call_id ==
+    session_token``. Every turn this module answers, it also WRITES to those rows
+    (``_persist_trusted_turn``) before returning; every turn it answers, it reconstructs
+    that session's history by READING those same rows (``_load_trusted_history``) — never
+    from the request body. A session_token's history is therefore exactly what THIS module
+    itself said and heard for that session_token; nothing else can inject into it.
+
+NOT TRUSTED — the client-supplied ``history`` field. It is no longer read anywhere in this
+    module. (It is still accepted on the wire for backward compatibility with older
+    clients/tests that send it — it is simply ignored.)
+
+WHY ``session_token`` IS AN ADEQUATE KEY: it is exactly what callers already resend turn
+    over turn to mean "same conversation" (the playground console does this today — see
+    ``dashboard/playground.py``/``templates/dashboard/playground.html``). A brand-new or
+    absent ``session_token`` has, by construction, no prior rows — a fresh caller starts
+    with empty history, never someone else's. Reconstruction is best-effort: if the DB is
+    unreachable the fallback is NO history (fail closed — never fall back to trusting the
+    client's array). A caller who somehow learns another session's token could still read
+    that session's history back (the residual risk of any session-token scheme); tokens here
+    are server-generated UUIDs (``dashboard/playground._new_call_id``) or budtender-issued,
+    not guessable, and this module does not change that model — it only stops trusting an
+    ARBITRARY client-supplied array with no token check at all.
+
+OUT OF SCOPE — Vapi/the phone agent: it never calls ``answer_text_chat``. Vapi drives tools
+    directly through the signed webhook (``voice/webhooks.py``), which has its own
+    call_id-keyed turn log and is untouched by this change.
+──────────────────────────────────────────────────────────────────────────────────────────
 """
 
 from __future__ import annotations
 
 import re
+import time
 
-from voice import recognition
+from voice import recognition, vendor_flow
 from voice.tools import dispatch
 
 _HUMAN_RE = re.compile(
@@ -161,6 +202,49 @@ def _phone_hint(data: dict) -> str:
     return ""
 
 
+def _load_trusted_history(session_token: str) -> list[dict]:
+    """This session's OWN prior turns, reconstructed from ``VoiceCall``/``VoiceTurn`` — see the
+    module-level trust-boundary comment. Never reads ``data["history"]``. Best-effort: no
+    session_token, no row for it yet, or a DB error all degrade to "no history" (empty),
+    never to trusting anything the client sent."""
+    if not session_token:
+        return []
+    try:
+        from voice.models import VoiceCall
+
+        call = VoiceCall.objects.filter(call_id=session_token).first()
+        if not call:
+            return []
+        return [{"role": turn.role, "content": turn.text} for turn in call.turns.order_by("seq")]
+    except Exception:  # noqa: BLE001 — DB unavailable degrades to no history, never to the client array
+        return []
+
+
+def _persist_trusted_turn(session_token: str, store: str, message: str, answer: str, latency_ms: int | None) -> None:
+    """Append this turn to the session's own durable log so the NEXT turn can trust it. Best-effort
+    (a logging failure must never cost the caller their answer — same discipline as
+    ``dashboard.playground._persist_turn``, which this supersedes for the VoiceCall/VoiceTurn
+    writes: the console now gets its turns from here, and only adds its own tool-call trace)."""
+    if not session_token:
+        return
+    try:
+        from voice import guardrails
+        from voice.models import VoiceCall, VoiceTurn
+
+        call, _ = VoiceCall.objects.get_or_create(call_id=session_token, defaults={"store": store})
+        seq = call.turns.count()
+        VoiceTurn.objects.create(call=call, seq=seq, role="user", text=guardrails.redact_pii(message)[:4000])
+        VoiceTurn.objects.create(
+            call=call,
+            seq=seq + 1,
+            role="assistant",
+            text=guardrails.redact_pii(answer)[:4000],
+            latency_ms=latency_ms,
+        )
+    except Exception:  # noqa: BLE001 — best-effort; the answer already went out
+        pass
+
+
 def _history_text(history) -> str:
     if not isinstance(history, list):
         return ""
@@ -309,6 +393,178 @@ def _is_safety_emergency(message: str) -> bool:
     )
 
 
+# ── vendor / phone-cart gates (2026-08-10 GAP fix) ──────────────────────────────────────
+# Two tools were registered (``notify_vendor_callback``, ``stage_phone_cart``) and reachable from
+# the phone squad, but had NO branch in this shared brain at all — a web-chat vendor was shopped
+# and a web-chat staging request was answered with irrelevant online-order copy. These two gates
+# are ADDED precedence, inserted after escalation/safety and before the grounded-FAQ speak
+# decision + the product branch (see the call site) — they do not reorder anything that already
+# existed. Both LOSE to escalation (the caller checks it before calling either _is_* function),
+# so a hostile "delivery" mention from an angry customer still escalates instead of logging a
+# callback (the caller-facing requirement this whole gate is built around).
+#
+# The vendor lexicon is DELIBERATELY narrower than ``voice/routing.py``'s ``_VENDOR`` regex (that
+# module classifies a phone call's cold OPEN, once, before any retail signal exists). Mid-chat,
+# a retail shopper legitimately says "do you offer delivery" (test_intent_label.py) or a
+# margin-fisher says "...wholesale, I mean" while pointing at a product already on screen
+# (test_thread_11) — bare "delivery"/"wholesale" would misroute both. Every alternative below
+# requires the caller to be identifying themselves or their business, not just naming a word a
+# retail customer could also say.
+_VENDOR_RE = re.compile(
+    r"\b("
+    r"sales\s*rep(?:resentative)?s?|"
+    r"i'?m\s+a\s+vendor|vendor\s+account|vendor\s+callback|"
+    r"wholesale\s+(pricing|order|orders|account|accounts|purchasing|distributor|rep|reps|"
+    r"representative)|calling\s+about\s+wholesale|"
+    r"distributor|"
+    r"purchasing\s+manager|handles?\s+purchasing|purchasing\s+(department|team)|"
+    r"(?:is\s+)?your\s+buyer\s+(?:available|there|in)|the\s+buyer\s+available|"
+    r"delivery\s+driver|i'?m\s+the\s+driver|dropping\s+off\s+a\s+delivery|here\s+with\s+a\s+delivery|"
+    r"transfer\s+manifest|\bmanifest\b|\bmetrc\b|\bccrs\b|\bwcia\b|"
+    r"purchase\s+order|"
+    r"\binvoice\b|accounts?\s+payable|"
+    r"sample\s+drop"
+    r")\b",
+    re.I,
+)
+
+# Staging/hold-for-pickup lexicon. Requires a real hold-request shape ("set X aside", "hold X for
+# me/until", "put me down for", "pick it up later") — NOT a bare "hold on" filler (thread 08/14) or
+# a status QUESTION about whether something is already held ("is anything being held", thread 07 —
+# note the past tense "held", never matched by the literal "hold" below).
+_STAGE_RE = re.compile(
+    r"\b("
+    r"set\s+(?:\w+\s+){0,3}aside|"
+    r"hold\s+(?:\w+\s+){0,4}(?:for\s+me|until)|"
+    r"put\s+me\s+down\s+for|"
+    r"pick\w*\s+(?:it\s+)?up\s+later"
+    r")\b",
+    re.I,
+)
+
+
+def _is_vendor_call(message: str) -> bool:
+    return bool(_VENDOR_RE.search(message or ""))
+
+
+def _is_staging_request(message: str) -> bool:
+    return bool(_STAGE_RE.search(message or ""))
+
+
+def _last_suggested_sku(call_id: str) -> str:
+    """The most recently suggested SKU for this session — read from ``VoiceCall.suggested_skus``,
+    the SAME durable field ``suggest.py``'s ``_stamp_suggested`` already appends to (keyed on
+    ``ctx['call_id']``, which ``_route_chat_turn`` sets to the session_token for text chat — a web
+    visitor has no Vapi call.id). Web chat has no "current product" concept of its own, so the last
+    SKU actually suggested is the only non-invented signal available for a staging request that
+    names no SKU. Best-effort; a DB error or no prior suggestion both degrade to "" (never guesses,
+    never fabricates a SKU)."""
+    call_id = str(call_id or "").strip()
+    if not call_id:
+        return ""
+    try:
+        from voice.models import VoiceCall
+
+        call = VoiceCall.objects.filter(call_id=call_id).only("suggested_skus").first()
+    except Exception:  # noqa: BLE001 — sku resolution must never crash the turn
+        return ""
+    skus = list(call.suggested_skus or []) if call else []
+    return str(skus[-1]) if skus else ""
+
+
+def _vendor_callback_reply(message: str, store: str, phone: str, ctx: dict, tool_results: list) -> dict:
+    """Route a detected vendor/sales-rep/delivery-driver caller to ``notify_vendor_callback``
+    instead of the retail/FAQ paths. Idempotent per ``ctx['call_id']`` (the tool's own contract —
+    a re-delivered/repeated vendor-sounding turn within the same session confirms, never
+    duplicates the durable record or re-fires the staff alert)."""
+    args = {
+        "store": store,
+        "reason": vendor_flow.normalize_reason(message),
+        "summary": message,
+    }
+    result = dispatch("notify_vendor_callback", args, ctx)
+    tool_results = tool_results + [{"tool": "notify_vendor_callback", "args": dict(args), "result": result}]
+    answer = str(result.get("spoken") or "").strip() or (
+        "Got it — I've let the team know and someone will follow up with you soon."
+    )
+    return {
+        "ok": True,
+        "intent": "vendor_callback",
+        "answer": answer,
+        "grounded": False,
+        "sources": [],
+        "tool_results": tool_results,
+        "escalation_required": False,
+        "escalation_flag": False,
+        "safe_next_action": "answer",
+        "safe_suggested_next_action": _suggested_next_action("answer"),
+        "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+        "store": store,
+    }
+
+
+def _stage_cart_reply(ctx: dict, store: str, phone: str, tool_results: list) -> dict:
+    """Route a detected staging/hold request to ``stage_phone_cart``. Conservative by design: the
+    SKU comes ONLY from ``_last_suggested_sku`` (the caller's own most recently suggested pick,
+    never invented); when that resolves to nothing, the honest answer is to say so and offer a
+    human — never stage a guessed item. ``stage_phone_cart`` takes no phone argument by design
+    (``voice/tools/phone_cart.py`` injects it server-side from ``ctx['_caller_phone']``/
+    ``ctx['caller_number']``) — that contract is untouched here."""
+    sku = _last_suggested_sku(ctx.get("call_id") or ctx.get("session_token") or "")
+    if not sku:
+        answer = (
+            "I don't have a specific item pulled up yet to set aside — let's find one first, or I "
+            "can have my team hold something for you if you tell me what you're looking for."
+        )
+        return {
+            "ok": True,
+            "intent": "phone_cart_staged",
+            "answer": answer,
+            "grounded": False,
+            "sources": [],
+            "tool_results": tool_results,
+            "escalation_required": False,
+            "escalation_flag": False,
+            "safe_next_action": "ask_staff",
+            "safe_suggested_next_action": _suggested_next_action("ask_staff"),
+            "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+            "store": store,
+        }
+
+    args = {"action": "add_item", "store": store, "sku": sku, "quantity": 1}
+    result = dispatch("stage_phone_cart", args, ctx)
+    tool_results = tool_results + [{"tool": "stage_phone_cart", "args": dict(args), "result": result}]
+    ok = bool(result.get("ok"))
+    # Name the exact item that was staged (a check_inventory lookup, not an invented name) so the
+    # caller can correct it on the spot if it is not what they meant — only ONE sku is ever staged
+    # per turn (the most recent pick), so silence about WHICH one would risk the caller assuming
+    # everything they mentioned was held.
+    if ok:
+        check = dispatch("check_inventory", {"sku": sku, "store": store}, ctx)
+        name = str(check.get("name") or "").strip()
+        item = f"the {name}" if name else "that item"
+        summary = str(result.get("spoken_summary") or "").strip()
+        answer = f"I've set {item} aside for pickup. {summary}".strip()
+    else:
+        answer = str(result.get("spoken_summary") or "").strip() or (
+            "I could not stage that cart change right now. A team member can help finish it."
+        )
+    return {
+        "ok": True,
+        "intent": "phone_cart_staged",
+        "answer": answer,
+        "grounded": ok,
+        "sources": [],
+        "tool_results": tool_results,
+        "escalation_required": False,
+        "escalation_flag": False,
+        "safe_next_action": "answer" if ok else "ask_staff",
+        "safe_suggested_next_action": _suggested_next_action("answer" if ok else "ask_staff"),
+        "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+        "store": store,
+    }
+
+
 # Coarse conversation-intent label so sibling services can classify + track turns
 # without re-deriving the route. Derived from the SAME signals the router acts on.
 _RETURN_RE = re.compile(r"\b(returns?|refund|exchange|money\s*back|policy)\b", re.I)
@@ -441,18 +697,46 @@ def _normalize_suggest_picks(picks, category: str) -> list[dict]:
 
 
 def answer_text_chat(data: dict) -> dict:
-    """Answer a website chat turn through the same grounded tools Vapi uses."""
+    """Answer a website chat turn through the same grounded tools Vapi uses.
+
+    Entry point + trust boundary (see module docstring): binds this turn to the caller's OWN
+    session-side history — reconstructed from this module's own durable log, never from the
+    request body's ``history`` — before handing off to the routing logic, then appends the
+    turn to that log so the NEXT turn on this session_token can trust it in turn.
+    """
+    message = _clean_message(data.get("message"))
+    if not message:
+        return {"ok": False, "error": "message required"}
+
+    session_token = str(data.get("session_token") or data.get("session_id") or "")[:128]
+    history = _load_trusted_history(session_token)
+
+    started = time.monotonic()
+    result = _route_chat_turn(data, history)
+    latency_ms = int((time.monotonic() - started) * 1000)
+
+    _persist_trusted_turn(session_token, str(result.get("store") or ""), message, str(result.get("answer") or ""), latency_ms)
+    return result
+
+
+def _route_chat_turn(data: dict, history: list[dict]) -> dict:
+    """All the actual routing logic. ``history`` arrives server-reconstructed (see
+    ``answer_text_chat``/module trust-boundary comment) — this function never reads
+    ``data["history"]`` itself."""
 
     message = _clean_message(data.get("message"))
     slots = data.get("slots") if isinstance(data.get("slots"), dict) else {}
     store = _safe_store(data.get("store") or data.get("location") or slots.get("store"))
     session_token = str(data.get("session_token") or data.get("session_id") or "")[:128]
     phone = _phone_hint(data)
-    history = data.get("history") if isinstance(data.get("history"), list) else []
-    if not message:
-        return {"ok": False, "error": "message required"}
 
     ctx = {"store": store, "session_token": session_token, "channel": "text", "known": False}
+    # Text chat has no Vapi call.id — reuse session_token consistently (the same key
+    # ``_persist_trusted_turn``/``_load_trusted_history`` already use) so ``suggest.py``'s
+    # ``_stamp_suggested`` and ``notify_vendor_callback`` both persist onto the SAME durable
+    # ``VoiceCall`` row this session's history is already tracked on.
+    if session_token:
+        ctx["call_id"] = session_token
     if phone:
         ctx["caller_number"] = phone
         ctx["_caller_phone"] = phone
@@ -505,6 +789,16 @@ def answer_text_chat(data: dict) -> dict:
     if _requires_sources(message) and faq.get("grounded") and not faq.get("sources"):
         faq = {"grounded": False, "fallback": "can't confirm"}
         tool_results[0]["result"] = faq
+
+    # Vendor/staging gates (ADDED precedence — see the block comment above their definitions):
+    # both lose to escalation/safety, and both win over the grounded-FAQ speak decision and the
+    # product branch below, so a vendor pitch never slot-fills as retail and a staging request
+    # never gets answered with irrelevant online-order hold copy.
+    if not escalation and _is_vendor_call(message):
+        return _vendor_callback_reply(message, store, phone, ctx, tool_results)
+
+    if not escalation and _is_staging_request(message):
+        return _stage_cart_reply(ctx, store, phone, tool_results)
 
     # Relevance gate: retrieval always returns its best row, even when that row has nothing to do
     # with the complaint. On a dispute turn we used to wrap an apology around whatever came back

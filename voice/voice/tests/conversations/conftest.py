@@ -17,6 +17,8 @@ Usage in a thread module::
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from voice import budtender_client, recognition
@@ -210,12 +212,22 @@ class Turn:
 
 
 class Conversation:
-    """A caller with memory. ``say()`` carries history forward exactly like the website chat."""
+    """A caller with memory. ``say()`` carries history forward exactly like the website chat.
+
+    Each ``Conversation`` gets its OWN ``session_token`` (a fresh uuid, not a shared literal) —
+    ``answer_text_chat`` now reconstructs a session's history server-side from the VoiceCall/
+    VoiceTurn rows keyed on that token (voice/chat.py's trust boundary) rather than trusting a
+    client-supplied ``history`` array, so two DISTINCT callers in the same test (e.g. thread 12's
+    Mount Vernon call and Pullman call) must not share one token or their "separate" histories
+    would bleed into each other through the DB — exactly the bug this harness now guards against
+    by construction, not just by convention.
+    """
 
     def __init__(self, store="yakima", phone="", slots=None):
         self.store = store
         self.phone = phone
         self.slots = slots or {}
+        self.session_token = f"convo-{uuid.uuid4().hex[:12]}"
         self.history: list[dict] = []
         self.turns: list[Turn] = []
 
@@ -226,12 +238,13 @@ class Conversation:
             "message": message,
             "store": self.store,
             "phone": self.phone,
-            "history": list(self.history),
             "slots": dict(self.slots),
-            "session_token": "convo-test",
+            "session_token": self.session_token,
         }
         payload.update(extra)
         turn = Turn(message, answer_text_chat(payload))
+        # Local bookkeeping only (``.transcript`` below) — answer_text_chat no longer reads a
+        # client-supplied history at all; it trusts only its own DB-backed record.
         self.history.append({"role": "user", "content": message})
         self.history.append({"role": "assistant", "content": turn.answer})
         self.turns.append(turn)

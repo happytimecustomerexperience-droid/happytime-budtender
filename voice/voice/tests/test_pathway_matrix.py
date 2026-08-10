@@ -265,12 +265,14 @@ def test_leak_guard_scrubs_cost_and_margin_through_the_real_dispatch(monkeypatch
         assert "margin" not in blob
 
 
-# ── direct-dispatch scenarios for tools the website-chat brain never reaches ────────
-# `answer_text_chat` only ever calls faq_lookup/suggest_products (a website chat visitor
-# has no register/vendor/escalation flow). The other tools are Vapi-only handoffs; they
-# still ship inside the same TOOL_REGISTRY the guard above checks, so each gets one
-# offline smoke scenario here — proving they're wired, return a spoken envelope, and never
-# leak cost/margin — without duplicating the deep per-tool suites that already cover them.
+# ── direct-dispatch scenarios for tools not covered by PATHWAY_CASES above ──────────
+# FIXED 2026-08-10: `answer_text_chat` now also reaches `stage_phone_cart` and
+# `notify_vendor_callback` itself (see voice/chat.py's vendor/staging gates + the thread 06/07/18
+# conversation tests) — a website chat visitor CAN trigger a vendor callback or a cart staging.
+# `notify_staff_issue`/`notify_n8n` remain Vapi-only handoffs the text brain never calls. Every
+# tool in TOOL_REGISTRY still gets at least one offline smoke scenario here — proving it's wired,
+# returns a spoken envelope, and never leaks cost/margin — without duplicating the deep per-tool
+# suites that already cover them.
 
 
 class _FakeBudtender:

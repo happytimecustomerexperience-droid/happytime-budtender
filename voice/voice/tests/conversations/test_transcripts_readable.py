@@ -66,6 +66,15 @@ SCENARIOS = [
         "do I need to bring my ID",
         "what's your return policy on cannabis products",
     ]),
+    # FIXED 2026-08-10 — the two gates newly added to answer_text_chat.
+    ("Vendor callback", "yakima", "", [
+        "hi, this is Dana with Cascade Crest Distribution, I'm calling about wholesale pricing on your cartridge line",
+        "no rush, just have someone call me back about the manifest",
+    ]),
+    ("Order-ahead staging", "yakima", "+15095551234", [
+        "I need a full gram cart under $40, something uplifting for daytime",
+        "great, can you set that aside for me so it's ready when I get there",
+    ]),
 ]
 
 

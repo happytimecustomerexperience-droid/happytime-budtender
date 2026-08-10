@@ -12,9 +12,12 @@ Three ways in, one audit trail out:
   ``voice.webhooks`` exactly like a phone call. Nothing here intercepts it.
 
 Every console turn is persisted through the EXISTING call models (``VoiceCall`` /
-``VoiceTurn`` / ``VoiceToolCall``) under a ``pg-<uuid>`` call id with ``source="playground"``,
-so a test session is readable from the normal dashboard call log / history / transcript pages.
-No second storage layer, no second audit trail.
+``VoiceTurn`` / ``VoiceToolCall``) under a ``pg-<uuid>`` call id, so a test session is readable
+from the normal dashboard call log / history / transcript pages. No second storage layer, no
+second audit trail. ``VoiceCall``/``VoiceTurn`` (the user/assistant text itself) are written by
+``voice.chat.answer_text_chat`` — it owns that trust boundary (turns must only ever be readable
+by the session_token that produced them; see its module docstring) — and this module writes only
+the ``VoiceToolCall`` diagnostic trace, tagged ``source="playground"``.
 
 Boundaries: staff-gated and never customer-facing; it does NOT bypass the signed Vapi webhook
 (that path stays fail-closed) and it does NOT weaken the leak-guard — results are scrubbed by
@@ -112,21 +115,23 @@ def playground_send(request):
 
     store = _safe_store(data.get("store"))
     call_id = str(data.get("call_id") or "")[:64] or _new_call_id()
-    history = data.get("history") if isinstance(data.get("history"), list) else []
 
     started = time.monotonic()
+    # NOTE: ``history`` is deliberately NOT forwarded here. answer_text_chat reconstructs this
+    # session's history itself, from the VoiceCall/VoiceTurn rows it owns (keyed on
+    # session_token == call_id) — see voice/chat.py's module trust-boundary comment. Any
+    # client-supplied history array is untrusted and ignored.
     result = answer_text_chat(
         {
             "message": message,
             "store": store,
-            "history": history,
             "phone": data.get("phone") or "",
             "session_token": call_id,
         }
     )
     latency_ms = int((time.monotonic() - started) * 1000)
 
-    _persist_turn(call_id, store, message, result, latency_ms)
+    _persist_turn(call_id, store, result)
 
     payload = dict(result)
     payload["call_id"] = call_id
@@ -134,25 +139,21 @@ def playground_send(request):
     return JsonResponse(payload)
 
 
-def _persist_turn(call_id: str, store: str, message: str, result: dict, latency_ms: int) -> None:
-    """Write the turn into the existing call models. Best-effort: a logging failure must never
-    cost the owner the answer they were testing for (same discipline as ``webhooks._log_tool_call``)."""
+def _persist_turn(call_id: str, store: str, result: dict) -> None:
+    """Log this turn's tool-call trace. The VoiceCall/VoiceTurn rows for the turn itself (the
+    user/assistant text, the latency) are already written by ``voice.chat.answer_text_chat`` —
+    it owns that trust boundary now (see its module docstring). This only adds the diagnostic
+    tool-call trace the console needs, keyed off the same seq chat.py just used. Best-effort: a
+    logging failure must never cost the owner the answer they were testing for (same discipline
+    as ``webhooks._log_tool_call``)."""
     from voice import guardrails
-    from voice.models import VoiceCall, VoiceToolCall, VoiceTurn
+    from voice.models import VoiceCall, VoiceToolCall
 
     try:
-        call, _ = VoiceCall.objects.get_or_create(call_id=call_id, defaults={"store": store})
-        seq = call.turns.count()
-        VoiceTurn.objects.create(
-            call=call, seq=seq, role="user", text=guardrails.redact_pii(message)[:4000]
-        )
-        VoiceTurn.objects.create(
-            call=call,
-            seq=seq + 1,
-            role="assistant",
-            text=guardrails.redact_pii(str(result.get("answer") or ""))[:4000],
-            latency_ms=latency_ms,
-        )
+        call = VoiceCall.objects.filter(call_id=call_id).first()
+        # chat.py just appended exactly 2 rows (user, assistant) for this turn; the tool trace
+        # for THIS turn sits right before that pair.
+        seq = max((call.turns.count() if call else 0) - 2, 0)
         for idx, entry in enumerate(result.get("tool_results") or []):
             if not isinstance(entry, dict):
                 continue
