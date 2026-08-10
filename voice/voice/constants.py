@@ -148,7 +148,16 @@ TOOL_SPECS = {
                     # the category and the handler then failed its own required-field check —
                     # every pre-roll ask answered "nothing in stock". budtender maps it in
                     # CATEGORY_BY_SLOTKEY.
-                    "enum": ["flower", "concentrate", "cartridge", "edible", "tincture", "pre-roll"],
+                    # 2026-08-10: topical/capsule/mint/blunt/infused-blunt added — live Dutchie
+                    # inventory has these categories in stock, but they were absent from this
+                    # enum, so even a chat.py that correctly derived the category had it dropped
+                    # right here by _sanitize_args. Keep this list in lockstep with
+                    # budtender/ranking.py CATEGORY_BY_SLOTKEY's keys (test_category_drift_alarm.py
+                    # in the budtender repo asserts it).
+                    "enum": [
+                        "flower", "concentrate", "cartridge", "edible", "tincture", "pre-roll",
+                        "topical", "capsule", "mint", "blunt", "infused-blunt",
+                    ],
                 },
                 "subcategory": {"type": "string"},
                 "size": {"type": "string"},

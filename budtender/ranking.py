@@ -36,6 +36,16 @@ CATEGORY_BY_SLOTKEY = {
     # The canonical category is "pre-rolls" (dutchie.py), but the slot key was missing here, so
     # a pre-roll request had no way through even once the voice enum allowed it.
     "pre-roll": "pre-rolls",
+    # 2026-08-10: live Dutchie inventory has 5 more in-stock categories than this map knew about
+    # (97 products, unreachable by any caller). Added explicitly — even where the natural slot
+    # key already equals the canonical category name (blunt, infused-blunt) — so the
+    # TOOL_SPECS-enum ⇄ CATEGORY_BY_SLOTKEY mirror test (test_category_drift_alarm.py) can check
+    # membership by key instead of relying on rank_products' `.get(key, key)` fallback.
+    "topical": "topicals",
+    "capsule": "capsules",
+    "mint": "mints",
+    "blunt": "blunt",
+    "infused-blunt": "infused-blunt",
 }
 
 
@@ -437,8 +447,20 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
     # keywords for it (and none at all for "flower"), so it must be matched against
     # Product.strain_type instead or the hard filter drops every real result.
     sub = slots.get("subcategory")
-    if sub in ("indica", "sativa", "hybrid"):
-        candidates = [p for p in candidates if (p.strain_type or "").lower() == sub]
+    # Strain-type matching is HYPHEN-TOLERANT: live inventory carries "Indica-Hybrid" (41 SKUs)
+    # and "Sativa-Hybrid" (25 SKUs) alongside the plain types, and an exact-match here dropped
+    # both entirely for an "indica"/"sativa" ask. "indica"/"sativa" match their own hyphenated
+    # variant only (never cross to the other side). DECISION: "hybrid" ALSO matches both
+    # hyphenated variants — an Indica-Hybrid or Sativa-Hybrid genuinely IS a hybrid, and a caller
+    # asking for "hybrid" wants the broadest hybrid shelf, not just the unhyphenated slice of it.
+    _STRAIN_MATCH = {
+        "indica": ("indica", "indica-hybrid"),
+        "sativa": ("sativa", "sativa-hybrid"),
+        "hybrid": ("hybrid", "indica-hybrid", "sativa-hybrid"),
+    }
+    if sub in _STRAIN_MATCH:
+        wanted = _STRAIN_MATCH[sub]
+        candidates = [p for p in candidates if (p.strain_type or "").lower() in wanted]
     elif sub:
         candidates = [p for p in candidates if product_subtype(p.name, p.category) == sub]
 

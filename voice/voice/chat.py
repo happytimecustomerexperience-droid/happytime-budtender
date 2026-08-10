@@ -27,12 +27,23 @@ _HUMAN_RE = re.compile(
 )
 # Plural-tolerant: customers say "do you have edibles" and "what concentrates do you have".
 # Only cart|carts spelled both out before, so every other plural fell through to the FAQ.
+#
+# 2026-08-10: topical/capsule/mint/infused-blunt/blunt added — these are live in-stock Dutchie
+# categories that had NO pattern here at all, so a caller asking for them fell through to the
+# FAQ path. "infused-blunt" is listed BEFORE "blunt": _category_from_text below returns the
+# FIRST matching category (dict insertion order), and "infused blunt" contains the substring
+# "blunt" — so infused-blunt must win the race or every infused-blunt ask misclassifies as blunt.
 _CATEGORY_RE = {
     "cartridge": re.compile(r"\b(carts?|cartridges?|vapes?|disposables?|510|pods?)\b", re.I),
     "flower": re.compile(r"\b(flowers?|buds?|eighths?|ounces?|sativa|indica|hybrid)\b", re.I),
     "edible": re.compile(r"\b(edibles?|gummy|gummies|chocolates?|drinks?|beverages?|mg)\b", re.I),
     "concentrate": re.compile(r"\b(concentrates?|dabs?|wax|rosin|resin|hash)\b", re.I),
     "pre-roll": re.compile(r"\b(pre.?rolls?|joints?)\b", re.I),
+    "topical": re.compile(r"\b(topicals?|lotions?|balms?|creams?|salves?)\b", re.I),
+    "capsule": re.compile(r"\b(capsules?|pills?|softgels?)\b", re.I),
+    "mint": re.compile(r"\b(mints?)\b", re.I),
+    "infused-blunt": re.compile(r"\b(infused\s*blunts?)\b", re.I),
+    "blunt": re.compile(r"\b(blunts?)\b", re.I),
 }
 _PRODUCT_SLOT_KEYS = (
     "category",
