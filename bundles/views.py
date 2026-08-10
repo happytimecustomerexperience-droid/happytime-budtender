@@ -31,6 +31,7 @@ from pos import catalog as pos_catalog
 from pos_core.ratelimit import _client_ip, rate_limit
 
 from . import cart as cart_mod
+from . import loyalty as loyalty_mod
 from . import calibration, customers, emails, resolver, signing, tax
 from .catalog import (STORE_ADDRESS, all_stores, get_bundle, store_info,
                       store_key_for, store_label)
@@ -366,6 +367,40 @@ def _clean_phone(raw: str) -> str:
 # lookup budget must not also lock real shoppers out of placing orders.
 LOOKUP_PER_MINUTE = 5
 LOOKUP_PER_HOUR = 30
+
+
+@require_http_methods(["GET", "POST"])
+# methods=("POST",): reading the page must not spend the budget for using it. Without
+# it, six refreshes of the form lock someone out of the lookup they came for — and the
+# limiter keys on IP, so one household or one store's wifi is a single bucket.
+@rate_limit("loyalty-hour", limit=LOOKUP_PER_HOUR, window=3600, methods=("POST",))
+@rate_limit("loyalty", limit=LOOKUP_PER_MINUTE, window=60, methods=("POST",))
+def loyalty(request):
+    """Public /loyalty — "how many points do I have?", answered by phone number.
+
+    Same PII-oracle shape as `lookup_customer` below, so it carries the same throttle
+    and its own scope: someone burning the loyalty budget must not also lock real
+    shoppers out of the order lookup.
+
+    It says LESS than lookup_customer does. That one returns a name; this returns a
+    points figure, a tier and what the balance redeems for — never a name, never an
+    email, never an address, never a purchase. A balance is not identifying on its
+    own, and there is no reason for this page to make it so.
+
+    Not found and register-unavailable deliberately give the SAME answer. A
+    distinguishable failure tells a prober which numbers are real even while the
+    lookup is broken.
+    """
+    ctx = {"store_label": "Happy Time", "tiers": loyalty_mod.TIERS}
+    if request.method == "POST":
+        phone = _clean_phone(request.POST.get("phone"))
+        ctx["phone"] = request.POST.get("phone") or ""
+        if len(phone) != 10:
+            ctx["error"] = "Enter a 10-digit phone number."
+        else:
+            ctx["result"] = loyalty_mod.balance_for_phone(phone)
+            ctx["searched"] = True
+    return render(request, "bundles/loyalty.html", ctx)
 
 
 @require_POST

@@ -1,0 +1,77 @@
+{% extends "bundles/base.html" %}
+{% block title %}My loyalty points — Happy Time{% endblock %}
+
+{% block body %}
+<main class="wrap loyalty-page">
+  <header class="hdr">
+    <div>
+      <p class="eyebrow">Happy Time rewards</p>
+      <h1>Check your points</h1>
+      <p class="addr">Enter the phone number you give at the register.</p>
+    </div>
+  </header>
+
+  <form method="post" class="loyalty-form" autocomplete="off">
+    {% csrf_token %}
+    {# type=tel + inputmode brings up the number pad on a phone, which is where this page is read. #}
+    <input class="loyalty-input" type="tel" name="phone" inputmode="tel"
+           placeholder="(509) 555-1212" value="{{ phone }}"
+           aria-label="Your phone number" autofocus>
+    <button type="submit">Check my points</button>
+  </form>
+  {% if error %}<p class="loyalty-err">{{ error }}</p>{% endif %}
+
+  {% if searched %}
+    {% if result %}
+      <section class="loyalty-card">
+        <p class="loyalty-eyebrow">Your balance</p>
+        <p class="loyalty-points">{{ result.points }}<span>points</span></p>
+
+        {% comment %}
+          A points figure alone is a number, not an offer — so the balance never
+          appears without what it redeems for. Below the first rung that is honestly
+          "nothing yet", and saying so is better than implying otherwise.
+        {% endcomment %}
+        {% if result.percent %}
+          <p class="loyalty-worth">Worth <strong>{{ result.percent }}% off</strong> your next basket.</p>
+        {% else %}
+          <p class="loyalty-worth muted">Not enough to redeem yet — rewards start at 125 points.</p>
+        {% endif %}
+
+        {% if result.tier_name %}<p class="loyalty-tier">{{ result.tier_name }}</p>{% endif %}
+
+        {% if result.next %}
+          <p class="loyalty-next">{{ result.next.0 }} more point{{ result.next.0|pluralize }}
+            to reach {{ result.next.1 }}% off.</p>
+        {% else %}
+          <p class="loyalty-next">You're at the top tier.</p>
+        {% endif %}
+
+        <a class="loyalty-cta" href="/custom-order">Start an order →</a>
+      </section>
+    {% else %}
+      {% comment %}
+        Deliberately one message for "no account" and for "the register is down".
+        Two messages would tell someone testing numbers which ones are real even
+        while the lookup is broken.
+      {% endcomment %}
+      <section class="loyalty-card">
+        <p class="loyalty-worth">We couldn't pull up points for that number right now.</p>
+        <p class="muted">Double-check the number, or ask a budtender in store — they can
+          see your balance at the register.</p>
+      </section>
+    {% endif %}
+  {% endif %}
+
+  <section class="loyalty-ladder">
+    <h2>How rewards work</h2>
+    <p class="muted">Earn points on every purchase. Redeem at the register — the discount
+      applies at whichever tier you've reached.</p>
+    <ul>
+      {% for need, pct in tiers %}
+        <li><span class="need">{{ need }} points</span><span class="pct">{{ pct }}% off</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+</main>
+{% endblock %}

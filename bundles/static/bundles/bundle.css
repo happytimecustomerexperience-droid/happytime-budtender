@@ -440,3 +440,40 @@ button:disabled, .is-disabled { opacity: .45; pointer-events: none; }
    two 50% inputs are narrower than the names people actually have. */
 .namerow { display: grid; grid-template-columns: 1fr; gap: 0 12px; }
 @media (min-width: 420px) { .namerow { grid-template-columns: 1fr 1fr; } }
+
+/* ── loyalty balance lookup (/loyalty) ────────────────────────────────────── */
+.loyalty-page { max-width: 560px; }
+.loyalty-form { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 4px 0 0; }
+.loyalty-input { font-size: 17px; letter-spacing: .02em; }   /* 17px: iOS zooms the page below 16 */
+.loyalty-err { color: var(--bad); font-size: 13px; margin: 8px 0 0; }
+
+.loyalty-card { background: var(--ink); border: 1px solid var(--line-strong);
+                border-radius: var(--radius); padding: 24px 22px; margin-top: 18px; text-align: center; }
+.loyalty-eyebrow { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+                   color: var(--sage); font-weight: 700; }
+/* The balance is what the page exists to say, so it is the one thing sized to be
+   read at arm's length. */
+.loyalty-points { margin: 6px 0 2px; font-size: 56px; line-height: 1; font-weight: 800; }
+.loyalty-points span { display: block; font-size: 13px; font-weight: 600; letter-spacing: .06em;
+                       text-transform: uppercase; color: var(--sage); margin-top: 6px; }
+.loyalty-worth { margin: 14px 0 0; font-size: 16px; }
+.loyalty-worth strong { color: var(--amber); }
+.loyalty-tier { margin: 8px 0 0; font-size: 13px; color: var(--sage); text-transform: uppercase;
+                letter-spacing: .05em; font-weight: 700; }
+.loyalty-next { margin: 10px 0 0; font-size: 14px; color: var(--sage); }
+.loyalty-cta { display: inline-block; margin-top: 18px; color: var(--amber); font-weight: 700;
+               text-decoration: none; }
+.loyalty-cta:hover { text-decoration: underline; }
+
+.loyalty-ladder { margin-top: 30px; }
+.loyalty-ladder h2 { font-size: 16px; margin: 0 0 6px; }
+.loyalty-ladder ul { list-style: none; padding: 0; margin: 14px 0 0; }
+.loyalty-ladder li { display: flex; justify-content: space-between; padding: 10px 0;
+                     border-bottom: 1px solid var(--line); font-size: 14px; }
+.loyalty-ladder li:last-child { border-bottom: 0; }
+.loyalty-ladder .pct { color: var(--amber); font-weight: 700; }
+
+@media (max-width: 420px) {
+  .loyalty-form { grid-template-columns: 1fr; }
+  .loyalty-points { font-size: 48px; }
+}
