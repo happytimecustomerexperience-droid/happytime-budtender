@@ -80,7 +80,14 @@ def test_order_ahead_for_pickup_never_reaches_the_phone_cart(convo, fake_bt):
     t = c.say("okay just put me down for the two of them and I'll pay when I show up")
     assert t.tools == ["faq_lookup"]
     assert t.intent == "greeting_other"
-    assert not t.escalated and t.next_action == "answer"
+    # IMPROVED 2026-08-10: this used to return a GROUNDED payment-methods answer, because the
+    # word "pay" pulled in the "Do you take cards?" row. But the caller is asking to have items
+    # held, not how to pay — a confident on-file answer to the wrong question. Now that the
+    # payment row carries full-sentence paraphrases, this no longer collides with it, and the
+    # turn honestly defers to a human. That is the right outcome for a staging request the
+    # agent still has no branch to fulfil.
+    assert not t.grounded
+    assert t.next_action == "ask_staff"
 
     # The whole point of the thread: across six turns and two product picks, the phone cart was
     # never touched. Only search + recognition ever reached the budtender client.
