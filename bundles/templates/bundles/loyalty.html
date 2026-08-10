@@ -21,8 +21,8 @@
   </form>
   {% if error %}<p class="loyalty-err">{{ error }}</p>{% endif %}
 
-  {% if searched %}
-    {% if result %}
+  {% if state %}
+    {% if state == "found" %}
       <section class="loyalty-card">
         <p class="loyalty-eyebrow">Your balance</p>
         <p class="loyalty-points">{{ result.points }}<span>points</span></p>
@@ -49,16 +49,27 @@
 
         <a class="loyalty-cta" href="/custom-order">Start an order →</a>
       </section>
-    {% else %}
+    {% elif state == "none" %}
       {% comment %}
-        Deliberately one message for "no account" and for "the register is down".
-        Two messages would tell someone testing numbers which ones are real even
-        while the lookup is broken.
+        A clean "no" from every store. Say so plainly — and then say what to do
+        about it, because "you don't have an account" on its own is a dead end.
       {% endcomment %}
       <section class="loyalty-card">
-        <p class="loyalty-worth">We couldn't pull up points for that number right now.</p>
-        <p class="muted">Double-check the number, or ask a budtender in store — they can
-          see your balance at the register.</p>
+        <p class="loyalty-worth">That number isn't registered yet.</p>
+        <p class="muted">No rewards account is set up for it. Ask a budtender to add you
+          on your next visit — it takes a second, and you start earning right away.</p>
+        <a class="loyalty-cta" href="/custom-order">Browse the menu →</a>
+      </section>
+    {% else %}
+      {% comment %}
+        NOT "you aren't registered". We could not ask. A register outage that told a
+        long-standing customer they don't exist would send them off to sign up again
+        and split their points across two accounts.
+      {% endcomment %}
+      <section class="loyalty-card">
+        <p class="loyalty-worth">We couldn't check right now.</p>
+        <p class="muted">This isn't a problem with your number — the register didn't
+          answer. Try again in a minute, or ask a budtender in store.</p>
       </section>
     {% endif %}
   {% endif %}

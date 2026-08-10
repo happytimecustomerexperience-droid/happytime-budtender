@@ -1,13 +1,17 @@
 """A phone number in, a loyalty balance out, with no login in front of it.
 
-That is a PII oracle, so the two properties worth defending are the throttle and the
-SYMMETRY of every failure: "no account" and "the register is down" must be
-indistinguishable, or someone testing numbers learns which ones are real even while
-the lookup is broken.
+The page answers three ways — found / not registered / couldn't check — and the
+whole point is that the third never collapses into the second. A register outage
+that tells a fifteen-year customer they aren't registered sends them off to sign up
+again, and their points end up split across two accounts.
+
+It said "not registered" and "couldn't check" identically until 2026-08-10, so that
+someone testing numbers could not learn which are real. The owner asked for the
+plain answer, which makes this a membership oracle; the throttle (5/min, 30/hour
+per IP) is what stops enumeration now, and it was always the control that mattered.
 
 Nothing here touches the network — the register client is patched.
 """
-import re
 from unittest.mock import patch
 
 from django.core.cache import cache
@@ -16,7 +20,6 @@ from django.test import Client, TestCase, override_settings
 from bundles import loyalty
 
 CACHES_LOCMEM = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
-CSRF_RE = re.compile(r'value="[^"]{32,}"')
 
 
 class TheLadderTests(TestCase):
@@ -70,33 +73,60 @@ class TheLookupTells(TestCase):
         self.assertIn("125", body)          # the ladder is on the page unprompted
 
     def test_a_member_sees_points_and_what_they_are_worth(self):
-        with patch.object(loyalty, "balance_for_phone", return_value={
+        with patch.object(loyalty, "balance_for_phone", return_value=("found", {
                 "points": 500, "is_member": True, "tier_name": "Gold",
-                "percent": 20, "next": (100, 25)}):
+                "percent": 20, "next": (100, 25)})):
             body = self._post().content.decode()
         self.assertIn("500", body)
         self.assertIn("20% off", body)      # never a number without its offer
         self.assertIn("100 more points", body)
 
     def test_a_balance_below_the_first_rung_says_so_plainly(self):
-        with patch.object(loyalty, "balance_for_phone", return_value={
+        with patch.object(loyalty, "balance_for_phone", return_value=("found", {
                 "points": 40, "is_member": True, "tier_name": "",
-                "percent": 0, "next": (85, 10)}):
+                "percent": 0, "next": (85, 10)})):
             body = self._post().content.decode()
         self.assertIn("Not enough to redeem yet", body)
 
-    # ── the security properties ──────────────────────────────────────────────
-    def test_no_account_and_register_down_read_identically(self):
-        with patch.object(loyalty, "balance_for_phone", return_value=None):
-            missing = self._post().content.decode()
+    # ── the three outcomes ───────────────────────────────────────────────────
+    def test_an_unregistered_number_is_told_so_plainly(self):
+        # Owner, 2026-08-10. This does make the page a membership oracle; the
+        # throttle below is what stops enumeration now.
+        with patch.object(loyalty, "balance_for_phone", return_value=("none", None)):
+            body = self._post().content.decode()
+        self.assertIn("isn't registered yet", body)
+
+    def test_a_register_outage_never_says_you_are_not_registered(self):
+        """THE distinction. Told they're new, a fifteen-year customer re-registers
+        and their points end up split across two accounts."""
         with patch("bundles.loyalty.customers.lookup_by_phone", side_effect=OSError("down")):
-            broken = self._post().content.decode()
-        # The per-client CSRF token is the one legitimate difference; it says nothing
-        # about the number, so compare the page with it masked rather than weakening
-        # this to a substring check that would miss a real divergence elsewhere.
-        strip = lambda html: CSRF_RE.sub("csrf", html)  # noqa: E731
-        self.assertEqual(strip(missing), strip(broken),
-                         "a prober can tell a real number from a broken register")
+            body = self._post().content.decode()
+        self.assertIn("couldn't check right now", body.lower())
+        self.assertNotIn("isn't registered", body)
+
+    def test_one_store_being_down_is_not_a_clean_no(self):
+        # A number registered at the store we failed to reach is not absent.
+        def yakima_down(slug, phone):
+            if slug == "yakima":
+                raise OSError("down")
+            return ("", "", "new")
+
+        with patch("bundles.loyalty.customers.lookup_by_phone", side_effect=yakima_down):
+            state, _ = loyalty.balance_for_phone("5095551212")
+        self.assertEqual(state, "unavailable")
+
+    def test_a_swallowed_dutchie_error_is_not_a_clean_no_either(self):
+        # lookup_by_phone catches its own errors and returns `unresolved`; reading
+        # that as "no account" is the same bug wearing a return value.
+        with patch("bundles.loyalty.customers.lookup_by_phone",
+                   return_value=("", "", "unresolved")):
+            state, _ = loyalty.balance_for_phone("5095551212")
+        self.assertEqual(state, "unavailable")
+
+    def test_every_store_answering_no_is_a_clean_no(self):
+        with patch("bundles.loyalty.customers.lookup_by_phone", return_value=("", "", "new")):
+            state, balance = loyalty.balance_for_phone("5095551212")
+        self.assertEqual((state, balance), ("none", None))
 
     def test_a_short_number_never_reaches_the_register(self):
         with patch.object(loyalty, "balance_for_phone") as spy:
@@ -120,7 +150,7 @@ class TheLookupTells(TestCase):
 
     def test_enumeration_is_throttled(self):
         c = Client()
-        with patch.object(loyalty, "balance_for_phone", return_value=None):
+        with patch.object(loyalty, "balance_for_phone", return_value=("none", None)):
             codes = [self._post(phone=f"50955512{i:02d}", client=c).status_code
                      for i in range(8)]
         self.assertIn(429, codes, "a number-testing script is never slowed down")
@@ -140,8 +170,8 @@ class TheSearchSpansEveryStore(TestCase):
         with patch("bundles.loyalty.customers.lookup_by_phone", side_effect=only_pullman), \
              patch("bundles.loyalty._details", return_value={"LoyaltyPoints": 300.0,
                                                             "IsLoyaltyMember": True}) as det:
-            got = loyalty.balance_for_phone("5095551212")
-        self.assertEqual(got["points"], 300)
+            state, got = loyalty.balance_for_phone("5095551212")
+        self.assertEqual((state, got["points"]), ("found", 300))
         self.assertEqual(det.call_args[0][0], "pullman")
 
     def test_one_store_being_down_does_not_hide_a_balance_held_at_another(self):
@@ -152,4 +182,4 @@ class TheSearchSpansEveryStore(TestCase):
 
         with patch("bundles.loyalty.customers.lookup_by_phone", side_effect=yakima_explodes), \
              patch("bundles.loyalty._details", return_value={"LoyaltyPoints": 300.0}):
-            self.assertEqual(loyalty.balance_for_phone("5095551212")["points"], 300)
+            self.assertEqual(loyalty.balance_for_phone("5095551212")[1]["points"], 300)

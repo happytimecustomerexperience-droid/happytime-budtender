@@ -348,6 +348,10 @@ button:disabled, .is-disabled { opacity: .45; pointer-events: none; }
 .lookup[hidden] { display: none; }   /* display:flex would otherwise beat [hidden] */
 .lookup.ok { color: var(--accent); font-weight: 600; }
 .lookup.ok::before { content: "✓"; font-weight: 800; }
+/* "New here" is information, not a warning — a first-time shopper has done nothing
+   wrong, so it reads in the muted voice, not the error one. */
+.lookup.new { color: var(--sage); font-weight: 600; }
+.lookup.new::before { content: "+"; font-weight: 800; }
 .lookup.busy::before {
   content: ""; flex: 0 0 auto; width: 13px; height: 13px; border-radius: 50%;
   border: 2px solid var(--line-strong); border-top-color: var(--amber);

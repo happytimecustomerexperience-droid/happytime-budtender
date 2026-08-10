@@ -387,9 +387,9 @@ def loyalty(request):
     email, never an address, never a purchase. A balance is not identifying on its
     own, and there is no reason for this page to make it so.
 
-    Not found and register-unavailable deliberately give the SAME answer. A
-    distinguishable failure tells a prober which numbers are real even while the
-    lookup is broken.
+    Three outcomes, and the third is load-bearing: `unavailable` must never be shown
+    as "you're not registered", or a register outage sends a long-standing customer
+    off to sign up again and splits their points across two accounts.
     """
     ctx = {"store_label": "Happy Time", "tiers": loyalty_mod.TIERS}
     if request.method == "POST":
@@ -398,8 +398,7 @@ def loyalty(request):
         if len(phone) != 10:
             ctx["error"] = "Enter a 10-digit phone number."
         else:
-            ctx["result"] = loyalty_mod.balance_for_phone(phone)
-            ctx["searched"] = True
+            ctx["state"], ctx["result"] = loyalty_mod.balance_for_phone(phone)
     return render(request, "bundles/loyalty.html", ctx)
 
 
@@ -409,17 +408,25 @@ def loyalty(request):
 def lookup_customer(request):
     """POST /custom-order/lookup-customer — "do we already know this number?"
 
-    Purely a convenience: a returning shopper shouldn't have to retype the name
-    Dutchie already has. So every failure mode collapses to the SAME answer,
-    `{"found": false}`, and the shopper types their name as they would have anyway:
+    A returning shopper shouldn't have to retype the name Dutchie already has, and a
+    NEW one should be told they're new rather than left wondering. So the answer
+    carries a `state`:
+
+      * `found`      — we know this number; the name comes back with it,
+      * `new`        — Dutchie answered and has nobody; a profile gets created when
+                       the order is placed, and the page says so (owner, 2026-08-10),
+      * `unknown`    — we could not ask. NOT the same as `new`.
+
+    That third state is the one that matters. Telling a returning customer they're
+    new because the register blinked invites a duplicate profile, and duplicates are
+    what split someone's loyalty points in half. Everything ambiguous lands there:
 
       * a phone that isn't 10 digits never reaches Dutchie at all,
-      * Dutchie down, slow or angry is a 200, never a 500,
-      * a match with no usable name is not a match.
+      * Dutchie down, slow or angry is `unknown` on a 200, never a 500,
+      * a match with no usable name is `unknown`, not `new` — we clearly have
+        somebody, we just can't show a name.
 
-    That symmetry is also the security property. A distinguishable failure ("we
-    couldn't reach the register" vs "no account") tells a prober which numbers are
-    real even when the lookup is broken, and a 500 tells them by timing.
+    `found` stays false in every non-match case so the old callers keep working.
 
     NOTE the allowlist at the bottom. `lookup_by_phone` hands back an AcctId too,
     and the Dutchie guest row behind it carries DOB, address, email and points.
@@ -428,7 +435,7 @@ def lookup_customer(request):
     """
     phone = _clean_phone(request.POST.get("phone"))
     if len(phone) != 10:
-        return JsonResponse({"found": False})
+        return JsonResponse({"found": False, "state": "unknown"})
 
     store = _store_from(request)
     try:
@@ -439,8 +446,11 @@ def lookup_customer(request):
         # lookup_by_phone swallows its own Dutchie errors today; this catches the
         # day it stops, because a shopper must never lose their cart to it.
         logger.warning("customer lookup unavailable at %s", store, exc_info=True)
-        return JsonResponse({"found": False})
+        return JsonResponse({"found": False, "state": "unknown"})
 
+    if status == PhoneCartDraft.Customer.NEW:
+        # A clean answer from Dutchie: nobody has this number.
+        return JsonResponse({"found": False, "state": "new"})
     matched = status == PhoneCartDraft.Customer.MATCHED
     first, last = customers.split_name(name) if matched else ("", "")
     # Last 4 only, same as `phone_last4` in the staff queue: enough to reconcile a
@@ -449,9 +459,11 @@ def lookup_customer(request):
                 store, _client_ip(request), phone[-4:], "match" if first else "no match")
     if not first:
         # A matched row with an unusable name would show "we found you" over two
-        # empty boxes — worse than not asking.
-        return JsonResponse({"found": False})
-    return JsonResponse({"found": True, "first_name": first, "last_name": last})
+        # empty boxes — worse than not asking. `unknown`, never `new`: we clearly
+        # have somebody, so promising them a fresh profile would be a lie.
+        return JsonResponse({"found": False, "state": "unknown"})
+    return JsonResponse({"found": True, "state": "found",
+                         "first_name": first, "last_name": last})
 
 
 @require_http_methods(["GET", "POST"])

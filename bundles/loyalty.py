@@ -58,23 +58,37 @@ def _details(location_slug: str, acct_id: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def balance_for_phone(phone: str) -> dict | None:
-    """The balance behind a phone number, or None if there is no account.
+def balance_for_phone(phone: str) -> tuple[str, dict | None]:
+    """(state, balance) where state is found / none / unavailable.
 
-    None is also what a broken register returns. That is deliberate and it is the
-    security property: a distinguishable failure ("we couldn't reach the register"
-    vs "no account") tells someone probing numbers which ones are real even while
-    the lookup is broken. Same reasoning as `views.lookup_customer`.
+    THREE outcomes, not two, and the third is the point. "We have no account for
+    that number" and "we could not reach the register" are different facts, and a
+    register outage must never tell a fifteen-year customer they do not exist —
+    they would go and re-register, splitting their points across two accounts.
+
+    Owner asked (2026-08-10) for a plain "that number isn't registered". That does
+    make the page a membership oracle, which the earlier symmetric version avoided;
+    the throttle is what stops enumeration now (5/min, 30/hour per IP), and it is
+    doing the work it was always the real control for.
+
+    `none` requires a CLEAN "no" from every store: Dutchie answered, and no guest
+    matched. One store erroring downgrades the whole answer to `unavailable`,
+    because a number registered at the store we failed to reach is not absent.
 
     Returns ONLY what the page shows. The Dutchie guest row behind this carries DOB,
     address, email and full purchase history; naming the four fields here rather than
     passing the row through means a field added upstream cannot silently widen it.
     """
+    every_store_answered = True
     for slug in STORES:
         try:
             acct_id, _name, status = customers.lookup_by_phone(slug, phone)
         except Exception:
             logger.warning("loyalty lookup unavailable at %s", slug, exc_info=True)
+            every_store_answered = False
+            continue
+        if status == "unresolved":       # lookup_by_phone swallowed its own error
+            every_store_answered = False
             continue
         if status != "matched" or not acct_id:
             continue
@@ -82,13 +96,13 @@ def balance_for_phone(phone: str) -> dict | None:
             row = _details(slug, acct_id)
         except Exception:
             logger.warning("loyalty details unavailable at %s", slug, exc_info=True)
-            return None
+            return "unavailable", None
         points = float(row.get("LoyaltyPoints") or 0)
-        return {
+        return "found", {
             "points": int(points),
             "is_member": bool(row.get("IsLoyaltyMember")),
             "tier_name": (row.get("LoyaltyTierName") or "").strip(),
             "percent": percent_for(points),
             "next": next_tier(points),
         }
-    return None
+    return ("none" if every_store_answered else "unavailable"), None

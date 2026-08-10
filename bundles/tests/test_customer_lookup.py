@@ -9,10 +9,17 @@ construction, so the tests here are mostly about what it must REFUSE to be:
   2. CHATTY — no. The response key set is pinned exactly, so a future change that
      passes a Dutchie row through (AcctId, DOB, email, points) fails loudly here
      rather than quietly on the storefront.
-  3. AN INFORMATION CHANNEL WHEN IT BREAKS — no. Dutchie down, a garbage phone and
-     a genuine "no account" are indistinguishable to the caller: `{"found": false}`,
-     HTTP 200. A 500, or a distinguishable error, tells a prober which numbers are
-     real even while the lookup is broken.
+  3. AN INFORMATION CHANNEL WHEN IT BREAKS — no. Dutchie down and a garbage phone
+     both answer `unknown` on a HTTP 200. A 500, or a distinguishable error, tells a
+     prober which numbers are real even while the lookup is broken.
+
+     Since 2026-08-10 a genuine "no account" is its own answer, `new`, because the
+     owner asked that a first-time shopper be told a profile is coming. That is the
+     one distinction the endpoint now makes, and the tests below pin the boundary:
+     `new` requires a CLEAN no from the register. Anything ambiguous — an outage, an
+     `unresolved`, a match we can't name — stays `unknown`, because telling a
+     returning customer they're new is how they end up with two profiles and their
+     loyalty points split across both.
 
 Nothing here touches the network: `bundles.customers.lookup_by_phone` is patched in
 every test, and the tests that must NOT reach Dutchie assert on the mock directly.
@@ -66,11 +73,14 @@ class CustomerLookupTests(TestCase):
         self.lookup.return_value = MATCH
         r = self._post()
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json(), {"found": True, "first_name": "Sam", "last_name": "Reyes"})
+        self.assertEqual(r.json(), {"found": True, "state": "found",
+                                    "first_name": "Sam", "last_name": "Reyes"})
 
-    def test_an_unknown_number_comes_back_not_found(self):
+    def test_an_unknown_number_is_told_it_is_new(self):
+        # Owner, 2026-08-10: a first-time shopper should know a profile is coming,
+        # not be left wondering. `new` is only ever a CLEAN no from the register.
         self.lookup.return_value = NO_MATCH
-        self.assertEqual(self._post().json(), {"found": False})
+        self.assertEqual(self._post().json(), {"found": False, "state": "new"})
 
     def test_a_phone_is_normalised_before_it_reaches_dutchie(self):
         # Whatever shape the shopper types is the same ten digits by the time it
@@ -93,10 +103,11 @@ class CustomerLookupTests(TestCase):
         # Pinned EXACTLY. If someone later returns the raw Dutchie guest row, this
         # is the test that stops the DOB, the email and the address going public.
         self.lookup.return_value = MATCH
-        self.assertEqual(set(self._post().json()), {"found", "first_name", "last_name"})
+        self.assertEqual(set(self._post().json()),
+                         {"found", "state", "first_name", "last_name"})
         cache.clear()
         self.lookup.return_value = NO_MATCH
-        self.assertEqual(set(self._post().json()), {"found"})
+        self.assertEqual(set(self._post().json()), {"found", "state"})
 
     def test_the_dutchie_account_id_never_reaches_the_wire(self):
         self.lookup.return_value = MATCH
@@ -105,12 +116,15 @@ class CustomerLookupTests(TestCase):
     def test_a_matched_row_with_no_usable_name_is_not_a_match(self):
         # "We found your profile" over two empty boxes is worse than not asking.
         self.lookup.return_value = ("acct-canary-8814", "   ", PhoneCartDraft.Customer.MATCHED)
-        self.assertEqual(self._post().json(), {"found": False})
+        # `unknown`, never `new`: we plainly HAVE this person, so promising them a
+        # fresh profile would be a lie that ends in a duplicate record.
+        self.assertEqual(self._post().json(), {"found": False, "state": "unknown"})
 
     def test_a_single_token_name_still_fills_what_it_knows(self):
         self.lookup.return_value = ("acct-canary-8814", "Cher", PhoneCartDraft.Customer.MATCHED)
         self.assertEqual(self._post().json(),
-                         {"found": True, "first_name": "Cher", "last_name": ""})
+                         {"found": True, "state": "found",
+                          "first_name": "Cher", "last_name": ""})
 
     # ── failure is indistinguishable from "no account" ───────────────────────
     def test_dutchie_raising_is_a_200_and_a_no_match(self):
@@ -119,11 +133,13 @@ class CustomerLookupTests(TestCase):
         self.lookup.side_effect = RuntimeError("register unreachable")
         r = self._post()
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json(), {"found": False})
+        self.assertEqual(r.json(), {"found": False, "state": "unknown"})
 
-    def test_dutchies_own_unresolved_status_is_a_no_match(self):
+    def test_dutchies_own_unresolved_status_is_unknown_not_new(self):
+        """THE distinction. `unresolved` means we could not ask, and calling that
+        "you're new" is how a returning customer ends up with a second profile."""
         self.lookup.return_value = DUTCHIE_DOWN
-        self.assertEqual(self._post().json(), {"found": False})
+        self.assertEqual(self._post().json(), {"found": False, "state": "unknown"})
 
     def test_a_short_or_garbage_phone_never_reaches_dutchie(self):
         # Free lookups are the whole game for an enumerator: reject the shape
@@ -135,14 +151,14 @@ class CustomerLookupTests(TestCase):
                 self.lookup.reset_mock()
                 r = self._post(payload)
                 self.assertEqual(r.status_code, 200)
-                self.assertEqual(r.json(), {"found": False})
+                self.assertEqual(r.json(), {"found": False, "state": "unknown"})
                 self.assertFalse(self.lookup.called,
                                  f"{payload!r} was allowed to spend a Dutchie lookup")
 
     def test_a_missing_phone_field_is_a_no_match_not_a_crash(self):
         r = self.client.post(URL, {})
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json(), {"found": False})
+        self.assertEqual(r.json(), {"found": False, "state": "unknown"})
         self.assertFalse(self.lookup.called)
 
     # ── method and CSRF ──────────────────────────────────────────────────────

@@ -225,11 +225,19 @@
           } else {
             fill(firstEl, "");
             fill(lastEl, "");
-            setStatus("", "");
+            // "new" is a CLEAN no from the register, so we can promise a profile.
+            // Anything else means we could not ask, and staying quiet is the honest
+            // answer — telling a returning customer they're new is how you end up
+            // with two profiles and half their loyalty points on each.
+            if (data && data.state === "new") {
+              setStatus("new", "New here — we'll set up your profile with this order.");
+            } else {
+              setStatus("", "");
+            }
           }
         })
         .catch(function () {
-          // Throttled, offline, register down: all just "we don't know you".
+          // Throttled, offline, register down: we could not ask, so say nothing.
           if (mine === seq) setStatus("", "");
         });
     }
