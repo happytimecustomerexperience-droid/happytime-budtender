@@ -53,7 +53,7 @@ from voice.tools import dispatch
 
 _HUMAN_RE = re.compile(
     r"\b("
-    r"human|person|manager|staff|budtender|complain|complaint|refund|"
+    r"complain|complaint|refund|"
     # "money back" / "busted" are how customers actually phrase a dispute. Without them the
     # category regex wins ("busted vape pen" → cartridge) and the caller gets upsold instead.
     r"money\s*back|busted|"
@@ -62,10 +62,44 @@ _HUMAN_RE = re.compile(
     r"wrong\s+(item|product|thing)|"
     r"incorrect\s+(order|item|product)|"
     r"missing\s+(?:\w+\s+){0,3}(?:item|product|order)|"
-    r"not\s+what\s+i\s+(ordered|bought)"
+    r"not\s+what\s+i\s+(ordered|bought)|"
+    r"refused\s+to\s+sell|turned\s+(?:me\s+)?away|misled|false\s+advertising|"
+    r"discriminat(?:ion|ed|ing)"
     r")\b",
     re.I,
 )
+# BUG2 fix: "human"/"person"/"manager"/"staff"/"budtender" used to be bare words in `_HUMAN_RE`
+# above, so a sentence that merely MENTIONS one of those roles ("can staff tell me in person
+# then", "this is the store manager speaking") was misread as a dispute and answered with the
+# conflict_resolution apology copy for a complaint that was never made. A GENUINE request for a
+# human ("I want to talk to a manager", "get me a person", "can I speak to staff") must still
+# escalate — that path is not weakened, only the bare-mention false-positive is removed. Each
+# alternative below requires an actual request SHAPE (a verb like talk/speak/get/connect/want/
+# need, or an availability question) pointed at a role noun, not just the noun appearing anywhere
+# in the sentence.
+_HUMAN_ROLE = r"(?:human|person|someone|manager|supervisor|staff(?:\s+member)?|budtender|rep|representative)"
+_HUMAN_REQUEST_RE = re.compile(
+    r"\b(?:talk|speak|chat)\s+(?:to|with)\s+(?:a\s+)?" + _HUMAN_ROLE + r"\b|"
+    r"\b(?:get|connect|transfer)\s+me\s+(?:to\s+|with\s+)?(?:a\s+)?" + _HUMAN_ROLE + r"\b|"
+    r"\b(?:can|could|may|will)\s+(?:i|you)\s+(?:talk|speak|chat)\s+(?:to|with)\s+(?:a\s+)?" + _HUMAN_ROLE + r"\b|"
+    r"\b(?:can|could)\s+(?:a|the)\s+" + _HUMAN_ROLE + r"\b|"
+    r"\bescalate\s+(?:this|it)\s+to\s+(?:an?\s+|the\s+)?(?:actual\s+)?" + _HUMAN_ROLE + r"\b|"
+    r"\bi\s+want\s+(?:a\s+|to\s+talk\s+to\s+(?:a\s+)?)?" + _HUMAN_ROLE + r"\b|"
+    r"\bi\s+need\s+(?:a\s+|to\s+talk\s+to\s+(?:a\s+)?)?" + _HUMAN_ROLE + r"\b|"
+    r"\bis\s+(?:the|a)\s+" + _HUMAN_ROLE + r"\s+(?:available|there|around|in)\b|"
+    r"\bis\s+there\s+a\s+" + _HUMAN_ROLE + r"\b|"
+    r"\blet\s+me\s+(?:talk|speak)\s+(?:to|with)\s+(?:a\s+)?" + _HUMAN_ROLE + r"\b|"
+    r"\bhave\s+(?:the|a)\s+" + _HUMAN_ROLE + r"\s+call\s+me\b|"
+    r"\bgive\s+me\s+(?:the\s+)?(?:\w+\s+)?" + _HUMAN_ROLE + r"\b",
+    re.I,
+)
+
+
+def _wants_human(message: str) -> bool:
+    """A dispute keyword OR a genuine request to be connected to a person — never a bare mention
+    of a role noun (BUG2)."""
+    text = message or ""
+    return bool(_HUMAN_RE.search(text) or _HUMAN_REQUEST_RE.search(text))
 # Plural-tolerant: customers say "do you have edibles" and "what concentrates do you have".
 # Only cart|carts spelled both out before, so every other plural fell through to the FAQ.
 #
@@ -74,9 +108,17 @@ _HUMAN_RE = re.compile(
 # FAQ path. "infused-blunt" is listed BEFORE "blunt": _category_from_text below returns the
 # FIRST matching category (dict insertion order), and "infused blunt" contains the substring
 # "blunt" — so infused-blunt must win the race or every infused-blunt ask misclassifies as blunt.
+#
+# 2026-08-10 FIX: flower's pattern used to also include bare "sativa|indica|hybrid" — since flower
+# is checked before pre-roll/edible/concentrate/topical/etc., ANY "<strain> <category>" phrase
+# ("an indica pre-roll", "sativa gummies", "hybrid concentrate") returned flower, robbing whatever
+# category the caller actually named. A bare strain word now lives in ``_STRAIN_ONLY_RE`` below and
+# is consulted ONLY as a fallback, after every explicit category noun here has already missed
+# (two-pass, not a dict reorder — reordering just moves which category gets robbed instead of
+# fixing the collision). The infused-blunt/blunt ordering above is untouched by this change.
 _CATEGORY_RE = {
     "cartridge": re.compile(r"\b(carts?|cartridges?|vapes?|disposables?|510|pods?)\b", re.I),
-    "flower": re.compile(r"\b(flowers?|buds?|eighths?|ounces?|sativa|indica|hybrid)\b", re.I),
+    "flower": re.compile(r"\b(flowers?|buds?|eighths?|ounces?)\b", re.I),
     "edible": re.compile(r"\b(edibles?|gummy|gummies|chocolates?|drinks?|beverages?|mg)\b", re.I),
     "concentrate": re.compile(r"\b(concentrates?|dabs?|wax|rosin|resin|hash)\b", re.I),
     "pre-roll": re.compile(r"\b(pre.?rolls?|joints?)\b", re.I),
@@ -86,6 +128,9 @@ _CATEGORY_RE = {
     "infused-blunt": re.compile(r"\b(infused\s*blunts?)\b", re.I),
     "blunt": re.compile(r"\b(blunts?)\b", re.I),
 }
+# A bare strain word with NO explicit category noun anywhere in the message implies flower —
+# consulted only as the SECOND pass in ``_category_from_text``, never before the loop above.
+_STRAIN_ONLY_RE = re.compile(r"\b(sativa|indica|hybrid)\b", re.I)
 _PRODUCT_SLOT_KEYS = (
     "category",
     "subcategory",
@@ -163,6 +208,19 @@ _EFFECT_ALIASES = (
     ("pain relief", re.compile(r"\b(pain|ache|aches|sore|soreness)\b", re.I)),
     ("anxiety relief", re.compile(r"\b(anxiety|anxious|stress|stressed)\b", re.I)),
 )
+# A caller naming a brand with NO category word ("anything from Wyld") is still a real product
+# ask — but ``suggest_products`` has no brand slot (TOOL_SPECS in voice/constants.py; _sanitize_args
+# drops any arg outside the schema) and category is REQUIRED there, so this can never become a
+# normal ranked search. Narrow by design ("anything/something from <Capitalized>") so it catches
+# the natural brand-ask phrasing without firing on unrelated "from <place>" mentions ("visiting
+# from Idaho", "Marcus from Cascade Crest" — a vendor call, which wins earlier anyway).
+_BRAND_MENTION_RE = re.compile(r"\b(?:anything|something)\s+from\s+[A-Z][\w'&-]*")
+# "how much should I take for my anxiety" carries the same "anxiety" word _EFFECT_ALIASES uses for
+# a shopping ask ("something for anxiety relief"), but it is a condition-dosing SAFETY question
+# (test_thread_17_safety_and_compliance.py) that must never become an upsell attempt — budtenders
+# legally cannot dose for a medical condition. Excluded from the effect-only product-search trigger
+# below; it does not touch the existing safety-emergency branch (poison/impaired-driving/allergen).
+_DOSING_QUESTION_RE = re.compile(r"\bhow\s+(?:much|many)\b[^.?!]{0,30}\btake\b", re.I)
 _SIZE_ALIASES = (
     ("0.5g", re.compile(r"\b(0\.5\s*g|\.5\s*g|half\s*gram)\b", re.I)),
     ("1g", re.compile(r"\b(1\s*g|one\s*gram|full\s*gram)\b", re.I)),
@@ -263,6 +321,8 @@ def _category_from_text(text: str) -> str:
     for category, pattern in _CATEGORY_RE.items():
         if pattern.search(text):
             return category
+    if _STRAIN_ONLY_RE.search(text or ""):
+        return "flower"
     return ""
 
 
@@ -333,7 +393,7 @@ def _recent_escalation(history) -> bool:
     for msg in history[-6:]:
         if not isinstance(msg, dict) or msg.get("role") != "user":
             continue
-        if _HUMAN_RE.search(str(msg.get("content") or "")):
+        if _wants_human(str(msg.get("content") or "")):
             return True
     return False
 
@@ -391,6 +451,140 @@ def _is_safety_emergency(message: str) -> bool:
         or _is_impaired_driving_question(message)
         or _is_allergen_question(message)
     )
+
+
+# BUG1 (dosing-advice safety gate) + scope-expansion safety categories, same precedence rule as
+# the block above: these all run BEFORE category/product routing and win over it. Every check here
+# is gated on ADVICE ("how much should I take", "can I mix this with my meds") never on a plain
+# FACT ("how many mg are in this", "what are the purchase limits") — a fact question keeps hitting
+# the ordinary FAQ/Numbers-Guard path unchanged; only a question that asks what a specific PERSON
+# should personally do gets escalated here. `_DOSING_QUESTION_RE` already existed (category-
+# routing's own upsell guard for "how much/many ... take"); `_DOSING_ADVICE_RE` below is additive,
+# not a second overlapping pattern for the same shape.
+_DOSING_ADVICE_RE = re.compile(
+    r"\bhow\s+(?:much|many)\b[^.?!]{0,25}\bfor\s+(?:sleep|anxiety|pain)\b|"
+    r"\bhow\s+much\b[^.?!]{0,25}\bfor\s+a\s+first[\s-]?timer\b|"
+    # "how much of a gummy for my 3-year-old" — a prospective, personalized dosing-amount
+    # question about a named dependent, not a shopping request (which uses add/buy/get verbs,
+    # not "how much").
+    r"\bhow\s+(?:much|many)\b[^.?!]{0,30}\bfor\s+my\s+(?:\d+[\s-]?(?:year|yr)s?[\s-]?old|"
+    r"kid|child|toddler|baby|son|daughter)\b|"
+    r"\b(?:good|typical)\s+starting\s+(?:dose|amount)\b|"
+    r"\btoo\s+much\s+for\s+(?:me|someone\s+my\s+size)\b",
+    re.I,
+)
+
+
+_LEGAL_LIMIT_RE = re.compile(
+    r"\bstate\s+lines?|purchase\s+limits?|per\s+visit\b|across\s+state\b", re.I
+)
+
+
+def _is_dosing_advice_question(message: str) -> bool:
+    """Advice ("how much should I take", "what's a good starting dose") vs. fact ("how many mg
+    are in this", "what are the purchase limits") — see block comment above. A plain product-info
+    numbers question is NOT caught here; it keeps hitting Numbers-Guard's honest decline. A legal
+    transport/purchase-LIMIT question ("how much can I take across state lines") shares
+    ``_DOSING_QUESTION_RE``'s "how much ... take" shape but is a fact/legality question, not
+    personal dosing advice — excluded the same way "what are the purchase limits" already is."""
+    text = message or ""
+    if _LEGAL_LIMIT_RE.search(text):
+        return False
+    return bool(_DOSING_QUESTION_RE.search(text) or _DOSING_ADVICE_RE.search(text))
+
+
+# The other half of BUG1: a caller can phrase a pure FACT/potency question ("what's the THC
+# content, and don't round it") that carries none of the advice phrasing above, yet retrieval
+# still grounds it on a real EducationDoc "guide" row that happens to contain concrete,
+# personalized dosing instructions (a start amount, a re-dose wait time, condition-tied "use
+# cases") — content a licensed WA budtender may not hand a caller as advice. `_dosing_advice_leaks`
+# below is checked AFTER `faq_lookup` returns (see the call site), never on the message alone, and
+# is narrow by construction: it requires BOTH an ``education``-kind source (never ``taxonomy`` —
+# thread_08's "what dose should I start with" grounds on the "beginner start" taxonomy row, a
+# plain defined-term fact, and must keep answering normally) AND the answer text itself actually
+# containing a start/wait/re-dose instruction (never just any row that happens to mention "mg",
+# e.g. the THC:CBD ratio guide's "5 mg CBD + 5 mg THC" example does not trip this).
+_DOSING_ADVICE_CONTENT_RE = re.compile(
+    r"\bstart(?:ing)?\s+(?:at\s+)?\d+(?:\.\d+)?\s*mg\b|"
+    r"\bwait\s+\d+\s*h(?:ours?)?\b|"
+    r"\bre-?dos(?:e|ing)\b",
+    re.I,
+)
+
+
+def _dosing_advice_leaks(faq: dict) -> bool:
+    if not faq.get("grounded"):
+        return False
+    sources = faq.get("sources") or []
+    if not sources or str(sources[0].get("kind") or "") != "education":
+        return False
+    return bool(_DOSING_ADVICE_CONTENT_RE.search(str(faq.get("answer") or "")))
+
+
+# Scope-expansion category 1/2: drug interaction. "can I take this with my blood pressure
+# medication" / "I'm on Xanax" — a medication mention combined with an interaction-shaped verb.
+_MEDICATION_RE = re.compile(
+    r"\b(medications?|medicine|meds?|prescriptions?|xanax|adderall|ssri|antidepressants?|"
+    r"blood\s+pressure|blood\s+thinners?|warfarin|chemo(?:therapy)?)\b",
+    re.I,
+)
+_INTERACTION_VERB_RE = re.compile(
+    r"\btake\s+(?:this|it|that)\s+with\b|\binteract(?:ion)?s?\s+with\b|"
+    r"\bmix(?:ing)?\s+(?:this|it)\s+with\b|\bi'?m\s+on\b",
+    re.I,
+)
+
+
+def _is_drug_interaction_question(message: str) -> bool:
+    text = message or ""
+    return bool(_MEDICATION_RE.search(text) and _INTERACTION_VERB_RE.search(text))
+
+
+# Scope-expansion category 2/2a: a past-tense adverse event ("the gummies made my kid sick and
+# I'm calling my lawyer", "gave my wife a panic attack"). Distinct from `_is_ingestion_emergency`,
+# which needs an ingestion VERB (ate/swallowed/...); this covers the OUTCOME being reported
+# without one. "ended up in the ER" is already covered by `_ER_RE` inside
+# `_is_ingestion_emergency` — not duplicated here.
+_ADVERSE_EVENT_RE = re.compile(
+    r"\bmade\s+(?:\w+\s+){0,3}sick\b|"
+    r"\bgot\s+(?:really\s+|very\s+)?sick\b|"
+    r"\bgave\s+(?:\w+\s+){0,3}(?:a\s+)?(?:panic\s+attack|bad\s+reaction|reaction)\b|"
+    r"\bhad\s+a\s+(?:bad|panic)\s+reaction\b",
+    re.I,
+)
+
+
+def _is_adverse_event_report(message: str) -> bool:
+    return bool(_ADVERSE_EVENT_RE.search(message or ""))
+
+
+# Scope-expansion category 3/4: proxy/minor purchase ("can he pick it up for me", "can someone
+# else pick it up for me", "can I buy this for my friend who can't come in") — must never be
+# validated as a workaround, only deferred/escalated to a human.
+_PROXY_PURCHASE_RE = re.compile(
+    r"\b(?:he|she|they|someone\s+else)\s+pick\s+(?:it\s+)?up\s+for\s+me\b|"
+    r"\bpick\s+(?:it\s+)?up\s+for\s+me\b|"
+    r"\bcan'?t\s+come\s+in\b|"
+    r"\bpick\s+(?:it\s+)?up\s+on\s+my\s+behalf\b",
+    re.I,
+)
+
+
+def _is_proxy_purchase_question(message: str) -> bool:
+    return bool(_PROXY_PURCHASE_RE.search(message or ""))
+
+
+# Scope-expansion follow-on: the category-routing agent's own effect-only product-search entry
+# (``attempt_product_search`` below) reads "pain"/"anxiety"/"sleep" as a shopping signal even when
+# the sentence is a QUESTION about the condition, not a shopping request — "what about for chronic
+# pain that I've had for years" pitches an edible instead of staying off the product branch. A
+# genuine shopping ask ("something for anxiety", "anything for sleep") is a REQUEST, not phrased as
+# "what/how about" — narrow by construction so ordinary effect-only shopping is untouched.
+_CONDITION_FOLLOWUP_RE = re.compile(r"\b(?:what|how)\s+about\b", re.I)
+
+
+def _is_condition_followup_question(message: str) -> bool:
+    return bool(_CONDITION_FOLLOWUP_RE.search(message or ""))
 
 
 # ── vendor / phone-cart gates (2026-08-10 GAP fix) ──────────────────────────────────────
@@ -704,9 +898,14 @@ def answer_text_chat(data: dict) -> dict:
     request body's ``history`` — before handing off to the routing logic, then appends the
     turn to that log so the NEXT turn on this session_token can trust it in turn.
     """
+    # BUG3 fix: a whitespace-only message (tabs/newlines, no visible characters) used to short-
+    # circuit here with a bare {"ok": False, "error": ...} envelope — no answer, no intent label,
+    # the one shape in the whole surface that didn't degrade safely. `_clean_message` already
+    # collapses it to "", and every downstream check (`_category_from_text`, `_HUMAN_RE`, FAQ
+    # retrieval) already treats "" as "nothing recognized" and lands on the ordinary honest-miss
+    # fallback (same path a keyboard-mash or SQL-shaped garbage message takes) — so simply no
+    # longer special-casing it here is the fix, not new fallback copy.
     message = _clean_message(data.get("message"))
-    if not message:
-        return {"ok": False, "error": "message required"}
 
     session_token = str(data.get("session_token") or data.get("session_id") or "")[:128]
     history = _load_trusted_history(session_token)
@@ -743,7 +942,7 @@ def _route_chat_turn(data: dict, history: list[dict]) -> dict:
         ctx.update(recognition.resolve_caller(phone, ctx) or {})
     else:
         ctx["profile_summary"] = {"has_history": False, "top_categories": [], "price_tier": ""}
-    escalation_now = bool(_HUMAN_RE.search(message))
+    escalation_now = _wants_human(message)
     # A dispute carries across turns, but a clean new product ask ENDS it — otherwise a caller who
     # complains and then says "anyway, got any gummies?" never reaches the shelf. Only the
     # message's own category counts here; a profile-derived fallback must not end an escalation.
@@ -753,7 +952,14 @@ def _route_chat_turn(data: dict, history: list[dict]) -> dict:
     # an impaired-driving question, or an allergen ask must never fall through to the ordinary
     # category regex and become a product pitch.
     is_poison_emergency = _is_ingestion_emergency(message)
-    safety_hit = is_poison_emergency or _is_safety_emergency(message)
+    safety_hit = (
+        is_poison_emergency
+        or _is_safety_emergency(message)
+        or _is_dosing_advice_question(message)
+        or _is_drug_interaction_question(message)
+        or _is_adverse_event_report(message)
+        or _is_proxy_purchase_question(message)
+    )
     escalation = escalation_now or carried or safety_hit
     category = str(slots.get("category") or _category_from_text(message)).strip()
     category = _normalize_category(category)
@@ -771,7 +977,25 @@ def _route_chat_turn(data: dict, history: list[dict]) -> dict:
         category = _carried_category(history)
     if not category and not _requires_sources(message):
         category = _profile_top_category(ctx.get("profile_summary"))
-    prefer_products = _prefers_products(message, category, escalation=escalation)
+    # An effect ("help me relax") or a named brand ("anything from Wyld") is a real product ask
+    # even with no category word and nothing carried/profiled. suggest_products can't be given a
+    # category-less search on purpose (it has no brand slot and category is REQUIRED — see
+    # ``_BRAND_MENTION_RE``'s comment) — but letting the FAQ's semantic search speak whatever
+    # unrelated row it ranks first (verified: a walk-in/ID-policy row for "help me relax") is worse
+    # than actually trying the shelf: ``handle_suggest_products`` own missing-category guard
+    # already gives an honest, non-invented miss instead. Same FAQ/requires_sources guard the
+    # refinement-carry logic above uses, so a message that ALSO reads as a genuine FAQ ask stays on
+    # the FAQ path.
+    attempt_product_search = bool(
+        not category
+        and not escalation
+        and (_effect_from_text(message) or _BRAND_MENTION_RE.search(message or ""))
+        and not _requires_sources(message)
+        and not _FAQ_FIRST_RE.search(message)
+        and not _DOSING_QUESTION_RE.search(message or "")
+        and not _is_condition_followup_question(message)
+    )
+    prefer_products = _prefers_products(message, category, escalation=escalation) or attempt_product_search
     # The router already classifies the subject; retrieval was never told, so "what time do you
     # close today" came back with the July specials row. Pass it so retrieval can be constrained.
     faq_args = {"query": message, "store": store}
@@ -789,6 +1013,20 @@ def _route_chat_turn(data: dict, history: list[dict]) -> dict:
     if _requires_sources(message) and faq.get("grounded") and not faq.get("sources"):
         faq = {"grounded": False, "fallback": "can't confirm"}
         tool_results[0]["result"] = faq
+
+    # BUG1 (second half — see `_dosing_advice_leaks` docstring): the message itself may read as an
+    # ordinary fact/potency question, but the row retrieval actually grounded on carries concrete,
+    # personalized dosing instructions. Escalate instead of speaking it. Checked here (post-
+    # dispatch, pre-speak-decision) so it wins over the vendor/staging gates and the grounded-FAQ
+    # speak decision below, same precedence as every other safety category. Gated on
+    # ``not prefer_products``: when the product branch is what's actually going to answer this
+    # turn (e.g. "add a couple of those raspberry gummies for my wife too" — ordinary shopping
+    # that merely retrieves the Edibles guide as faq_lookup's incidental top hit), that grounded
+    # row is never spoken to the caller either way, so there is nothing to leak and no reason to
+    # divert an ordinary sale into an escalation.
+    if not escalation and not prefer_products and _dosing_advice_leaks(faq):
+        escalation = True
+        safety_hit = True
 
     # Vendor/staging gates (ADDED precedence — see the block comment above their definitions):
     # both lose to escalation/safety, and both win over the grounded-FAQ speak decision and the
@@ -847,7 +1085,7 @@ def _route_chat_turn(data: dict, history: list[dict]) -> dict:
             "store": store,
         }
 
-    if category:
+    if category or attempt_product_search:
         suggest_args = {key: slots[key] for key in _PRODUCT_SLOT_KEYS if key in slots}
         if "price_max" not in suggest_args:
             price_max = _price_max_from_text(message)

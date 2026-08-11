@@ -57,7 +57,7 @@
       <thead><tr><th>Brand</th><th>Share</th></tr></thead>
       <tbody>
         {% for b in c.favorite_brands %}
-        <tr><td>{{ b.brand|default:"â€”" }}</td><td>{% if b.share != None %}{{ b.share|floatformat:2 }}{% else %}â€”{% endif %}</td></tr>
+        <tr><td>{{ b.brand|default:"—" }}</td><td>{% if b.share != None %}{{ b.share|floatformat:2 }}{% else %}—{% endif %}</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -113,19 +113,19 @@
 
 {% if c.purchase_history %}
 <div class="card">
-  <h2>Purchase history <span class="muted">Â· recent profile rows</span></h2>
+  <h2>Purchase history <span class="muted">· recent profile rows</span></h2>
   <table style="width:100%">
     <thead><tr><th>Product</th><th>Brand</th><th>Category</th><th>Type</th><th>Times bought</th><th>Last bought</th><th>Last price</th></tr></thead>
     <tbody>
       {% for h in c.purchase_history %}
       <tr>
-        <td>{{ h.product|default:"â€”" }}</td>
-        <td>{{ h.brand|default:"â€”" }}</td>
-        <td>{{ h.category|default:"â€”" }}</td>
-        <td>{{ h.strain_type|default:"â€”" }}</td>
-        <td>{{ h.units|default:"â€”" }}</td>
-        <td>{{ h.last_bought_at|slice:":10"|default:"â€”" }}</td>
-        <td>{% if h.last_price != None %}${{ h.last_price|floatformat:2 }}{% else %}â€”{% endif %}</td>
+        <td>{{ h.product|default:"—" }}</td>
+        <td>{{ h.brand|default:"—" }}</td>
+        <td>{{ h.category|default:"—" }}</td>
+        <td>{{ h.strain_type|default:"—" }}</td>
+        <td>{{ h.units|default:"—" }}</td>
+        <td>{{ h.last_bought_at|slice:":10"|default:"—" }}</td>
+        <td>{% if h.last_price != None %}${{ h.last_price|floatformat:2 }}{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

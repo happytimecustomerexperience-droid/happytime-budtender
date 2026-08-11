@@ -676,7 +676,7 @@ def call_monitor(request):
         return render(
             request,
             "dashboard/_calls_live.html",
-            {"live": monitor.live_calls(), "badge": monitor.call_outcome_badge},
+            {"live": monitor.live_calls()},
         )
     return render(
         request,
@@ -684,7 +684,6 @@ def call_monitor(request):
         {
             "live": monitor.live_calls(),
             "recent": monitor.recent_calls(),
-            "badge": monitor.call_outcome_badge,
         },
     )
 
@@ -704,8 +703,6 @@ def call_log(request, _outcomes: list[str] | None = None):
     from django.db.models import Q
 
     from voice.models import VoiceCall
-
-    from . import monitor
 
     qs = VoiceCall.objects.all()
     if _outcomes:
@@ -741,7 +738,6 @@ def call_log(request, _outcomes: list[str] | None = None):
             "store": store,
             "sort_field": sort_field,
             "sort_dir": sort_dir,
-            "badge": monitor.call_outcome_badge,
         },
     )
 
@@ -827,8 +823,6 @@ def conversation_history(request):
 def call_detail(request, pk: int):
     from voice.models import VoiceCall, VoiceToolCall
 
-    from . import monitor
-
     call = get_object_or_404(VoiceCall, pk=pk)
     tool_calls = VoiceToolCall.objects.filter(call_id=call.call_id).order_by("created_at", "id")
     return render(
@@ -838,7 +832,6 @@ def call_detail(request, pk: int):
             "call": call,
             "turns": call.turns.order_by("seq"),
             "tool_calls": tool_calls,
-            "badge": monitor.call_outcome_badge,
         },
     )
 
@@ -852,8 +845,6 @@ def call_fetch_full(request, pk: int):
     from core.services import vapi
     from voice import callfetch
     from voice.models import VoiceCall, VoiceToolCall
-
-    from . import monitor
 
     call = get_object_or_404(VoiceCall, pk=pk)
     note, level = "", "success"
@@ -877,7 +868,6 @@ def call_fetch_full(request, pk: int):
             "call": call,
             "turns": call.turns.order_by("seq"),
             "tool_calls": tool_calls,
-            "badge": monitor.call_outcome_badge,
             "fetch_note": note,
             "fetch_level": level,
         },

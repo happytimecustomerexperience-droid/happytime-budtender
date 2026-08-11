@@ -1,8 +1,11 @@
+{% load monitor_tags %}
 <table data-testid="calls-live">
-  <tr><th>Call id</th><th>Store</th><th>Started</th></tr>
+  <tr><th>Call id</th><th>Store</th><th>Status</th><th>Started</th></tr>
   {% for c in live %}
-    <tr><td><a href="{% url 'dash-call-detail' c.pk %}">{{ c.call_id }}</a></td><td>{{ c.store|default:'—' }}</td><td>{{ c.created_at }}</td></tr>
+    {% with b=c.outcome|outcome_badge %}
+    <tr><td><a href="{% url 'dash-call-detail' c.pk %}">{{ c.call_id }}</a></td><td>{{ c.store|default:'—' }}</td><td><span class="badge {{ b.color }}">{{ b.label }}</span></td><td>{{ c.created_at }}</td></tr>
+    {% endwith %}
   {% empty %}
-    <tr><td colspan="3" class="muted">No calls in flight.</td></tr>
+    <tr><td colspan="4" class="muted">No calls in flight.</td></tr>
   {% endfor %}
 </table>

@@ -314,7 +314,9 @@
     "label": "empty_prompt",
     "message": "",
     "expected": {
-      "error": "message required"
+      "grounded": false,
+      "safe_next_action": "ask_staff",
+      "escalation_required": false
     },
     "faq": {
       "grounded": false,

@@ -1,4 +1,5 @@
 {% extends "dashboard/base.html" %}
+{% load monitor_tags %}
 {% block title %}Calls — Happy Time Voice{% endblock %}
 {% block content %}
 <div class="row between">
@@ -18,11 +19,11 @@
   <table>
     <tr><th>Call id</th><th>Store</th><th>Outcome</th><th>Duration</th><th>When</th></tr>
     {% for c in recent %}
-      {% with b=badge|default:None %}
+      {% with b=c.outcome|outcome_badge %}
       <tr>
         <td><a href="{% url 'dash-call-detail' c.pk %}">{{ c.call_id }}</a></td>
         <td>{{ c.store|default:'—' }}</td>
-        <td>{% with bb=c.outcome %}<span class="badge slate">{{ c.get_outcome_display|default:c.outcome }}</span>{% endwith %}</td>
+        <td><span class="badge {{ b.color }}">{{ c.get_outcome_display|default:b.label }}</span></td>
         <td>{{ c.duration_s|default:'—' }}s</td>
         <td>{{ c.created_at }}</td>
       </tr>

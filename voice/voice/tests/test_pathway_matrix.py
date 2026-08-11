@@ -206,10 +206,13 @@ PATHWAY_CASES = [
         id="7-numbers-guard-no-grounded-hit",
     ),
     pytest.param(
+        # FIXED: an empty/whitespace-only message used to short-circuit with a bare
+        # {"ok": False, "error": ...} envelope — no answer, no intent label. It now degrades the
+        # same safe way as any other unrecognized input (an honest ungrounded fallback).
         "empty_message",
         "",
         {},
-        {"ok": False},
+        {"ok": True, "grounded": False},
         None,
         id="9-empty-message",
     ),
