@@ -562,16 +562,58 @@ def _is_adverse_event_report(message: str) -> bool:
 # else pick it up for me", "can I buy this for my friend who can't come in") — must never be
 # validated as a workaround, only deferred/escalated to a human.
 _PROXY_PURCHASE_RE = re.compile(
-    r"\b(?:he|she|they|someone\s+else)\s+pick\s+(?:it\s+)?up\s+for\s+me\b|"
-    r"\bpick\s+(?:it\s+)?up\s+for\s+me\b|"
+    # Someone else collecting. "for me" was required before, so "pick it up for HIM" and
+    # "grab it on my behalf" both walked straight past.
+    r"\b(?:he|she|they|someone\s+else|my\s+\w+)\s+(?:will\s+)?(?:pick|grab)\s+(?:it\s+|them\s+|that\s+)?up\b|"
+    r"\b(?:pick|grab)\s+(?:it\s+|them\s+|that\s+)?up\s+for\s+(?:me|him|her|them)\b|"
+    r"\b(?:pick|grab)\s+(?:it\s+|them\s+|that\s+)?up\s+on\s+(?:my|his|her|their)\s+behalf\b|"
+    r"\bon\s+my\s+behalf\b|"
     r"\bcan'?t\s+come\s+in\b|"
-    r"\bpick\s+(?:it\s+)?up\s+on\s+my\s+behalf\b",
+    r"\bbuy\s+(?:this|it|that|them)\s+for\s+my\b",
+    re.I,
+)
+
+# An explicit statement of being UNDER 21. This is the licence-critical half: selling to a minor
+# is a revocation offence under WAC 314-55, so "I'm under 21, can you still sell to me" must never
+# get an ambiguous answer. Ages are bounded to 10-20 so that 21+ ("I'm 21", "my brother is 25")
+# stays an ordinary customer, and so a bare quantity ("I want 20 pre-rolls", "20mg edibles") is
+# not mistaken for an age — the age must be attached to a person.
+_UNDERAGE_RE = re.compile(
+    # "who's"/"who is" matters: "my friend who's 19 said he could carry it for me" is the exact
+    # shape a diversion attempt takes, and it has no "my X is" or "I'm" to anchor on.
+    r"\b(?:i'?m|i\s+am|he'?s|she'?s|they'?re|who'?s|who\s+is|my\s+\w+\s+is)\s+(?:1\d|20)\b|"
+    r"\b(?:1\d|20)\s*(?:-|\s)?\s*(?:year|yr)s?\s*-?\s*old\b|"
+    r"\bunder\s*(?:21|twenty[-\s]?one)\b|"
+    r"\bunderage\b|"
+    r"\bnot\s+21\s+yet\b",
     re.I,
 )
 
 
 def _is_proxy_purchase_question(message: str) -> bool:
-    return bool(_PROXY_PURCHASE_RE.search(message or ""))
+    """Proxy pickup OR an explicit under-21 claim. The agent asserts no legal conclusion and
+    quotes no statute — it hands the call to a person, which is the only safe answer here."""
+    text = message or ""
+    return bool(_PROXY_PURCHASE_RE.search(text) or _UNDERAGE_RE.search(text))
+
+
+# Taking cannabis across a state line is a FEDERAL offence, and WA product may not leave WA.
+# Deliberately matched on TRANSPORT intent, not on merely mentioning another state: "I'm visiting
+# from Oregon, what do you recommend" is an ordinary tourist buying legally in WA and must still
+# shop. It is the carrying-it-away that has to reach a person.
+_INTERSTATE_RE = re.compile(
+    r"\bacross\s+(?:the\s+)?state\s+lines?\b|"
+    r"\bout\s+of\s+state\b|"
+    r"\bback\s+home\s+with\s+me\b|"
+    r"\b(?:take|bring|carry)\s+(?:it|this|them|some)\s+(?:back\s+)?(?:home|across|out\s+of\s+state)\b|"
+    r"\bpassing\s+through\b|"
+    r"\bfly\s+(?:home|back)\s+with\b",
+    re.I,
+)
+
+
+def _is_interstate_transport_question(message: str) -> bool:
+    return bool(_INTERSTATE_RE.search(message or ""))
 
 
 # Scope-expansion follow-on: the category-routing agent's own effect-only product-search entry
@@ -959,6 +1001,13 @@ def _route_chat_turn(data: dict, history: list[dict]) -> dict:
         or _is_drug_interaction_question(message)
         or _is_adverse_event_report(message)
         or _is_proxy_purchase_question(message)
+        # NOTE: interstate transport is deliberately NOT a safety escalation. Tried it; it made
+        # things worse. The KB has a real, correct, citable row ("product must stay in
+        # Washington"), so escalating turns an accurate cited answer into a handoff — worse
+        # service, not safer. The genuine defect there is a RETRIEVAL one (the question sometimes
+        # lands on the return-policy row instead, because its WAC citation shares the phrase
+        # "Washington state law"), and the fix for that is topic-constrained retrieval, not a
+        # blanket escalation. Left as a documented gap rather than papered over with a handoff.
     )
     escalation = escalation_now or carried or safety_hit
     category = str(slots.get("category") or _category_from_text(message)).strip()
