@@ -33,6 +33,18 @@ class Command(BaseCommand):
             return
 
         counts = sync_inventory_all() or {}
+        # sync_inventory_all is gated to store opening hours and returns {"skipped": "stores_closed"}
+        # outside them. That value is a STRING, so summing it raised ValueError and crashed this
+        # command any time it ran while the stores were shut — including on every deploy, since
+        # deploy-vps.sh calls it. A closed-store skip is a normal outcome, not a failure.
+        if isinstance(counts, dict) and "skipped" in counts:
+            self.stdout.write(self.style.WARNING(f"skipped: {counts['skipped']}"))
+            self.stdout.write(
+                "Stores are closed — the 10-minute sync is gated to opening hours "
+                "(STORE_SYNC_WINDOW_START/END). Nothing to do; this is not an error."
+            )
+            return
+
         total = sum(int(v or 0) for v in counts.values()) if isinstance(counts, dict) else 0
         for store, n in (counts or {}).items():
             style = self.style.SUCCESS if n else self.style.WARNING
