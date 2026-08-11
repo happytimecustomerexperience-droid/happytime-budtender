@@ -1,5 +1,4 @@
-from voice.tools import dispatch
-from voice.tools import phone_cart
+from voice.tools import dispatch, phone_cart
 
 
 class FakeBudtender:

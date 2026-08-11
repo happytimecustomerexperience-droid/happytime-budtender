@@ -1,0 +1,35 @@
+{
+  "_source": "Live GET /reporting/inventory?includeRoomQuantities=true, Yakima, captured 2026-08-10.",
+  "_why": "dutchie.py's field names were asserted by NO test. If Dutchie renames one, every unit test stays green and production silently returns zero products - the exact failure mode that hid the category_blocklist and indica-flower bugs. This is the real field list from a live 5,350-row response, so a rename now fails a test instead of a customer.",
+  "_no_cost_data": "Deliberately field NAMES only, no row bodies. unitCost/margin must never enter the repo (leak-guard discipline applies to fixtures too), and the parsing contract does not need values.",
+  "row_count_at_capture": 5350,
+  "all_keys": [
+    "allocatedQuantity", "alternateName", "batchId", "batchName", "brandId", "brandName",
+    "category", "categoryId", "description", "effectivePotencyMg", "expirationDate",
+    "externalPackageId", "flowerEquivalent", "flowerEquivalentUnits", "imageUrl", "inventoryId",
+    "isCannabis", "labResultUrl", "labResults", "labTestStatus", "lastModifiedDateUtc",
+    "manufacturingDate", "masterCategory", "medUnitPrice", "medicalOnly", "packageId",
+    "packageNDC", "packageStatus", "packagedDate", "potencyIndicator", "pricingTierName",
+    "producer", "producerId", "productId", "productName", "quantityAvailable", "quantityUnits",
+    "recFlowerEquivalent", "recUnitPrice", "roomQuantities", "sampleDate", "size", "sku",
+    "strain", "strainId", "strainType", "tags", "testedDate", "unitCost", "unitPrice",
+    "unitWeight", "unitWeightUnit", "vendor", "vendorId"
+  ],
+  "required_by_parser": {
+    "productName": "product name -> Product.name",
+    "sku": "Product.sku",
+    "productId": "Product.product_id",
+    "category": "raw category -> _norm_category()",
+    "strainType": "Indica/Sativa/Hybrid/Indica-Hybrid -> Product.strain_type (the hyphenated values are why exact-match strain filtering missed 66 products)",
+    "roomQuantities": "per-room stock; ONLY the Sales Floor room is counted (_sales_floor_qty)",
+    "quantityAvailable": "total across rooms - NOT what we sell from",
+    "unitPrice": "shelf price. NOTE there is no field called 'price' - a parser looking for one finds nothing",
+    "recUnitPrice": "recreational price",
+    "medUnitPrice": "medical price",
+    "medicalOnly": "excluded from rec suggestions",
+    "unitWeight": "grams, reconciled against a weight token in the name",
+    "effectivePotencyMg": "edible/tincture dose -> size_label()",
+    "labResults": "potency rows; each has a 'name'",
+    "unitCost": "cost basis - NEVER leaves the budtender service (leak-guard)"
+  }
+}

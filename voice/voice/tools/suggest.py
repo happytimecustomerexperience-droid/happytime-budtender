@@ -21,8 +21,7 @@ from __future__ import annotations
 import logging
 import re
 
-from voice import pricing
-from voice import recognition
+from voice import pricing, recognition
 from voice.budtender_client import budtender
 from voice.tools import register
 

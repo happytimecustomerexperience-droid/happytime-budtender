@@ -184,7 +184,10 @@ _DISPUTE_TOPIC_RE = re.compile(
     # row came back for that sentence on the strength of "bring" alone. "receipt"/"packaging"
     # carry the same intent without the collision.
     r"\b(returns?|refund|money\s*back|exchange|policy|receipt|packaging|"
-    r"defective|broken|busted|warranty|replacements?|replace|damaged)\b",
+    # "fail(ed/s)" added alongside defective/broken — GAP2 fix: "the gummy that FAILED" is the
+    # same broken-product family and must be recognized as still describing the disputed item
+    # (see ``_ends_dispute`` below), not treated as a bare product mention.
+    r"defective|broken|busted|warranty|replacements?|replace|damaged|fail(?:ed|s)?)\b",
     re.I,
 )
 _PRICE_MAX_RE = re.compile(r"\b(?:under|below|less than|no more than|up to|max(?:imum)?)\s*\$?\s*(\d+(?:\.\d{1,2})?)\b", re.I)
@@ -278,11 +281,39 @@ def _load_trusted_history(session_token: str) -> list[dict]:
         return []
 
 
-def _persist_trusted_turn(session_token: str, store: str, message: str, answer: str, latency_ms: int | None) -> None:
+def _load_escalation_state(session_token: str) -> bool:
+    """GAP2 fix: the durable per-session dispute flag (``VoiceCall.escalated`` — an existing
+    field, never a keyword rescan of recent history). A call's dispute status is now a property
+    of the SESSION, not a ~6-message lookback window that quietly expires while a still-angry
+    caller keeps talking without repeating a trigger word. Same best-effort/fail-closed discipline
+    as ``_load_trusted_history``: no token, no row, or a DB error all degrade to "not escalated"
+    — never guesses a caller into a dispute they never had."""
+    if not session_token:
+        return False
+    try:
+        from voice.models import VoiceCall
+
+        call = VoiceCall.objects.filter(call_id=session_token).only("escalated").first()
+        return bool(call.escalated) if call else False
+    except Exception:  # noqa: BLE001 — DB unavailable degrades to "not escalated"
+        return False
+
+
+def _persist_trusted_turn(
+    session_token: str,
+    store: str,
+    message: str,
+    answer: str,
+    latency_ms: int | None,
+    *,
+    escalated: bool = False,
+) -> None:
     """Append this turn to the session's own durable log so the NEXT turn can trust it. Best-effort
     (a logging failure must never cost the caller their answer — same discipline as
     ``dashboard.playground._persist_turn``, which this supersedes for the VoiceCall/VoiceTurn
-    writes: the console now gets its turns from here, and only adds its own tool-call trace)."""
+    writes: the console now gets its turns from here, and only adds its own tool-call trace).
+    Also stamps ``VoiceCall.escalated`` (GAP2) with THIS turn's final escalation state, so the
+    next turn's ``_load_escalation_state`` reads a durable flag instead of rescanning history."""
     if not session_token:
         return
     try:
@@ -299,6 +330,9 @@ def _persist_trusted_turn(session_token: str, store: str, message: str, answer: 
             text=guardrails.redact_pii(answer)[:4000],
             latency_ms=latency_ms,
         )
+        if call.escalated != bool(escalated):
+            call.escalated = bool(escalated)
+            call.save(update_fields=["escalated"])
     except Exception:  # noqa: BLE001 — best-effort; the answer already went out
         pass
 
@@ -385,9 +419,12 @@ def _requires_sources(message: str) -> bool:
 
 
 def _recent_escalation(history) -> bool:
-    """A dispute stays a dispute. Escalation was per-message regex, so a follow-up phrased
-    without a trigger word ("so what are you going to do about it") silently dropped the
-    handoff. Look back over the caller's own recent turns instead."""
+    """SUPERSEDED by ``_load_escalation_state`` (GAP2) as the source of truth for whether a
+    dispute is still open — a durable ``VoiceCall.escalated`` flag, not a keyword rescan of the
+    last few messages, which silently expired mid-dispute once the caller's own trigger words
+    aged out of the window. Kept only as a defense-in-depth OR: a caller whose session row is
+    unavailable (fresh DB, degraded read) still gets a within-window carry instead of losing the
+    dispute outright."""
     if not isinstance(history, list):
         return False
     for msg in history[-6:]:
@@ -396,6 +433,21 @@ def _recent_escalation(history) -> bool:
         if _wants_human(str(msg.get("content") or "")):
             return True
     return False
+
+
+def _ends_dispute(message: str, category: str, *, escalation_now: bool) -> bool:
+    """GAP2, the hard-direction half: a clean new purchase ask ends a carried dispute (so
+    "anyway, got any gummies?" reaches the shelf), but a sentence that merely CONTAINS a product
+    noun while still describing/referencing the problem does NOT (so "the gummy that failed" or
+    "fix the moldy eighth situation" stays the dispute). Distinguished by dispute vocabulary
+    (``_HUMAN_RE``/``_DISPUTE_TOPIC_RE``, which "fail(ed)" was added to alongside broken/
+    defective) — a category word with none of that vocabulary reads as a genuine new ask; a
+    category word alongside it is still talking about the disputed item. A message that already
+    carries its own fresh escalation trigger is handled by that trigger directly, not this."""
+    if not category or escalation_now:
+        return False
+    text = message or ""
+    return not (_HUMAN_RE.search(text) or _DISPUTE_TOPIC_RE.search(text))
 
 
 def _prefers_products(message: str, category: str, *, escalation: bool) -> bool:
@@ -911,6 +963,19 @@ def _escalation_answer(store: str, phone: str) -> str:
 # refund outcome...") is actively wrong for a pet/child ingestion report, so this case gets its own
 # neutral, non-medical line: no diagnosis, no dose, no reassurance the animal/child is fine, just an
 # immediate hand-off to a person or emergency services. Deliberately invents no number.
+# NEW COPY — REQUIRES OWNER APPROVAL (GAP3). Driving/allergen safety turns escalate correctly
+# but used to reuse ``_escalation_answer``'s returns/refunds wording, which is a non-sequitur for
+# "is it ok to drive after one gummy" / "does the chocolate have nuts". This line is neutral: no
+# medical advice, no dose, no timing, no legality ruling, no reassurance — it only says the agent
+# can't answer that one and hands the caller to a person. Does not touch ``_poison_emergency_answer``
+# (already owner-flagged, ingestion-specific) or ``_escalation_answer`` (genuine dispute copy).
+def _cannot_answer_safely_answer(store: str, phone: str) -> str:
+    return (
+        "I'm not able to answer that safely myself — I'll get a person on it who can help. "
+        + _staff_followup_hint(store, phone)
+    )
+
+
 def _poison_emergency_answer(store: str, phone: str) -> str:
     return (
         "This could be an emergency. Please contact your vet, doctor, or emergency services right "
@@ -951,19 +1016,28 @@ def answer_text_chat(data: dict) -> dict:
 
     session_token = str(data.get("session_token") or data.get("session_id") or "")[:128]
     history = _load_trusted_history(session_token)
+    escalation_state = _load_escalation_state(session_token)
 
     started = time.monotonic()
-    result = _route_chat_turn(data, history)
+    result = _route_chat_turn(data, history, escalation_state)
     latency_ms = int((time.monotonic() - started) * 1000)
 
-    _persist_trusted_turn(session_token, str(result.get("store") or ""), message, str(result.get("answer") or ""), latency_ms)
+    _persist_trusted_turn(
+        session_token,
+        str(result.get("store") or ""),
+        message,
+        str(result.get("answer") or ""),
+        latency_ms,
+        escalated=bool(result.get("escalation_flag")),
+    )
     return result
 
 
-def _route_chat_turn(data: dict, history: list[dict]) -> dict:
+def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = False) -> dict:
     """All the actual routing logic. ``history`` arrives server-reconstructed (see
     ``answer_text_chat``/module trust-boundary comment) — this function never reads
-    ``data["history"]`` itself."""
+    ``data["history"]`` itself. ``escalation_state`` is this session's durable
+    ``VoiceCall.escalated`` flag (GAP2), reconstructed the same trusted way."""
 
     message = _clean_message(data.get("message"))
     slots = data.get("slots") if isinstance(data.get("slots"), dict) else {}
@@ -989,7 +1063,12 @@ def _route_chat_turn(data: dict, history: list[dict]) -> dict:
     # complains and then says "anyway, got any gummies?" never reaches the shelf. Only the
     # message's own category counts here; a profile-derived fallback must not end an escalation.
     message_category = _normalize_category(_category_from_text(message))
-    carried = _recent_escalation(history) and not (message_category and not escalation_now)
+    # GAP2: the durable per-session flag is the source of truth; the window rescan is kept only
+    # as an OR fallback for a session whose row read degraded (see ``_recent_escalation``'s
+    # updated docstring). Ending the carry is no longer "any category word" — see
+    # ``_ends_dispute`` for the both-directions boundary (clean new ask vs. still-the-dispute).
+    still_open = escalation_state or _recent_escalation(history)
+    carried = still_open and not _ends_dispute(message, message_category, escalation_now=escalation_now)
     # Safety check runs before category routing and wins over it: an ingestion/poisoning report,
     # an impaired-driving question, or an allergen ask must never fall through to the ordinary
     # category regex and become a product pitch.
@@ -1094,7 +1173,19 @@ def _route_chat_turn(data: dict, history: list[dict]) -> dict:
     # asked something the KB covers.
     speak_faq = bool(faq.get("grounded") and faq.get("answer") and not prefer_products)
     if speak_faq and escalation and not (
-        _FAQ_FIRST_RE.search(message) or _DISPUTE_TOPIC_RE.search(message)
+        _FAQ_FIRST_RE.search(message)
+        or _DISPUTE_TOPIC_RE.search(message)
+        # GAP1 fix: the gate's vocabulary omitted purchase-limit/interstate compliance topics
+        # the KB genuinely answers, so a real mid-escalation question about them ("what are the
+        # purchase limits", "how much can I take across state lines") silently lost its cited
+        # answer and deferred to a human instead. Reuses ``_LEGAL_LIMIT_RE`` (already the exact
+        # vocabulary for those two topics, defined above) rather than widening ``_FAQ_FIRST_RE``
+        # itself — widening that shared regex would also touch product-routing/intent-labeling
+        # call sites this fix has no business touching. ID/age/hours/payment are already covered
+        # by ``_FAQ_FIRST_RE`` above; deliberately NOT widened with loyalty/specials vocabulary —
+        # that is exactly the original bug (an angry "wrong item" caller read the loyalty-program
+        # row), pinned by ``test_thread_02``/``test_thread_03``.
+        or _LEGAL_LIMIT_RE.search(message)
     ):
         speak_faq = False
 
@@ -1118,7 +1209,20 @@ def _route_chat_turn(data: dict, history: list[dict]) -> dict:
         }
 
     if escalation:
-        answer = _poison_emergency_answer(store, phone) if is_poison_emergency else _escalation_answer(store, phone)
+        # GAP3: driving/allergen safety escalations get their own neutral non-medical copy
+        # instead of the returns/refunds dispute apology. Poison-emergency keeps its own
+        # dedicated line; every other escalation reason (dispute, dosing-advice, drug
+        # interaction, adverse event, proxy purchase) keeps the existing dispute copy — reuse
+        # only, per the brief.
+        is_driving_or_allergen_safety = not is_poison_emergency and (
+            _is_impaired_driving_question(message) or _is_allergen_question(message)
+        )
+        if is_poison_emergency:
+            answer = _poison_emergency_answer(store, phone)
+        elif is_driving_or_allergen_safety:
+            answer = _cannot_answer_safely_answer(store, phone)
+        else:
+            answer = _escalation_answer(store, phone)
         return {
             "ok": True,
             "answer": answer,
