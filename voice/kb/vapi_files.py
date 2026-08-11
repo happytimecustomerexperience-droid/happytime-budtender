@@ -51,7 +51,7 @@ def _render_return_policy() -> str:
     from kb.models import PolicyDocument
 
     out = [_h("Return policy")]
-    for p in PolicyDocument.objects.filter(is_active=True, kind="return_policy"):
+    for p in PolicyDocument.objects.filter(is_active=True, category__slug="return_policy"):
         out.append(p.chunk_text() + "\n\n")
     return "".join(out)
 

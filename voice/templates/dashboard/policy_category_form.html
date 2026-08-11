@@ -1,0 +1,23 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Edit {{ category.label }} — Policies — Happy Time Voice{% endblock %}
+{% block content %}
+<p class="muted"><a href="{% url 'dash-policies' %}">← Policies</a></p>
+<h1>Edit category</h1>
+
+<form method="post" class="card" action="{% url 'dash-policies-category-edit' category.pk %}">
+  {% csrf_token %}
+  {% for field in form %}
+    <label>
+      <span class="lt">{{ field.label }}</span>
+      {{ field }}
+      {% if field.name == 'slug' %}
+        <span class="muted" style="font-size:11px">Renaming this changes nothing functionally (retrieval keys off the row's id) — it only changes what you see in this UI.</span>
+      {% elif field.name == 'topic' %}
+        <span class="muted" style="font-size:11px">Blank = findable by ANY question. Tagging a topic makes the agent prefer this category for that subject, but EXCLUDES it from every other topic's questions.</span>
+      {% endif %}
+      {% if field.errors %}<span style="color:var(--action);font-size:12px">{{ field.errors|join:', ' }}</span>{% endif %}
+    </label>
+  {% endfor %}
+  <button class="btn btn-primary" type="submit">Save</button>
+</form>
+{% endblock %}

@@ -78,6 +78,12 @@ def _store_scoped(prefix: str) -> bool:
 # topic has no clean topic-bearing field for it and is excluded outright rather than guessed at
 # — e.g. EducationDoc/BlogDoc/WeightTypeTaxonomy carry no hours/specials/returns field, so a
 # topic-constrained hours query never surfaces a taxonomy row.
+#
+# PolicyDocument is DATA-DRIVEN, not listed here: an owner-created PolicyCategory carries its
+# own ``topic`` field (kb/models.py), so a policy row matches a topic when its category's
+# ``topic`` equals the requested topic — see ``_topic_allows`` below. That is what lets the
+# owner add a brand-new topic-scoped category (or a plain unconstrained one) with no code
+# change here.
 TOPIC_ROW_FIELDS: dict[str, dict[str, tuple[str, frozenset[str]]]] = {
     "hours_location": {
         "FAQEntry": ("topic", frozenset({"hours"})),
@@ -89,14 +95,25 @@ TOPIC_ROW_FIELDS: dict[str, dict[str, tuple[str, frozenset[str]]]] = {
     },
     "return_policy": {
         "FAQEntry": ("topic", frozenset({"returns"})),
-        "PolicyDocument": ("kind", frozenset({"return_policy"})),
     },
 }
+
+
+def _model_has_topic_field(model_name: str, topic: str) -> bool:
+    """True when this row type carries a way to answer whether it belongs to ``topic`` at
+    all (used by ``_build_corpus`` to decide whether to even consider the model). PolicyDocument
+    always qualifies — its per-row category.topic decides membership in ``_topic_allows``."""
+    if model_name == "PolicyDocument":
+        return True
+    return model_name in TOPIC_ROW_FIELDS.get(topic, {})
 
 
 def _topic_allows(topic: str, model_name: str, row) -> bool:
     """True when ``row`` carries the field value that puts it in ``topic``. A model with no
     entry for this topic (no clean topic-bearing field) never passes."""
+    if model_name == "PolicyDocument":
+        # Data-driven: the owner's PolicyCategory.topic decides, not a hardcoded kind value.
+        return (getattr(row.category, "topic", "") or "") == topic
     rule = TOPIC_ROW_FIELDS.get(topic, {}).get(model_name)
     if rule is None:
         return False
@@ -112,9 +129,12 @@ def _build_corpus(store: str | None, topic: str = ""):
     items: list[tuple[str, str]] = []
     row_by_id: dict[str, object] = {}
     for prefix, Model in _models():
-        if topic and Model.__name__ not in TOPIC_ROW_FIELDS.get(topic, {}):
+        if topic and not _model_has_topic_field(Model.__name__, topic):
             continue  # no clean topic field for this row type — exclude, don't guess
-        for row in Model.objects.filter(is_active=True):
+        qs = Model.objects.filter(is_active=True)
+        if Model.__name__ == "PolicyDocument":
+            qs = qs.select_related("category")
+        for row in qs:
             if _store_scoped(prefix) and store:
                 row_store = (getattr(row, "store", "") or "").strip()
                 if row_store and row_store != store:

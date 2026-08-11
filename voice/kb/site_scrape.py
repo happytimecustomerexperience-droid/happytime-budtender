@@ -150,8 +150,14 @@ def _upsert_faq(page: Page, heading: str, body: str) -> tuple[str, object]:
 
 
 def _upsert_policy(page: Page, body: str) -> tuple[str, object]:
+    from kb.models import PolicyCategory
+
+    category, _ = PolicyCategory.objects.get_or_create(
+        slug="return_policy",
+        defaults={"label": "Return policy", "topic": "return_policy", "weight": 120},
+    )
     obj, created = PolicyDocument.objects.update_or_create(
-        kind="return_policy",
+        category=category,
         defaults={
             "title": "Happy Time return policy",
             "body": body[:5000],

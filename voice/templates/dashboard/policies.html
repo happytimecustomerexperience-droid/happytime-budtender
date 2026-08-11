@@ -1,0 +1,156 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Policies — Happy Time Voice{% endblock %}
+{% block content %}
+<div class="row between">
+  <div>
+    <h1>Policies</h1>
+    <p class="muted">Write the policies your agents answer from — return policy, product use,
+      delivery, ID rules, anything. Invent your own categories below. Edits are live on the next
+      call: retrieval embeddings are cached and content-hashed, so an edited or new policy is
+      picked up automatically — you never need to "reindex" first.</p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>New category</h2>
+  <form method="post" action="{% url 'dash-policies-category-new' %}" class="row" style="flex-wrap:wrap;gap:12px;align-items:flex-end">
+    {% csrf_token %}
+    <label style="min-width:160px">
+      <span class="lt">Label</span>
+      {{ category_form.label }}
+    </label>
+    <label style="min-width:160px">
+      <span class="lt">Slug</span>
+      {{ category_form.slug }}
+      <span class="muted" style="font-size:11px">Auto-derive from the label, or write your own. Changing a slug later changes nothing functionally (retrieval keys off the row's id) — it only affects what you see in this UI.</span>
+    </label>
+    <label style="min-width:220px">
+      <span class="lt">Topic</span>
+      {{ category_form.topic }}
+      <span class="muted" style="font-size:11px">Blank = findable by ANY question. Tagging a topic makes the agent prefer this category for that subject, but EXCLUDES it from every other topic's questions.</span>
+    </label>
+    <label style="min-width:260px">
+      <span class="lt">Description</span>
+      {{ category_form.description }}
+    </label>
+    <label style="width:90px">
+      <span class="lt">Weight</span>
+      {{ category_form.weight }}
+    </label>
+    <label class="row" style="gap:6px">{{ category_form.is_active }} <span class="lt">Active</span></label>
+    <button class="btn btn-primary" type="submit" data-testid="policy-category-new">Add category</button>
+  </form>
+  {% if category_form.errors %}
+    <div class="note-red"><div>{{ category_form.errors }}</div></div>
+  {% endif %}
+</div>
+
+{% for c in categories %}
+<div class="card">
+  <div class="row between">
+    <div>
+      <h2>{{ c.label }} <span class="muted">({{ c.slug }})</span>
+        {% if not c.is_active %}<span class="badge slate">inactive</span>{% endif %}
+        {% if c.topic %}<span class="badge blue">{{ c.get_topic_display }}</span>{% else %}<span class="badge slate">any question</span>{% endif %}
+      </h2>
+      {% if c.description %}<p class="muted">{{ c.description }}</p>{% endif %}
+    </div>
+    <div class="row" style="gap:8px">
+      <a class="btn" href="{% url 'dash-policies-category-edit' c.pk %}">Edit</a>
+      <a class="btn btn-primary" href="{% url 'dash-kb-row-new' 'policy' %}">+ New policy</a>
+      <form method="post" action="{% url 'dash-policies-category-delete' c.pk %}" onsubmit="return confirm('Delete this category?')">
+        {% csrf_token %}<button class="btn" style="color:var(--action)">Delete</button>
+      </form>
+    </div>
+  </div>
+  <table>
+    <tr><th>Title</th><th>Weight</th><th>Active</th><th></th></tr>
+    {% for doc in c.documents.all %}
+      <tr>
+        <td>{{ doc.title }}</td>
+        <td>{{ doc.weight }}</td>
+        <td>{% if doc.is_active %}<span class="badge green">yes</span>{% else %}<span class="badge slate">no</span>{% endif %}</td>
+        <td class="row" style="gap:8px">
+          <a href="{% url 'dash-kb-row-edit' doc.pk %}?kind=policy">Edit</a>
+          <button class="btn test-policy-btn" type="button" data-policy-id="{{ doc.pk }}" data-policy-title="{{ doc.title }}">Test this policy</button>
+          <form method="post" action="{% url 'dash-kb-row-delete' doc.pk %}?kind=policy" onsubmit="return confirm('Delete this policy?')">
+            {% csrf_token %}<button class="btn" style="color:var(--action)">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="4" class="muted">No policies in this category yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% empty %}
+<div class="card"><p class="muted">No categories yet — add one above, then add a policy under it.</p></div>
+{% endfor %}
+
+<div class="card">
+  <h2>Test box</h2>
+  <p class="muted">Type a customer question exactly as they'd ask it. This runs the real agent brain (same code as the phone/chat agent) with a brand-new, throwaway session — it never touches a real caller's history.</p>
+  <div class="row" style="gap:8px">
+    <input id="policy-test-message" placeholder="e.g. what is your return policy on a broken cart" style="flex:1">
+    <button class="btn btn-primary" type="button" id="policy-test-run" data-testid="policy-test-run">Test</button>
+  </div>
+  <input type="hidden" id="policy-test-policy-id">
+  <div id="policy-test-result" style="margin-top:12px"></div>
+</div>
+
+<script>
+(function () {
+  const csrf = document.querySelector('[name=csrfmiddlewaretoken]').value;
+  const input = document.getElementById('policy-test-message');
+  const policyIdField = document.getElementById('policy-test-policy-id');
+  const resultBox = document.getElementById('policy-test-result');
+
+  document.querySelectorAll('.test-policy-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      policyIdField.value = btn.dataset.policyId;
+      input.value = 'is there a policy about ' + btn.dataset.policyTitle.toLowerCase();
+      input.focus();
+    });
+  });
+
+  function runTest() {
+    const message = input.value.trim();
+    if (!message) return;
+    const policyId = policyIdField.value;
+    resultBox.innerHTML = '<p class="muted">Testing…</p>';
+    fetch("{% url 'dash-policies-test' %}", {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf},
+      body: JSON.stringify({message: message, policy_id: policyId || null}),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.ok) {
+          resultBox.innerHTML = '<div class="note-red"><div>' + (data.error || 'test failed') + '</div></div>';
+          return;
+        }
+        let verdict = '';
+        if (data.policy_cited === true) {
+          verdict = '<p><span class="badge green">Your policy WAS cited</span></p>';
+        } else if (data.policy_cited === false) {
+          verdict = '<p><span class="badge amber">Your policy was NOT cited</span></p>';
+        }
+        const sources = (data.sources || []).map(function (s) {
+          return '<li>[' + s.kind + '] ' + s.title + '</li>';
+        }).join('');
+        resultBox.innerHTML =
+          verdict +
+          '<p><strong>Grounded:</strong> ' + (data.grounded ? 'yes' : 'no') + '</p>' +
+          '<p><strong>Answer:</strong> ' + data.answer + '</p>' +
+          '<p><strong>Sources cited:</strong></p><ul>' + (sources || '<li class="muted">none</li>') + '</ul>';
+        policyIdField.value = '';
+      })
+      .catch(function () {
+        resultBox.innerHTML = '<div class="note-red"><div>test request failed</div></div>';
+      });
+  }
+
+  document.getElementById('policy-test-run').addEventListener('click', runTest);
+})();
+</script>
+{% endblock %}

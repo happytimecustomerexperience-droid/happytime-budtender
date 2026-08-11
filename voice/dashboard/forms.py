@@ -18,10 +18,21 @@ from kb.models import (
     BlogDoc,
     EducationDoc,
     FAQEntry,
+    PolicyCategory,
     PolicyDocument,
     StoreFact,
     WeightTypeTaxonomy,
 )
+
+# The topic choices a PolicyCategory can opt into (kb/semantic.py topic-scoping). Blank ("") is
+# the default: unconstrained, findable by any question. Mirrors voice.chat._faq_topic's values —
+# do not add a value here that chat.py doesn't also produce, or the category becomes unreachable.
+POLICY_CATEGORY_TOPIC_CHOICES = [
+    ("", "Any question (unconstrained — findable by any question)"),
+    ("hours_location", "Hours & location"),
+    ("specials", "Specials"),
+    ("return_policy", "Return policy"),
+]
 
 # slug (URL kind) → (model, label) for the KB source manager. The single registry the CRUD views
 # and the KB-manager landing iterate, so a new KB kind is added in exactly one place.
@@ -53,7 +64,19 @@ class FAQEntryForm(forms.ModelForm):
 class PolicyForm(forms.ModelForm):
     class Meta:
         model = PolicyDocument
-        fields = ["kind", "title", "body", "citation", "source_url", "weight", "is_active"]
+        fields = ["category", "title", "body", "citation", "source_url", "weight", "is_active"]
+
+
+class PolicyCategoryForm(forms.ModelForm):
+    """Owner-creatable policy category. ``topic`` defaults to blank (unconstrained); the
+    dashboard shows the tradeoff inline (help_text on the template, not here — keep the form
+    dumb)."""
+
+    topic = forms.ChoiceField(choices=POLICY_CATEGORY_TOPIC_CHOICES, required=False)
+
+    class Meta:
+        model = PolicyCategory
+        fields = ["slug", "label", "description", "topic", "weight", "is_active", "order"]
 
 
 class StoreFactForm(forms.ModelForm):

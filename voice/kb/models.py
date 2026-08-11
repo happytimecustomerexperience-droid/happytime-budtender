@@ -80,18 +80,44 @@ class FAQEntry(SourceSyncMixin, models.Model):
         return f"{self.key} ({self.topic})"
 
 
-class PolicyDocument(SourceSyncMixin, models.Model):
-    """Company-level policy bodies the FAQ cites — primarily the return policy with
-    WAC 314-55-079. Forked from swedish-bot PolicyDocument (PDF-backed Swedish terms) into
-    a body-text model with an optional PDF attachment (ingestible via kb/ingest.py)."""
+class PolicyCategory(models.Model):
+    """An owner-defined policy category (return policy, delivery, ID rules, product use,
+    anything) — replaces the old hardcoded ``PolicyDocument.POLICY_KINDS`` enum so the owner
+    can add a new category from the dashboard with no code change. ``slug`` is the stable
+    retrieval key (never rename in place — it is what ``PolicyDocument.category`` and any
+    external reference key off). ``topic`` is optional: when it matches one of chat.py's
+    ``_faq_topic`` values ("return_policy"/"specials"/"hours_location"), rows under this
+    category opt into topic-scoped retrieval (kb/semantic.py); "" (the default) means the
+    category is unconstrained and only reachable by unconstrained retrieval, exactly like
+    every other KB row type."""
 
-    POLICY_KINDS = [
-        ("return_policy", "Return policy"),
-        ("privacy", "Privacy"),
-        ("loyalty", "Loyalty terms"),
-        ("other", "Other policy"),
-    ]
-    kind = models.CharField(max_length=32, choices=POLICY_KINDS, unique=True)  # one per kind
+    slug = models.SlugField(max_length=64, unique=True)
+    label = models.CharField(max_length=120)
+    description = models.TextField(blank=True)  # what this category is for (owner-facing)
+    topic = models.CharField(max_length=32, blank=True)  # "" | return_policy | specials | hours_location
+    weight = models.IntegerField(default=120)  # default weight for documents seeded under it
+    is_active = models.BooleanField(default=True)
+    order = models.IntegerField(default=0)  # dashboard display order
+
+    class Meta:
+        ordering = ["order", "label"]
+        verbose_name_plural = "Policy categories"
+
+    def __str__(self):
+        return self.label
+
+
+class PolicyDocument(SourceSyncMixin, models.Model):
+    """Company-level policy bodies the FAQ cites — return policy, product use, delivery, ID
+    rules, or any other category the owner adds via ``PolicyCategory``. Forked from
+    swedish-bot PolicyDocument (PDF-backed Swedish terms) into a body-text model with an
+    optional PDF attachment (ingestible via kb/ingest.py). MANY documents can live under one
+    category (e.g. several delivery-policy pages) — the old one-per-``kind`` unique
+    constraint is gone; ``category`` is a plain FK."""
+
+    category = models.ForeignKey(
+        PolicyCategory, on_delete=models.PROTECT, related_name="documents"
+    )
     title = models.CharField(max_length=200)
     body = models.TextField()  # the spoken-grounding body (WAC cite lives here)
     citation = models.CharField(
@@ -112,7 +138,7 @@ class PolicyDocument(SourceSyncMixin, models.Model):
         return f"{self.title}{cite}: {self.body}"
 
     def __str__(self):
-        return f"{self.title} [{self.kind}]"
+        return f"{self.title} [{self.category.slug}]"
 
 
 class StoreFact(SourceSyncMixin, models.Model):

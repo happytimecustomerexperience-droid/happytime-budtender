@@ -1119,6 +1119,162 @@ def specials_hours(request):
     )
 
 
+# ── Policies: owner-defined categories + policy docs + a live test box ────────
+# Policy DOCUMENT crud reuses the existing generic kb-row editor (kind="policy", already
+# registered in KB_KINDS/KB_FORMS) — one editor, no duplicate CRUD surface. This module only
+# adds what's missing: PolicyCategory CRUD (with a graceful PROTECT-delete message, since a
+# category can own documents) and the test box that proves a saved policy actually gets used.
+@staff_member_required
+def policies_page(request):
+    """Categories (with their policy docs nested) + the test box. Reads only — every mutation
+    posts to a dedicated route below or to the existing kb-row editor."""
+    from kb.models import PolicyCategory
+
+    from .forms import PolicyCategoryForm
+
+    categories = PolicyCategory.objects.prefetch_related("documents").all()
+    return render(
+        request,
+        "dashboard/policies.html",
+        {
+            "categories": categories,
+            "category_form": PolicyCategoryForm(),
+        },
+    )
+
+
+@staff_member_required
+@require_POST
+def policy_category_new(request):
+    from kb.models import PolicyCategory
+
+    from .forms import PolicyCategoryForm
+
+    form = PolicyCategoryForm(request.POST)
+    if form.is_valid():
+        form.save()
+        resp = redirect("dash-policies")
+        resp["HX-Trigger"] = _toast("success", "Category added.")
+        return resp
+    return render(
+        request,
+        "dashboard/policies.html",
+        {
+            "categories": PolicyCategory.objects.prefetch_related("documents").all(),
+            "category_form": form,
+        },
+        status=400,
+    )
+
+
+@staff_member_required
+def policy_category_edit(request, pk: int):
+    from kb.models import PolicyCategory
+
+    from .forms import PolicyCategoryForm
+
+    category = get_object_or_404(PolicyCategory, pk=pk)
+    if request.method == "POST":
+        form = PolicyCategoryForm(request.POST, instance=category)
+        if form.is_valid():
+            form.save()
+            resp = redirect("dash-policies")
+            resp["HX-Trigger"] = _toast("success", f"{category.label} updated.")
+            return resp
+    else:
+        form = PolicyCategoryForm(instance=category)
+    return render(
+        request,
+        "dashboard/policy_category_form.html",
+        {"form": form, "category": category},
+    )
+
+
+@staff_member_required
+@require_POST
+def policy_category_delete(request, pk: int):
+    """Deleting a category with documents must be refused gracefully — the FK is PROTECT."""
+    from django.db.models import ProtectedError
+
+    from kb.models import PolicyCategory
+
+    category = get_object_or_404(PolicyCategory, pk=pk)
+    try:
+        category.delete()
+    except ProtectedError:
+        resp = redirect("dash-policies")
+        resp["HX-Trigger"] = _toast(
+            "error",
+            f'"{category.label}" still has policy documents under it — move or delete '
+            "those first, then delete the category.",
+        )
+        return resp
+    resp = redirect("dash-policies")
+    resp["HX-Trigger"] = _toast("info", f'"{category.label}" deleted.')
+    return resp
+
+
+@staff_member_required
+@require_POST
+def policy_test(request):
+    """Test box: ask the shared brain a question exactly like a real caller would, using a
+    brand-new session_token so this test can NEVER pollute a real session's history (see
+    voice.chat's TRUST BOUNDARY docstring). Returns the answer, whether it was grounded, which
+    source rows were cited, and — when ``policy_id`` names a specific policy row — a plain
+    WAS/WAS NOT cited verdict so the owner can confirm his new policy is actually being used.
+
+    Embeddings are cached + content-hashed (kb/semantic.py) — an edited policy is picked up on
+    its next lookup automatically; nothing here needs to "reindex" first."""
+    import uuid
+
+    from voice.chat import answer_text_chat
+
+    try:
+        data = json.loads(request.body or b"{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    message = " ".join(str(data.get("message") or "").split())[:1000]
+    if not message:
+        return JsonResponse({"ok": False, "error": "message required"}, status=400)
+
+    policy_id = data.get("policy_id")
+    store = str(data.get("store") or "").strip().lower()
+    # A fresh, never-reused token per test run — this is what keeps the test box from ever
+    # touching a real caller's/session's VoiceCall/VoiceTurn history.
+    session_token = f"pgpolicy-{uuid.uuid4().hex[:16]}"
+
+    result = answer_text_chat(
+        {"message": message, "store": store, "session_token": session_token}
+    )
+
+    sources = result.get("sources") or []
+    policy_cited = None
+    if policy_id:
+        try:
+            policy_id = int(policy_id)
+        except (TypeError, ValueError):
+            policy_id = None
+        if policy_id is not None:
+            policy_cited = any(
+                s.get("kind") == "policy" and s.get("id") == policy_id
+                for s in sources
+                if isinstance(s, dict)
+            )
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "answer": result.get("answer", ""),
+            "grounded": bool(result.get("grounded")),
+            "sources": sources,
+            "policy_cited": policy_cited,
+            "session_token": session_token,
+        }
+    )
+
+
 # ── Vendor-callback queue ──────────────────────────────────────────────────────
 @staff_member_required
 def vendor_queue(request):

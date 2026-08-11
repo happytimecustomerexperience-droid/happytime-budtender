@@ -278,9 +278,34 @@ RETURN_POLICY_BODY = (
 )
 
 
+# Starting categories (the owner can add more from the dashboard with no code change; slug
+# is the stable retrieval key kb/semantic.py keys off — never rename in place). Only
+# return_policy carries a topic today, preserving the historical topic-constrained behaviour.
+POLICY_CATEGORY_ROWS = [
+    # (slug, label, topic, weight)
+    ("return_policy", "Return policy", "return_policy", 120),
+    ("privacy", "Privacy", "", 120),
+    ("loyalty", "Loyalty terms", "", 120),
+    ("other", "Other policy", "", 120),
+]
+
+
+def seed_policy_categories() -> int:
+    n = 0
+    for slug, label, topic, weight in POLICY_CATEGORY_ROWS:
+        m.PolicyCategory.objects.update_or_create(
+            slug=slug,
+            defaults={"label": label, "topic": topic, "weight": weight, "is_active": True},
+        )
+        n += 1
+    return n
+
+
 def seed_return_policy() -> int:
+    seed_policy_categories()
+    category = m.PolicyCategory.objects.get(slug="return_policy")
     m.PolicyDocument.objects.update_or_create(
-        kind="return_policy",
+        category=category,
         defaults={
             "title": "Return policy",
             "body": RETURN_POLICY_BODY,

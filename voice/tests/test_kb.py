@@ -493,7 +493,7 @@ def test_every_mapped_row_exists():
     assert m.FAQEntry.objects.count() == 55
     assert m.FAQEntry.objects.filter(key__startswith="site-faq-").count() == 40
     assert m.FAQEntry.objects.filter(key__startswith="footer-").count() == 2
-    assert m.PolicyDocument.objects.filter(kind="return_policy").count() == 1
+    assert m.PolicyDocument.objects.filter(category__slug="return_policy").count() == 1
     assert m.StoreFact.objects.filter(kind="special").count() == len(seed.SPECIAL_ROWS)
     for store in ("yakima", "mount-vernon", "pullman"):
         assert m.StoreFact.objects.filter(kind="special", store=store).count() == 9  # July 2026 deals
@@ -544,7 +544,7 @@ def test_wa_law_accuracy():
     from kb import seed
 
     seed.seed_all()
-    pol = m.PolicyDocument.objects.get(kind="return_policy")
+    pol = m.PolicyDocument.objects.get(category__slug="return_policy")
     assert "WAC 314-55-079" in pol.body
     assert pol.citation == "WAC 314-55-079"
 
@@ -563,7 +563,7 @@ def test_return_policy_body_has_no_agent_directed_copy():
     from kb import seed
 
     seed.seed_all()
-    pol = m.PolicyDocument.objects.get(kind="return_policy")
+    pol = m.PolicyDocument.objects.get(category__slug="return_policy")
     lowered = pol.body.lower()
     assert "the agent" not in lowered
     assert "escalation" not in lowered
@@ -608,6 +608,119 @@ def test_no_cost_or_margin_substring_in_any_chunk():
         for row in Model.objects.all():
             low = row.chunk_text().lower()
             assert "cost" not in low and "margin" not in low, f"leak in {prefix}{row.pk}"
+
+
+# ── F. PolicyCategory (owner-added categories, no code change) ────────────────
+
+
+@pytest.mark.django_db
+def test_owner_added_category_is_retrievable_unconstrained(db, settings):
+    """The owner invents a brand-new category ("Product use", topic="") purely from data — no
+    code change — and it is retrievable by an unconstrained query, same as every other row
+    type."""
+    from kb import seed, semantic
+
+    seed.seed_all()
+    settings.SEMANTIC_SEARCH_ENABLED = False
+
+    category = m.PolicyCategory.objects.create(slug="product-use", label="Product use", topic="")
+    m.PolicyDocument.objects.create(
+        category=category,
+        title="How to store your flower",
+        body="Store cannabis flower in a cool, dark, airtight container to preserve potency.",
+        weight=120,
+        is_active=True,
+    )
+
+    hits = semantic.rank_faq("how should I store my flower airtight container")
+    assert any(
+        isinstance(row, m.PolicyDocument) and row.category.slug == "product-use"
+        for row, _ in hits
+    ), "the owner-added Product-use category never surfaced"
+
+
+@pytest.mark.django_db
+def test_topic_tagged_category_scopes_and_excludes_others(db, settings):
+    """A category tagged topic="return_policy" is retrievable when chat.py passes that topic; a
+    DIFFERENT (untagged) category never leaks into that topic-constrained corpus."""
+    from kb import seed, semantic
+
+    seed.seed_all()
+    settings.SEMANTIC_SEARCH_ENABLED = False
+
+    other = m.PolicyCategory.objects.create(slug="delivery", label="Delivery", topic="")
+    m.PolicyDocument.objects.create(
+        category=other,
+        title="Delivery policy",
+        body="We deliver within 10 miles of each store between 10am and 8pm.",
+        weight=120,
+        is_active=True,
+    )
+
+    hits = semantic.rank_faq(
+        "what's your return policy on cannabis products", store="yakima", topic="return_policy"
+    )
+    assert hits
+    for row, _ in hits:
+        assert not (
+            isinstance(row, m.PolicyDocument) and row.category.slug == "delivery"
+        ), "an untagged, different category leaked into the return_policy topic corpus"
+        assert isinstance(row, m.PolicyDocument) and row.category.topic == "return_policy" or (
+            isinstance(row, m.FAQEntry) and row.topic == "returns"
+        )
+
+    # The delivery category never surfaces for the return_policy topic even on a query that
+    # lexically overlaps it, and it's confined out of the topic-scoped corpus entirely.
+    _, row_by_id = semantic._build_corpus(store=None, topic="return_policy")
+    assert not any(
+        isinstance(row, m.PolicyDocument) and row.category.slug == "delivery"
+        for row in row_by_id.values()
+    )
+
+
+@pytest.mark.django_db
+def test_many_policies_under_one_category_all_reach_corpus(db, settings):
+    """The unique-per-kind constraint is genuinely gone: MANY PolicyDocument rows can live
+    under one PolicyCategory and all of them reach the retrieval corpus."""
+    from kb import seed, semantic
+
+    seed.seed_all()
+    category = m.PolicyCategory.objects.create(slug="id-rules", label="ID rules", topic="")
+    docs = [
+        m.PolicyDocument.objects.create(
+            category=category,
+            title=f"ID rule {i}",
+            body=f"ID requirement detail number {i} about valid government photo ID.",
+            weight=120,
+            is_active=True,
+        )
+        for i in range(3)
+    ]
+    assert m.PolicyDocument.objects.filter(category=category).count() == 3
+
+    items, row_by_id = semantic._build_corpus(store=None)
+    corpus_pks = {row.pk for row in row_by_id.values() if isinstance(row, m.PolicyDocument)}
+    for doc in docs:
+        assert doc.pk in corpus_pks, f"policy {doc.pk} under a shared category missing from corpus"
+
+
+@pytest.mark.django_db
+def test_seeded_return_policy_still_answers_end_to_end(db, settings):
+    """Regression: the existing seeded return policy still answers "what is your return
+    policy" end-to-end through the real faq_lookup tool, exactly as before the FK migration."""
+    from kb import seed
+    from voice.tools.faq import faq_lookup
+
+    seed.seed_all()
+    settings.SEMANTIC_SEARCH_ENABLED = False  # deterministic keyword path, no live keys
+
+    result = faq_lookup(
+        {"query": "what is your return policy", "store": "yakima", "topic": "return_policy"},
+        ctx={},
+    )
+    assert result["grounded"] is True
+    assert "WAC 314-55-079" in result["answer"]
+    assert any(s.get("kind") == "policy" for s in result["sources"])
 
 
 # ── E. Vapi Files mirror (mocked client — offline) ────────────────────────────

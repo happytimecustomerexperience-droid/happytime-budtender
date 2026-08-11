@@ -46,7 +46,7 @@ def ingest_pdf_bytes(
     data: bytes,
     filename: str,
     *,
-    kind: str = "return_policy",
+    category=None,
     title: str | None = None,
     citation: str = "",
     replace=None,
@@ -56,7 +56,8 @@ def ingest_pdf_bytes(
     ``replace`` is given, overwrite that document in place; else use the passed ``policy``.
     Callers should size-check the upload BEFORE materializing ``data``.
 
-    Returns the saved PolicyDocument. Idempotent on the ``kind`` natural key (unique)."""
+    Returns the saved PolicyDocument. ``category`` is a PolicyCategory instance; pass it to
+    (re)assign the document's category, or omit to leave the target's existing category."""
     from django.core.files.base import ContentFile
 
     if not data or data[:5] != _PDF_MAGIC:
@@ -68,7 +69,8 @@ def ingest_pdf_bytes(
 
     text = parse_pdf_text(io.BytesIO(data))
     doc = replace or policy
-    doc.kind = kind
+    if category is not None:
+        doc.category = category
     if title:
         doc.title = title
     if citation:

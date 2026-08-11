@@ -36,6 +36,24 @@ urlpatterns = [
     path("kb/row/<int:pk>/delete", views.kb_row_delete, name="dash-kb-row-delete"),
     # specials / hours editor (the faq-spoken StoreFact subset; CRUD via kb-row, kind=store-fact)
     path("specials-hours/", views.specials_hours, name="dash-specials-hours"),
+    # owner-editable policy categories + policies (docs CRUD reuses kb-row, kind=policy) + test box
+    path("policies/", views.policies_page, name="dash-policies"),
+    path(
+        "policies/categories/new",
+        views.policy_category_new,
+        name="dash-policies-category-new",
+    ),
+    path(
+        "policies/categories/<int:pk>/edit",
+        views.policy_category_edit,
+        name="dash-policies-category-edit",
+    ),
+    path(
+        "policies/categories/<int:pk>/delete",
+        views.policy_category_delete,
+        name="dash-policies-category-delete",
+    ),
+    path("policies/test", views.policy_test, name="dash-policies-test"),
     # ranking weights
     path("weights/", views.weights_tuner, name="dash-weights"),
     # credentials / config editor
