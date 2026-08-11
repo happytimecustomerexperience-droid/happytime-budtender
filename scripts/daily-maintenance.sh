@@ -78,6 +78,37 @@ if missing:
 print(f'all {len(rows)} live categories reachable')
 "
 
+# 7. SPLIT-BRAIN ALARM. On 2026-08-11 a stale container from a July release was found still
+#    claiming Host(voice.happytimeweed.com) alongside the current one. Traefik round-robined
+#    between them, so roughly HALF of production traffic was served by four-week-old code —
+#    quoting $56.43 for a $38 product (the tax-uplift bug), with none of the safety gates.
+#    Every check above missed it because they all run INSIDE the current container and never
+#    traverse the proxy. This one counts backends per hostname, which is the only way to see it.
+step "one backend per public hostname" bash -c '
+  dupes=0
+  for host in voice.happytimeweed.com budtender-api.happytimeweed.com checkout.3dpresence.com; do
+    n=$(for c in $(docker ps --format "{{.Names}}"); do
+          docker inspect "$c" --format "{{json .Config.Labels}}" 2>/dev/null \
+            | tr "," "\n" | grep -q "Host(\`$host\`)" && echo "$c"
+        done | wc -l)
+    if [ "$n" -gt 1 ]; then
+      echo "SPLIT BRAIN: $host has $n backends — traffic is being served by more than one build"
+      dupes=1
+    fi
+  done
+  [ "$dupes" = "0" ]
+'
+
+# 8. The canary above talks to localhost inside the container. This one goes through the PUBLIC
+#    URL, so it exercises DNS, TLS, Traefik and whichever backend actually answers — the path a
+#    real caller takes. A degraded/unhealthy answer here with a healthy answer above means the
+#    proxy is routing somewhere unexpected.
+step "public healthz is ok (through the proxy)" bash -c '
+  body=$(curl -fsS -m 15 https://voice.happytimeweed.com/healthz) || exit 1
+  echo "$body"
+  echo "$body" | grep -q "\"status\": \"ok\""
+'
+
 log "===== summary ====="
 if [ ${#FAILED[@]} -eq 0 ]; then
   log "all steps ok"
