@@ -81,6 +81,16 @@ def _latest_customer_message(messages) -> str:
     return ""
 
 
+# The voice service runs with SECURE_SSL_REDIRECT on, so a plain http:// call to the internal
+# container name is 301'd to https://voice-web:8000 — where nothing is listening — and the request
+# times out. Both bridges below then silently return None and the website chat drops to its RAW
+# GEMINI fallback: no tools, no live inventory, no Numbers-Guard, no leak-guard, no safety branch.
+# That is how the website chat and the phone agent silently diverged in production despite sharing
+# a brain. X-Forwarded-Proto is what the real reverse proxy (Traefik) sets, so this tells Django
+# the hop was already secure — the same workaround text_smoke.py uses to hit the container direct.
+_VOICE_HEADERS = {"Accept": "application/json", "X-Forwarded-Proto": "https"}
+
+
 def _voice_grounding(query: str, store: str = "") -> dict | None:
     base = os.environ.get("HHT_VOICE_BASE_URL", "").rstrip("/")
     token = os.environ.get("HHT_BACKEND_TOKEN", "").strip()
@@ -90,7 +100,7 @@ def _voice_grounding(query: str, store: str = "") -> dict | None:
         resp = requests.post(
             f"{base}/api/voice/kb/search",
             json={"query": query, "store": store},
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            headers={**_VOICE_HEADERS, "Authorization": f"Bearer {token}"},
             timeout=(2.0, float(os.environ.get("HHT_VOICE_TIMEOUT", "5") or 5)),
         )
         if resp.status_code >= 300:
@@ -121,7 +131,7 @@ def _voice_chat(messages, *, store: str = "") -> dict | None:
         resp = requests.post(
             f"{base}/api/voice/chat",
             json={"message": latest, "history": history, "store": store},
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            headers={**_VOICE_HEADERS, "Authorization": f"Bearer {token}"},
             timeout=(2.0, float(os.environ.get("HHT_VOICE_TIMEOUT", "5") or 5)),
         )
         if resp.status_code >= 300:
