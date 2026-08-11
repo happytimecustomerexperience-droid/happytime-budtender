@@ -59,7 +59,13 @@ _HUMAN_RE = re.compile(
     r"money\s*back|busted|"
     r"defective|broken|bad\s+cart|won'?t\s+fire|doesn'?t\s+work|unacceptable|"
     r"ripped\s+(?:me\s+)?off|rip\s*off|scam|angry|mad|upset|"
+    # Real anger vocabulary. "my order was wrong and I am FURIOUS" did not escalate: none of
+    # angry/mad/upset appear, and the pattern below needs "wrong" BEFORE the noun.
+    r"furious|livid|pissed|fed\s*up|outrageous|ridiculous|"
     r"wrong\s+(item|product|thing)|"
+    # ...and the same complaint said the other way round — "my order was wrong", "the item is
+    # wrong" — which is at least as common as "wrong item".
+    r"(?:order|item|product|thing)\s+(?:was|is|came)\s+wrong|"
     r"incorrect\s+(order|item|product)|"
     r"missing\s+(?:\w+\s+){0,3}(?:item|product|order)|"
     r"not\s+what\s+i\s+(ordered|bought)|"
@@ -436,15 +442,20 @@ def _recent_escalation(history) -> bool:
 
 
 def _ends_dispute(message: str, category: str, *, escalation_now: bool) -> bool:
-    """GAP2, the hard-direction half: a clean new purchase ask ends a carried dispute (so
-    "anyway, got any gummies?" reaches the shelf), but a sentence that merely CONTAINS a product
+    """GAP2, the hard-direction half: a clean new purchase ask, or a plain hours/location pivot,
+    ends a carried dispute (so "anyway, got any gummies?" reaches the shelf, and "what time do
+    you close" gets an ordinary hours answer) — but a sentence that merely CONTAINS a product
     noun while still describing/referencing the problem does NOT (so "the gummy that failed" or
-    "fix the moldy eighth situation" stays the dispute). Distinguished by dispute vocabulary
-    (``_HUMAN_RE``/``_DISPUTE_TOPIC_RE``, which "fail(ed)" was added to alongside broken/
-    defective) — a category word with none of that vocabulary reads as a genuine new ask; a
-    category word alongside it is still talking about the disputed item. A message that already
-    carries its own fresh escalation trigger is handled by that trigger directly, not this."""
-    if not category or escalation_now:
+    "fix the moldy eighth situation" stays the dispute), and neither does a genuine dispute-topic
+    question ("what's your return policy") that happens to also be an FAQ. Distinguished by
+    dispute vocabulary (``_HUMAN_RE``/``_DISPUTE_TOPIC_RE``, which "fail(ed)" was added to
+    alongside broken/defective) — a category or plain hours/location word with none of that
+    vocabulary reads as a genuine pivot; one alongside it is still talking about the disputed
+    item. Deliberately narrower than ``_FAQ_FIRST_RE`` — that regex also covers delivery/payment/
+    order, and a "delivery driver" line mid-dispute must NOT end it (``test_thread_06``). A
+    message that already carries its own fresh escalation trigger is handled by that trigger
+    directly, not this."""
+    if escalation_now or not (category or _HOURS_LOC_RE.search(message or "")):
         return False
     text = message or ""
     return not (_HUMAN_RE.search(text) or _DISPUTE_TOPIC_RE.search(text))
@@ -1022,13 +1033,18 @@ def answer_text_chat(data: dict) -> dict:
     result = _route_chat_turn(data, history, escalation_state)
     latency_ms = int((time.monotonic() - started) * 1000)
 
+    # GAP2: persist only whether a genuine DISPUTE is still open — not this turn's full
+    # ``escalation_flag`` (which is also True for a one-off safety_hit with no dispute
+    # vocabulary). ``_dispute_active`` is this module's own private plumbing between turns and
+    # is never part of the public answer shape a caller sees.
+    dispute_active = bool(result.pop("_dispute_active", False))
     _persist_trusted_turn(
         session_token,
         str(result.get("store") or ""),
         message,
         str(result.get("answer") or ""),
         latency_ms,
-        escalated=bool(result.get("escalation_flag")),
+        escalated=dispute_active,
     )
     return result
 
@@ -1202,6 +1218,13 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             "tool_results": tool_results,
             "escalation_required": escalation,
             "escalation_flag": escalation,
+            # GAP2, private plumbing: only a genuine DISPUTE (a fresh ``_wants_human`` trigger, or
+            # one carried from a prior turn) is durably remembered for the NEXT turn. A bare
+            # safety_hit (dosing-advice, driving, allergen, interaction, ...) with no dispute
+            # vocabulary must NOT bleed forward and silently escalate an unrelated later question
+            # (regression pinned by ``test_thread_17``) — that stays the existing per-message
+            # safety check, untouched. Stripped before the result reaches any caller.
+            "_dispute_active": escalation_now or carried,
             "safe_next_action": "escalate" if escalation else "answer",
             "safe_suggested_next_action": _suggested_next_action("escalate" if escalation else "answer"),
             "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
@@ -1232,6 +1255,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             "tool_results": tool_results,
             "escalation_required": True,
             "escalation_flag": True,
+            "_dispute_active": escalation_now or carried,  # GAP2 plumbing — see note above
             "safe_next_action": "escalate",
             "safe_suggested_next_action": _suggested_next_action("escalate"),
             "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
@@ -1323,6 +1347,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         "tool_results": tool_results,
         "escalation_required": escalation,
         "escalation_flag": escalation,
+        "_dispute_active": escalation_now or carried,  # GAP2 plumbing — see note above
         "safe_next_action": "escalate" if escalation else "ask_staff",
         "safe_suggested_next_action": _suggested_next_action("escalate" if escalation else "ask_staff"),
         "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
