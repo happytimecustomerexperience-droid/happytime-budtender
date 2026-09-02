@@ -13,6 +13,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from voice.constants import ASSISTANT_MODEL
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -144,7 +146,10 @@ VAPI_SQUAD_ID = os.environ.get("VAPI_SQUAD_ID", "")
 VAPI_PHONE_NUMBER_ID = os.environ.get("VAPI_PHONE_NUMBER_ID", "")
 VAPI_PHONE_NUMBER_STORE_MAP = os.environ.get("VAPI_PHONE_NUMBER_STORE_MAP", "")
 VAPI_VOICE_ID = os.environ.get("VAPI_VOICE_ID", "a3520a8f-226a-428d-9fcd-b0a4711a6829")
-VAPI_ASSISTANT_MODEL = os.environ.get("VAPI_ASSISTANT_MODEL", "gpt-4.1-mini")
+# ADR-024: voice/constants.py is the single code source for the model; this env var is an
+# override for it only — an unset var must fall back to the constant, never to the retired
+# gpt-4.1-mini default (ADR-010).
+VAPI_ASSISTANT_MODEL = os.environ.get("VAPI_ASSISTANT_MODEL", ASSISTANT_MODEL)
 # Webhook auth header names (env-driven; the exact Vapi header is config, not code — 23-SPEC §4.1).
 VAPI_SIGNATURE_HEADER = os.environ.get("VAPI_SIGNATURE_HEADER", "X-Vapi-Signature")
 VAPI_SECRET_HEADER = os.environ.get("VAPI_SECRET_HEADER", "X-Vapi-Secret")

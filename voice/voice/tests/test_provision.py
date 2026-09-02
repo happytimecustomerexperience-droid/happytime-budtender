@@ -149,7 +149,7 @@ def faq_prompt(db):
 @pytest.mark.django_db
 def test_assistant_payload_shape(fake_vapi, faq_prompt):
     """build_assistant_payload emits the right voice / model / transcriber / tool blocks, each
-    ONCE (ADR-011), the single intentional model (ADR-010), the 33-term keyterms, and the
+    ONCE (ADR-011), the single intentional model (ADR-024), the 33-term keyterms, and the
     server + serverMessages contract — with the faq_lookup tool id resolved."""
     # The tool must exist first so the assistant resolves its toolId.
     tool_res = provision.ensure_tool("faq_lookup")
@@ -158,11 +158,11 @@ def test_assistant_payload_shape(fake_vapi, faq_prompt):
     payload, warnings = provision.build_assistant_payload("faq", name="entry_faq")
     assert not warnings  # tool resolved, prompt present → no warnings
 
-    # name + model (ADR-010 single intentional model, never gpt-5.2-chat-latest)
+    # name + model (ADR-024 single intentional model, never gpt-5.2-chat-latest)
     assert payload["name"] == "entry_faq"
     model = payload["model"]
-    assert model["provider"] == "openai"
-    assert model["model"] == "gpt-4.1-mini"
+    assert model["provider"] == "google"
+    assert model["model"] == "gemini-2.5-flash"
     assert "gpt-5.2-chat-latest" not in json.dumps(payload)
     assert model["temperature"] == 0.3
     assert model["maxTokens"] == 250
@@ -197,7 +197,7 @@ def test_assistant_payload_shape(fake_vapi, faq_prompt):
     dumped = json.dumps(payload)
     assert dumped.count('"provider": "cartesia"') == 1
     assert dumped.count('"provider": "deepgram"') == 1
-    assert dumped.count('"provider": "openai"') == 1
+    assert dumped.count('"provider": "google"') == 1
     assert dumped.count('"keyterm"') == 1
 
 

@@ -109,9 +109,9 @@ def test_budtender_payload_emits_voice_model_once(fake_vapi, p1_prompts):
     dumped = json.dumps(payload)
     assert dumped.count('"provider": "cartesia"') == 1
     assert dumped.count('"provider": "deepgram"') == 1
-    assert dumped.count('"provider": "openai"') == 1
+    assert dumped.count('"provider": "google"') == 1
     assert dumped.count('"keyterm"') == 1
-    assert payload["model"]["model"] == "gpt-4.1-mini"  # ADR-010 single model
+    assert payload["model"]["model"] == "gemini-2.5-flash"  # ADR-024 single model
     assert "Koptza" in payload["model"]["messages"][0]["content"]
 
 

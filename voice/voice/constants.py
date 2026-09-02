@@ -69,9 +69,11 @@ DEEPGRAM_TRANSCRIBER = {
     "keyterm": DEEPGRAM_KEYTERMS,  # Vapi/Deepgram field name "keyterm" (the export uses "keyterm")
 }
 
-# ── Model — the ONE intentional model (ADR-010), never the shadowed gpt-5.2-chat-latest ──
-ASSISTANT_PROVIDER = "openai"
-ASSISTANT_MODEL = "gpt-4.1-mini"
+# ── Model — the ONE intentional model (ADR-024 owner override of ADR-010's gpt-4.1-mini →
+# Gemini 2.5 Flash), never the shadowed gpt-5.2-chat-latest. This is the single code source
+# for the assistant model; kb/seed.py imports these two names rather than redefining them.
+ASSISTANT_PROVIDER = "google"
+ASSISTANT_MODEL = "gemini-2.5-flash"
 ASSISTANT_TEMPERATURE = 0.3  # export per-node value (L17)
 ASSISTANT_MAX_TOKENS = 250  # export per-node value (L18); router member can run 200
 

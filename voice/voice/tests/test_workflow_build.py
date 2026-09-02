@@ -33,9 +33,9 @@ def test_structurally_sound(payload):
 
 @pytest.mark.django_db
 def test_one_intentional_model_and_globals_once(payload):
-    """Model is gpt-4.1-mini (never the shadowed gpt-5.2); voice/transcriber/model are workflow-level
-    (emitted once, not per node — ADR-011)."""
-    assert payload["model"]["model"] == "gpt-4.1-mini"
+    """Model is gemini-2.5-flash (ADR-024; never the shadowed gpt-5.2); voice/transcriber/model are
+    workflow-level (emitted once, not per node — ADR-011)."""
+    assert payload["model"]["model"] == "gemini-2.5-flash"
     dumped = json.dumps(payload)
     assert "gpt-5.2-chat-latest" not in dumped
     # No node redefines voice/transcriber/model (they live only at the top level).

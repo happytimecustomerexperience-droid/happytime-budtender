@@ -908,8 +908,8 @@ ENTRY_ROUTER_BODY = (
 
 
 # ── 16c. The budtender persona (P1) — slot-fill + leak-safe suggestions + ONE gated upsell ──
-# ponytail: the JSON's per-category questionnaire is encoded as THIS squad prompt (gpt-4.1-mini
-# already runs the whole flow) and mapped to the suggest_products slots the budtender backend
+# ponytail: the JSON's per-category questionnaire is encoded as THIS squad prompt (the assistant
+# model already runs the whole flow, ADR-024) and mapped to the suggest_products slots the budtender backend
 # already ranks on — no Vapi Workflow (undocumented /workflow API) and no new engine. Upgrade path:
 # if prompt adherence to the long per-category script proves weak in live calls, lift just the
 # budtender branch into a real Vapi Workflow (node-per-question), keeping these same tool calls.

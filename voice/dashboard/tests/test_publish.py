@@ -91,7 +91,7 @@ def test_assistant_payload_shape(fake_vapi, full_squad):
     p = full_squad.objects.get(role="budtender")
     payload, warnings = publish.build_assistant_payload(p)
     assert payload["name"] == "budtender"
-    assert payload["model"]["model"] == "gpt-4.1-mini"  # ADR-010
+    assert payload["model"]["model"] == "gpt-4.1-mini"  # per-row override (fixture sets vapi_model)
     assert payload["model"]["messages"][0]["role"] == "system"
     assert "Koptza" in payload["model"]["messages"][0]["content"]
     assert payload["voice"]["provider"] == "cartesia"
