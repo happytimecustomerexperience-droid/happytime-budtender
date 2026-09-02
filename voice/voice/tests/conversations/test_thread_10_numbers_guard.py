@@ -73,10 +73,16 @@ def test_caller_presses_for_exact_numbers(convo, fake_bt):
     # question a totally unrelated vendor-receiving row (grounded=True, no digits, so Numbers-Guard
     # technically held — but it was still confidently the wrong row). The relevance floor now
     # declines outright; the Numbers-Guard core (no invented figure) still holds via the fallback.
+    # UPDATED 2026-09-01: the KB now has a real ``tax-included`` row ("every price on our menu
+    # already includes all taxes... nothing is added at the register"), whose paraphrases cover
+    # "out the door price" — so this turn is answered instead of declined. That is the honest
+    # answer to what he actually asked, and it is still Numbers-Guard-clean: the row states the
+    # RULE and quotes no figure, so no total is invented for a product he never named a price for.
     t = c.say("okay but what's my out the door total on the Blue Dream if I grab one")
     assert t.tools == ["faq_lookup"]
     assert t.picks == []
-    assert t.grounded is False
+    assert t.grounded is True
+    assert "includes all taxes" in t.answer
     assert not _numbers(t.answer), t.answer
 
     # 4. Now the unit count: "how many are left".

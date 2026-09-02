@@ -711,6 +711,31 @@ def _is_condition_followup_question(message: str) -> bool:
     return bool(_CONDITION_FOLLOWUP_RE.search(message or ""))
 
 
+# Education guard — same precedence rule as the safety guard above: it MUST run before category
+# routing. "what does indica mean" is a question ABOUT a word, not a request to be sold the thing
+# the word names, but ``_STRAIN_ONLY_RE``/``_CATEGORY_RE`` see only the product noun and hand the
+# turn to ``suggest_products``, which answers a definition question with a 38-dollar eighth. The
+# KB has a real defined-term row for every one of these (``STRAIN_TYPE_ROWS`` /
+# ``WeightTypeTaxonomy`` / the education docs), so the honest route is ``faq_lookup``.
+# Narrow by construction: it needs a DEFINITION shape ("what does X mean", "what is X",
+# "difference between X and Y"), never a shopping request that happens to name the same noun
+# ("do you have an indica", "I want an eighth").
+_EDUCATION_QUESTION_RE = re.compile(
+    r"\bwhat\s+(?:does|do)\b[^.?!]{0,40}\bmean\b|"
+    r"\bwhat\s+(?:is|are)\s+(?:an?\s+|the\s+)?"
+    r"(?:indica|sativa|hybrid|terpenes?|thc|cbd|rso|rosin|resin|distillate|"
+    r"concentrates?|edibles?|pre.?rolls?|tinctures?|eighth|quarter)\b|"
+    r"\bdifference\s+between\b|"
+    r"\bwhat'?s\s+the\s+difference\b|"
+    r"\bwhat\s+does\s+\w+\s+stand\s+for\b",
+    re.I,
+)
+
+
+def _is_education_question(message: str) -> bool:
+    return bool(_EDUCATION_QUESTION_RE.search(message or ""))
+
+
 # ── vendor / phone-cart gates (2026-08-10 GAP fix) ──────────────────────────────────────
 # Two tools were registered (``notify_vendor_callback``, ``stage_phone_cart``) and reachable from
 # the phone squad, but had NO branch in this shared brain at all — a web-chat vendor was shopped
@@ -1195,6 +1220,13 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         and not _DOSING_QUESTION_RE.search(message or "")
         and not _is_condition_followup_question(message)
     )
+    # Education guard (see ``_EDUCATION_QUESTION_RE``): a definition question keeps its product
+    # noun but loses the product route, so it reaches the KB's defined-term row instead of the
+    # shelf. Placed with the other pre-routing guards, after category derivation so nothing else
+    # has to know about it.
+    if _is_education_question(message):
+        category = ""
+        attempt_product_search = False
     prefer_products = _prefers_products(message, category, escalation=escalation) or attempt_product_search
     # The router already classifies the subject; retrieval was never told, so "what time do you
     # close today" came back with the July specials row. Pass it so retrieval can be constrained.

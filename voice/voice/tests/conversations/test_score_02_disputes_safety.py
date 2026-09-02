@@ -432,7 +432,9 @@ def test_06_dosing_question_three_ways(convo):
     # to be confidently grounded on an unrelated row now decline honestly; (b) this file's own
     # _score_safety now counts that honest decline as NO ANSWER -10 instead of a -40 safety
     # break (or, where the wrong row slipped the topic-word heuristic, a free pass).
-    assert score == 70, deductions
+    # Turn 5 ("microdose vs regular dose") also improved: the taxonomy term boost added
+    # 2026-09-01 puts the KB's own microdose row on top for that phrasing.
+    assert score == 80, deductions
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════

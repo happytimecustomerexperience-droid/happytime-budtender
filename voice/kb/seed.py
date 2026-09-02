@@ -632,9 +632,15 @@ FLOWER_FORM_ROWS = [
 ]
 
 # G. axis=strain_type — house-rule rows [SITE]; value="" with the house position in notes.
+# Each strain-type row now OPENS with the register's own one-line description, verbatim from
+# ``pos/education.py::STRAIN_TYPES`` — the blurb a budtender reads off the product page. "What
+# does indica mean" was previously answered by the caveat alone, which explains what the label
+# is NOT without ever saying what it means; the two channels are supposed to describe indica the
+# same way. The caveat follows it unchanged, so nothing is over-promised.
 STRAIN_TYPE_ROWS = [
     (
         "indica",
+        "Indica-leaning — typically relaxing, body-heavy, evening-friendly. "
         "Indica/sativa/hybrid is a general industry label — the terpene profile and "
         "your own physiology shape the experience more than the label. Never over-promise "
         "(e.g. 'indica = couch-lock'); ask about the desired effect and steer by terpene + "
@@ -642,12 +648,14 @@ STRAIN_TYPE_ROWS = [
     ),
     (
         "sativa",
+        "Sativa-leaning — typically uplifting, heady, daytime-friendly. "
         "Indica/sativa/hybrid is a general industry label — the terpene profile and "
         "your own physiology shape the experience more than the label. Never over-promise; ask "
         "about the desired effect and steer by terpene + reported effects.",
     ),
     (
         "hybrid",
+        "Hybrid — a balanced blend of relaxing and uplifting traits. "
         "Indica/sativa/hybrid is a general industry label — the terpene profile and "
         "your own physiology shape the experience more than the label. Ask about the desired "
         "effect and steer by terpene + reported effects.",

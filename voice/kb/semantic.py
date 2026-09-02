@@ -248,6 +248,13 @@ def _keyword_fallback(query: str, items: list[tuple[str, str]], row_by_id: dict,
         ):
             if q_tokens & set(_tokens(extra, drop_stop=True)):
                 boost += 1.0
+        # A taxonomy row whose TERM is the very word the caller named ("what does INDICA mean")
+        # is what they asked about; every strain-type row repeats "indica/sativa/hybrid" in its
+        # shared caveat, so raw overlap ties all three and the winner was whichever sorted first
+        # — "what does indica mean" was answered by the hybrid row.
+        term = str(getattr(row, "term", "") or "").strip().lower()
+        if term and term in q_tokens:
+            boost += 2.0
         tiebreak = (getattr(row, "weight", 100) or 100) / 100.0
         scored.append((overlap + boost + tiebreak * 0.001, chunk_id))
     scored.sort(reverse=True)
@@ -326,6 +333,12 @@ def relevant_enough(query: str, row) -> bool:
     chunk_text = row.chunk_text() if hasattr(row, "chunk_text") else str(row)
     overlap = q & _content_words(chunk_text)
     if overlap == q:  # short query, every word of it is in the row
+        return True
+    # A defined-term row IS the answer when the caller names its term ("what does indica mean",
+    # "how big is an eighth") — the definition never repeats the question's other words, so the
+    # word-overlap rules below would reject it.
+    term = str(getattr(row, "term", "") or "").strip().lower()
+    if term and term in q:
         return True
     if len(overlap) < 2:
         return False

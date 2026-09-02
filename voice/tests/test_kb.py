@@ -489,8 +489,9 @@ def test_every_mapped_row_exists():
     from kb import seed
 
     seed.seed_all()
-    # 13 hand-written core FAQs + 40 from the site FAQ page + 2 footer (social + WA warning).
-    assert m.FAQEntry.objects.count() == 55
+    # 14 hand-written core FAQs + 40 from the site FAQ page + 2 footer (social + WA warning).
+    # (14th, added 2026-09-01: ``tax-included`` — the menu price already includes all taxes.)
+    assert m.FAQEntry.objects.count() == 56
     assert m.FAQEntry.objects.filter(key__startswith="site-faq-").count() == 40
     assert m.FAQEntry.objects.filter(key__startswith="footer-").count() == 2
     assert m.PolicyDocument.objects.filter(category__slug="return_policy").count() == 1
