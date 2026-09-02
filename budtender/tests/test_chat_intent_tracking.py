@@ -17,7 +17,10 @@ class ChatIntentTrackingTests(TestCase):
         self.client = Client()
 
     def _post(self, payload):
-        with patch("budtender.views.generate_chat_reply", return_value="ok, here you go"):
+        with patch(
+            "budtender.views.generate_chat_reply_with_source",
+            return_value=("ok, here you go", "brain", ""),
+        ):
             return self.client.post(
                 "/api/v1/chat/message",
                 data=json.dumps(payload),

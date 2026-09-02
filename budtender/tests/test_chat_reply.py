@@ -42,15 +42,16 @@ class ChatReplyTests(TestCase):
         def fake_reply(messages, **kwargs):
             seen.append([(m.role, m.content) for m in messages])
             self.assertEqual(kwargs.get("store"), "yakima")
-            return f"reply {len(seen)}"
+            return (f"reply {len(seen)}", "brain", "")
 
-        with patch("budtender.views.generate_chat_reply", side_effect=fake_reply):
+        with patch("budtender.views.generate_chat_reply_with_source", side_effect=fake_reply):
             first = self._post({"session_token": "s-test", "message": "I like flower"})
             second = self._post({"session_token": "s-test", "message": "something relaxing"})
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 200)
         self.assertEqual(second.json()["message"]["content"], "reply 2")
+        self.assertEqual(second.json()["source"], "brain")
         self.assertNotIn("messages", second.json())
         self.assertEqual(seen[1], [
             ("user", "I like flower"),
@@ -61,7 +62,7 @@ class ChatReplyTests(TestCase):
         self.assertEqual(AnalyticsEvent.objects.filter(event_type="chat_message").count(), 4)
 
     def test_chat_reply_redacts_phoneish_user_message_before_persist(self):
-        with patch("budtender.views.generate_chat_reply", return_value="ok"):
+        with patch("budtender.views.generate_chat_reply_with_source", return_value=("ok", "brain", "")):
             r = self._post({"session_token": "s-pii", "message": "call me at 509 555 1212"})
 
         self.assertEqual(r.status_code, 200)
@@ -77,9 +78,9 @@ class ChatReplyTests(TestCase):
         def fake_reply(messages, **kwargs):
             seen.extend((m.role, m.content) for m in messages)
             self.assertEqual(kwargs.get("store"), "yakima")
-            return "reply"
+            return ("reply", "brain", "")
 
-        with patch("budtender.views.generate_chat_reply", side_effect=fake_reply):
+        with patch("budtender.views.generate_chat_reply_with_source", side_effect=fake_reply):
             r = self._post({"session_token": "s-long-context", "message": "latest turn"})
 
         self.assertEqual(r.status_code, 200)
@@ -88,7 +89,7 @@ class ChatReplyTests(TestCase):
         self.assertEqual(seen[-1], ("user", "latest turn"))
 
     def test_chat_reply_normalizes_untrusted_attribution(self):
-        with patch("budtender.views.generate_chat_reply", return_value="hello"):
+        with patch("budtender.views.generate_chat_reply_with_source", return_value=("hello", "brain", "")):
             r = self._post({
                 "session_token": "s-attrib",
                 "message": "hello",
@@ -105,24 +106,70 @@ class ChatReplyTests(TestCase):
         self.assertEqual(event.channel, "chat")
 
     def test_gemini_unavailable_falls_back_without_500(self):
-        with patch("budtender.views.generate_chat_reply", side_effect=GeminiChatUnavailable("missing")):
+        with patch(
+            "budtender.views.generate_chat_reply_with_source",
+            side_effect=GeminiChatUnavailable("missing"),
+        ):
             r = self._post({"session_token": "s-fallback", "message": "hello"})
 
         self.assertEqual(r.status_code, 200)
         body = r.json()
-        self.assertEqual(body["source"], "fallback")
+        self.assertEqual(body["source"], "unavailable")
         self.assertTrue(body["message"]["content"])
         session = ChatSession.objects.get(session_token="s-fallback")
         self.assertEqual(list(session.messages.values_list("role", flat=True)), ["user", "assistant"])
 
+    def test_gemini_fallback_path_reports_fallback_source_and_logs_warning(self):
+        with patch(
+            "budtender.gemini_chat._voice_chat", return_value=None
+        ), patch(
+            "budtender.gemini_chat._voice_grounding", return_value=None
+        ), patch(
+            "budtender.gemini_chat._client"
+        ) as fake_client:
+            fake_client.return_value.models.generate_content.return_value = SimpleNamespace(
+                text="Vertex answered this one."
+            )
+            with self.assertLogs("budtender.gemini_chat", level="WARNING") as logs:
+                r = self._post({"session_token": "s-vertex-fallback", "message": "hello"})
+
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["source"], "fallback")
+        self.assertTrue(any("chat fallback" in line for line in logs.output))
+        event = AnalyticsEvent.objects.get(
+            session_token="s-vertex-fallback", props__role="assistant"
+        )
+        self.assertEqual(event.props["source"], "fallback")
+
     def test_chat_reply_scrubs_forbidden_business_terms(self):
-        with patch("budtender.views.generate_chat_reply", return_value="The cost and margin are secret."):
+        with patch(
+            "budtender.views.generate_chat_reply_with_source",
+            return_value=("The cost and margin are secret.", "brain", ""),
+        ):
             r = self._post({"session_token": "s-leak", "message": "hello"})
 
         self.assertEqual(r.status_code, 200)
         body = json.dumps(r.json()).lower()
         self.assertNotIn("cost", body)
         self.assertNotIn("margin", body)
+
+    def test_chat_reply_trusts_brain_intent_over_regex_classifier(self):
+        # "hi" alone classifies as greeting_other via the regex fallback; the brain
+        # is trusted instead when it answered and returned its own intent.
+        with patch(
+            "budtender.views.generate_chat_reply_with_source",
+            return_value=("Yakima is open until 11 PM.", "brain", "hours_location"),
+        ):
+            r = self._post({"session_token": "s-brain-intent", "message": "hi"})
+
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["intent"], "hours_location")
+        event = AnalyticsEvent.objects.get(session_token="s-brain-intent", props__role="user")
+        self.assertEqual(event.props["intent"], "hours_location")
+        session = ChatSession.objects.get(session_token="s-brain-intent")
+        self.assertEqual(session.primary_intent, "hours_location")
 
     def test_voice_grounding_uses_backend_token_and_store(self):
         calls = []
@@ -265,6 +312,31 @@ class ChatReplyTests(TestCase):
         self.assertEqual(body["sessions"][0]["message_count"], 2)
         self.assertEqual([m["role"] for m in body["sessions"][0]["messages"]], ["user", "assistant"])
         self.assertNotIn("phone", json.dumps(body).lower())
+
+    def test_chat_history_reports_fallback_count(self):
+        session = ChatSession.objects.create(
+            session_token="s-fb-history", location_slug="yakima", channel="chat"
+        )
+        ChatMessage.objects.create(session=session, role="user", content="hello")
+        ChatMessage.objects.create(session=session, role="assistant", content="hi there")
+        AnalyticsEvent.objects.create(
+            session_token="s-fb-history", event_type="chat_message",
+            props={"role": "assistant", "source": "fallback"},
+        )
+        AnalyticsEvent.objects.create(
+            session_token="s-fb-history", event_type="chat_message",
+            props={"role": "assistant", "source": "brain"},
+        )
+
+        r = self.client.post(
+            "/api/v1/chat/history",
+            data=json.dumps({"session_token": "s-fb-history"}),
+            content_type="application/json",
+            **self._auth(),
+        )
+
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["fallback_count"], 1)
 
     def test_chat_history_returns_bounded_full_transcript(self):
         session = ChatSession.objects.create(session_token="s-long", location_slug="yakima", channel="chat")

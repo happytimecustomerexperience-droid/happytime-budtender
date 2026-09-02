@@ -49,7 +49,10 @@ def run_scenarios(scenarios: list[dict], *, token: str, prefix: str = "test-") -
     `token` must equal settings.HHT_BACKEND_TOKEN."""
     client = Client()
     results: list[dict] = []
-    with patch("budtender.views.generate_chat_reply", return_value=_STUB_REPLY):
+    with patch(
+        "budtender.views.generate_chat_reply_with_source",
+        return_value=(_STUB_REPLY, "brain", ""),
+    ):
         for sc in scenarios:
             st = f"{prefix}{sc['id']}"
             turns = []

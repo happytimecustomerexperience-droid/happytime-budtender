@@ -22,7 +22,7 @@ from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
                      SuggestedProduct)
 from .pairing import pair_for
 from . import facets, live_stock
-from .gemini_chat import GeminiChatUnavailable, generate_chat_reply
+from .gemini_chat import GeminiChatUnavailable, generate_chat_reply_with_source
 from .intents import classify_intent, conversation_breakdown, intent_breakdown
 from .ranking import MIN_STOCK, W_ANON, W_KNOWN, rank_products
 from .serializers import (customer_detail, customer_row, profile_summary,
@@ -421,9 +421,21 @@ class ChatReplyView(APIView):
         user_msg = ChatMessage.objects.create(
             session=session, role="user", content=_redact_phoneish(raw_message)[:4000]
         )
-        # Classify the turn (deterministic; works even when the voice brain is down)
-        # and record it. Escalation is sticky and dominates the conversation intent.
-        intent = classify_intent(raw_message)
+
+        history = list(session.messages.order_by("ts", "id"))
+        try:
+            reply, source, brain_intent = generate_chat_reply_with_source(history, store=session.location_slug)
+            reply = _safe_chat_text(reply)
+        except GeminiChatUnavailable:
+            # ponytail: generic fallback until Gemini auth is configured; upgrade path is env config.
+            reply = "I can help with product questions, store info, or finding something on the menu. What are you shopping for today?"
+            source = "unavailable"
+            brain_intent = ""
+
+        # Classify the turn — trust the brain's own classification when it answered,
+        # so the offline regex in intents.py is only ever the fallback path.
+        # Escalation is sticky and dominates the conversation intent.
+        intent = classify_intent(raw_message, {"intent": brain_intent} if brain_intent else None)
         if _promote_intent(session.primary_intent, intent):
             session.primary_intent = intent
             session.save(update_fields=["primary_intent"])
@@ -435,15 +447,6 @@ class ChatReplyView(APIView):
             event_type="chat_message",
             props={"role": "user", "message_id": user_msg.id, "intent": intent},
         )
-
-        history = list(session.messages.order_by("ts", "id"))
-        try:
-            reply = _safe_chat_text(generate_chat_reply(history, store=session.location_slug))
-            source = "gemini"
-        except GeminiChatUnavailable:
-            # ponytail: generic fallback until Gemini auth is configured; upgrade path is env config.
-            reply = "I can help with product questions, store info, or finding something on the menu. What are you shopping for today?"
-            source = "fallback"
 
         assistant_msg = ChatMessage.objects.create(session=session, role="assistant", content=reply)
         AnalyticsEvent.objects.create(
@@ -498,7 +501,13 @@ class ChatHistoryView(APIView):
                 "last_active_at": session.last_active_at.isoformat(),
                 "messages": [public_message(m) for m in messages[-message_limit:]],
             })
-        return Response({"ok": True, "sessions": rows})
+        fallback_count = AnalyticsEvent.objects.filter(
+            event_type="chat_message",
+            props__role="assistant",
+            props__source="fallback",
+            session_token__in=[r["session_token"] for r in rows],
+        ).count()
+        return Response({"ok": True, "sessions": rows, "fallback_count": fallback_count})
 
 
 class CustomerListView(APIView):
