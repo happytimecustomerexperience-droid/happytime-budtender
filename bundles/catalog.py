@@ -40,11 +40,11 @@ STORES = {
         "street": "200 Suzanne Ln",
         "city": "Mt Vernon, WA 98273",
         "phone": "(360) 488-2923",
-        # Mount Vernon is the one store that is NOT the same seven days a week. It
-        # read "9 AM – 10 PM daily" here while happytimeweed.com said Fri–Sat runs
-        # to 11 — an hour in which someone holding a reservation would have been
-        # told by this page that we were already shut.
-        "hours": "Sun–Thu 9 AM – 10 PM · Fri–Sat 9 AM – 11 PM",
+        # 2026-09-01: happytimeweed.com data/store-locations.json and the voice KB both say
+        # 9–10 seven days a week; the Fri–Sat-to-11 line here was the odd one out and the
+        # storefront was the only channel telling shoppers the store stayed open later.
+        # `voice/manage.py check_store_facts` now fails on any drift between the three.
+        "hours": "9 AM – 10 PM daily",
     },
     "pullman": {
         "street": "5602 WA-270",
