@@ -31,6 +31,7 @@ from django.conf import settings
 
 from core.services import vapi
 from voice import constants as C
+from voice import safety_copy as S
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,23 @@ _AGE_GATE_SAFETY = (
     "- For retail/product help, if the caller says they are under twenty-one or will not confirm "
     "they are twenty-one or older, do not search, suggest, quote, reserve, or help purchase "
     "cannabis. You may answer general store questions only.\n"
+)
+
+# Owner-approved (31-OWNER-SIGNOFF-safety-copy.md), code-owned like the two blocks above — say
+# these exactly, verbatim from voice/safety_copy.py, so the phone agent speaks the same sentence
+# text chat does (voice/chat.py's four answer helpers build from the same constants).
+_OWNER_SAFETY_LINES = (
+    "\nOWNER-APPROVED SAFETY LINES (say these exactly, then offer to connect a team member):\n"
+    f'- A child or pet ate cannabis, a possible overdose, or someone unresponsive: "{S.POISON_EMERGENCY.strip()}"\n'
+    "- Driving, allergens, dosing for a condition, or mixing with medication: "
+    f'"{S.CANNOT_ANSWER_SAFELY.strip()}"\n'
+    "{under_21}"
+    f'- A return/refund dispute you cannot resolve: "{S.DISPUTE.strip()}"\n'
+    f'- No deal is currently posted: "{S.NO_CURRENT_SPECIALS.strip()}"\n'
+    f'- The knowledge base has no confident answer: "{S.FAQ_FALLBACK.strip()}"\n'
+)
+_OWNER_SAFETY_UNDER_21_LINE = (
+    f'- Caller is under 21 or buying for someone who is: "{S.UNDER_21.strip()}"\n'
 )
 
 
@@ -168,6 +186,8 @@ def _with_runtime_safety(body: str, role: str) -> str:
     safety = _IMMUTABLE_SAFETY
     if role != "vendor":
         safety += _AGE_GATE_SAFETY
+    under_21 = "" if role == "vendor" else _OWNER_SAFETY_UNDER_21_LINE
+    safety += _OWNER_SAFETY_LINES.format(under_21=under_21)
     if "IMMUTABLE RUNTIME SAFETY" in body:
         return body
     return f"{body.rstrip()}{safety}"
@@ -266,6 +286,15 @@ def _resolve_tool_ids(role: str, warnings: list[str], prompt=None) -> tuple[list
     return ids, ok
 
 
+def entry_greeting() -> str:
+    """The active entry_router row's ``first_message`` (owner-editable), or "" if unset. Shared by
+    ``/api/voice/persona`` (website chat) and voice.evals.adapters — the SAME opener as the phone."""
+    from kb.models import AgentPrompt
+
+    prompt = AgentPrompt.objects.filter(role="entry_router", is_active=True).first()
+    return (getattr(prompt, "first_message", "") or "").strip() if prompt else ""
+
+
 def build_assistant_payload(role: str, *, name: str | None = None) -> tuple[dict, list[str]]:
     """The full ``POST/PATCH /assistant`` body for a member (§4.3). Voice/transcriber/model/server
     are emitted ONCE each (ADR-011). The system prompt comes from ``AgentPrompt(role=…).body``.
@@ -323,7 +352,11 @@ def build_assistant_payload(role: str, *, name: str | None = None) -> tuple[dict
     # firstMessage, which Vapi renders as dead SILENCE on transfer (the bug the owner heard).
     if role == "entry_router":
         payload["firstMessageMode"] = "assistant-speaks-first"
-        payload["firstMessage"] = C.ENTRY_FIRST_MESSAGE
+        first_message = (getattr(prompt, "first_message", "") or "").strip()
+        if first_message:
+            payload["firstMessage"] = first_message
+        else:
+            warnings.append("entry_router has no first_message")
     else:
         payload["firstMessageMode"] = "assistant-speaks-first-with-model-generated-message"
     return payload, warnings

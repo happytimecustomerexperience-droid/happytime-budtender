@@ -84,6 +84,58 @@ Stated plainly so the gaps are yours to weigh, not hidden:
 
 ---
 
+## 3. 2026-09-02 additions (awaiting approval)
+
+The lines below already ship in text chat (`voice/voice/chat.py`) or the FAQ tool
+(`voice/voice/tools/faq.py`) and now also live as named constants in `voice/voice/safety_copy.py`
+so the phone agent's provisioned prompt (`voice/voice/provision.py::_with_runtime_safety`) speaks
+the identical sentence.
+
+**`UNDER_21`** — caller is under 21, or won't confirm, or is buying for someone who is:
+
+> "We can only sell to customers who are 21 or older with a valid ID, so I can't put an order
+> together or recommend anything here. I'm still happy to answer general questions about the
+> store."
+
+**`NO_CURRENT_SPECIALS`** — the KB holds no `StoreFact(kind="special")` row valid today:
+
+> "We don't have any specials posted right now. Our deals change month to month, so a budtender
+> in store can tell you what's running today."
+
+**The `specials` FAQ row** (`voice/kb/seed.py`, evergreen pointer — not a safety_copy constant,
+quoted here for completeness since it is the sibling of `NO_CURRENT_SPECIALS`):
+
+> "Our deals change month to month. Tell me which store you're shopping at and I'll tell you what's
+> running right now, or ask a budtender in store and they'll walk you through the current offers."
+
+**The three `_stock_check_reply` lines** (`voice/voice/chat.py`, not moved to `safety_copy.py` —
+templated with live tool output, not fixed sentences):
+
+> "I can't confirm that specific item is in stock right now. A team member can check the shelf for
+> you if you share the best way to reach you."
+
+> "Yes — the {item} is {band} at the moment."
+
+> "The {item} isn't showing as in stock right now. I can help you find something similar."
+
+**The `_pair_upsell_reply` no-offer line** (`voice/voice/chat.py`, spoken when `pair_upsell`'s own
+strength gate says stay quiet):
+
+> "Nothing jumps out as a natural add-on for that one. Tell me what else you're after and I'll take
+> a look."
+
+Voice now speaks §1/§2/§3 verbatim via the provisioned prompt (voice/voice/safety_copy.py);
+approving here approves every channel.
+
+**Open question:** the text channel does not yet say "your doctor or pharmacist" for medical
+questions, while the voice prompt's `NO_MEDICAL_CLAIMS` line does. Owner's call whether text should
+match, or voice should be relaxed to match text.
+
+- [ ] **Approved as written**
+- [ ] **Approved with edits:** _______________________________________________
+
+---
+
 ## Who should review this
 
 The wording is conservative enough that I do not think it needs a lawyer. But the **ingestion**

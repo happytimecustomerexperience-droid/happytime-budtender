@@ -49,6 +49,7 @@ import re
 import time
 
 from voice import recognition, vendor_flow
+from voice.safety_copy import CANNOT_ANSWER_SAFELY, DISPUTE, POISON_EMERGENCY, UNDER_21
 from voice.tools import dispatch
 
 _HUMAN_RE = re.compile(
@@ -1205,11 +1206,7 @@ def _escalation_answer(store: str, phone: str) -> str:
     """The un-grounded dispute reply. Personalized through ``_staff_followup_hint`` — the previous
     hardcoded string dropped store/phone entirely, so a caller who had just read out her callback
     number was never told it had been taken down."""
-    return (
-        "I'm sorry that happened. I can't confirm a return or refund outcome from the current "
-        "Happy Time knowledge base, but I can get the store team involved. "
-        + _staff_followup_hint(store, phone)
-    )
+    return DISPUTE + _staff_followup_hint(store, phone)
 
 
 # NEW COPY — REQUIRES OWNER APPROVAL. The generic _escalation_answer ("I can't confirm a return or
@@ -1223,10 +1220,7 @@ def _escalation_answer(store: str, phone: str) -> str:
 # can't answer that one and hands the caller to a person. Does not touch ``_poison_emergency_answer``
 # (already owner-flagged, ingestion-specific) or ``_escalation_answer`` (genuine dispute copy).
 def _cannot_answer_safely_answer(store: str, phone: str) -> str:
-    return (
-        "I'm not able to answer that safely myself — I'll get a person on it who can help. "
-        + _staff_followup_hint(store, phone)
-    )
+    return CANNOT_ANSWER_SAFELY + _staff_followup_hint(store, phone)
 
 
 # NEW COPY — REQUIRES OWNER APPROVAL. A written restatement of the voice prompt's own
@@ -1241,18 +1235,11 @@ def _cannot_answer_safely_answer(store: str, phone: str) -> str:
 # but spoke ``_escalation_answer``'s returns-and-refunds dispute copy, a non-sequitur for a caller
 # who was never disputing anything. Escalation semantics are unchanged — only the words.
 def _under_21_answer(store: str, phone: str) -> str:
-    return (
-        "We can only sell to customers who are 21 or older with a valid ID, so I can't put an "
-        "order together or recommend anything here. I'm still happy to answer general questions "
-        "about the store."
-    )
+    return UNDER_21
 
 
 def _poison_emergency_answer(store: str, phone: str) -> str:
-    return (
-        "This could be an emergency. Please contact your vet, doctor, or emergency services right "
-        "away — I'm not able to advise on what to do. " + _staff_followup_hint(store, phone)
-    )
+    return POISON_EMERGENCY + _staff_followup_hint(store, phone)
 
 
 def _normalize_suggest_picks(picks, category: str) -> list[dict]:

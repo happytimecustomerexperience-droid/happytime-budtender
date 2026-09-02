@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import re
 
+from voice.safety_copy import FAQ_FALLBACK as _FALLBACK
 from voice.tools import register
 
 logger = logging.getLogger(__name__)
@@ -152,8 +153,6 @@ def _has_privacy_policy() -> bool:
     return PolicyDocument.objects.filter(
         is_active=True, category__slug__icontains="privacy"
     ).exists()
-
-_FALLBACK = "I'm not certain on that one — let me get a team member who can help."
 
 # Map a KB model class name to the stable ``kind`` string surfaced as a source.
 _KIND_BY_MODEL = {

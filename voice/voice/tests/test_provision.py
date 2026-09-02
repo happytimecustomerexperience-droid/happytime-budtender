@@ -18,6 +18,7 @@ import pytest
 from core.services import vapi
 from voice import constants as C
 from voice import provision
+from voice import safety_copy as S
 
 
 # ── a tiny in-memory fake of the Vapi REST surface (record/replay, no network) ─
@@ -233,6 +234,41 @@ def test_vendor_payload_gets_safety_without_retail_age_gate(fake_vapi, db):
     assert not [w for w in warnings if w.startswith("tool not provisioned")]
     assert "IMMUTABLE RUNTIME SAFETY" in body
     assert "under twenty-one" not in body
+
+
+@pytest.mark.django_db
+def test_faq_prompt_carries_every_owner_safety_line_verbatim(fake_vapi, faq_prompt):
+    """The provisioned faq prompt speaks the exact owner-approved sentences from
+    voice/safety_copy.py — the same constants voice/chat.py's answer helpers use for text."""
+    provision.ensure_tool("faq_lookup")
+    payload, warnings = provision.build_assistant_payload("faq", name="entry_faq")
+    body = payload["model"]["messages"][0]["content"]
+
+    assert not warnings
+    assert S.POISON_EMERGENCY.strip() in body
+    assert S.CANNOT_ANSWER_SAFELY.strip() in body
+    assert S.UNDER_21.strip() in body
+    assert S.DISPUTE.strip() in body
+    assert S.NO_CURRENT_SPECIALS.strip() in body
+    assert S.FAQ_FALLBACK.strip() in body
+
+
+@pytest.mark.django_db
+def test_vendor_prompt_gets_owner_safety_lines_without_under_21(fake_vapi, db):
+    """Vendor already skips the retail age gate, so it gets the owner safety block minus the
+    under-21 line."""
+    from kb.models import AgentPrompt
+
+    AgentPrompt.objects.create(role="vendor", body="Vendor transfer.", is_active=True)
+    provision.ensure_tool("notify_vendor_callback")
+
+    payload, warnings = provision.build_assistant_payload("vendor", name="vendor")
+    body = payload["model"]["messages"][0]["content"]
+
+    assert not [w for w in warnings if w.startswith("tool not provisioned")]
+    assert S.POISON_EMERGENCY.strip() in body
+    assert S.DISPUTE.strip() in body
+    assert S.UNDER_21.strip() not in body
 
 
 @pytest.mark.django_db

@@ -128,7 +128,11 @@ def test_one_assistant_error_does_not_abort_others(fake_vapi, full_squad, monkey
     real_patch = fake_vapi.patch_assistant
 
     def boom(_id, body):
-        if "budtender" in json.dumps(body).lower():
+        # Match the assistant's own ``name`` field, not a substring search of the whole body —
+        # the owner-approved safety block (voice/safety_copy.py NO_CURRENT_SPECIALS) now mentions
+        # "budtender" in every role's prompt text, so a body-wide substring match no longer
+        # isolates the budtender assistant specifically.
+        if body.get("name") == "budtender":
             raise vapi.VapiError("Vapi PATCH /assistant → HTTP 400", status=400)
         return real_patch(_id, body)
 
