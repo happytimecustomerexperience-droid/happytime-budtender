@@ -44,6 +44,7 @@ AGENT_ROLE_CHOICES = [
     ("faq", "FAQ"),
     ("vendor", "Vendor"),
     ("escalation", "Escalation"),
+    ("written", "Website chat (written)"),
 ]
 
 
@@ -332,6 +333,9 @@ class AgentPrompt(models.Model):
 
     role = models.CharField(max_length=32, choices=AGENT_ROLE_CHOICES, unique=True)
     body = models.TextField()
+    # entry_router's fixed phone-call opener (firstMessage); owner-editable so the website chat
+    # can show the same greeting via /api/voice/persona (see provision.entry_greeting()).
+    first_message = models.TextField(blank=True)
     # Vapi surface (the P4 voice fields, added up front).
     # P6: model + voice are now per-row + provider-aware (the dashboard edit reaches Vapi). The
     # provider strings are Vapi's: model_provider ∈ {google, openai, anthropic, …}; voice_provider

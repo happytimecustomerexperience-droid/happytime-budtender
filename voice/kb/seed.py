@@ -853,6 +853,36 @@ HAPPY_TIME_TONE = (
     "you sound like a trusted neighbor, never a hard sell."
 )
 
+# The fixed opener the entry member speaks first (firstMessageMode=assistant-speaks-first). Owner-
+# editable via the dashboard (AgentPrompt.first_message on the entry_router row); provision.py
+# reads it fresh for `firstMessage`, and the website shows the same line via /api/voice/persona
+# (moved from voice.constants.ENTRY_FIRST_MESSAGE so the owner can edit it in one place).
+ENTRY_FIRST_MESSAGE = (
+    "Welcome to Happy Time! I can help you pick out flower, carts, edibles, concentrates, or "
+    "tinctures, answer questions about our hours, deals, payment, or returns, or get you over to "
+    "the team — what can I do for you today?"
+)
+
+# ── The written (website chat) persona — same tone/rules, phrased for text not phone ──────────
+# NOT a squad member (no Vapi assistant): the website's Vertex fallback reads this row via
+# /api/voice/persona. provision.py's EXTRA_MEMBER_ROLES / dashboard/publish.py's MEMBER_ROLES
+# deliberately omit "written" so the provisioner and publish path never create an assistant for it.
+WRITTEN_CHANNEL_ADDENDUM = (
+    "\n\nYou are answering a WEBSITE CHAT message, not a phone call — reply in short written "
+    "paragraphs, not spoken sentences. Never use phone-call phrasing ('give us a call', 'are you "
+    "still there?', reading numbers out as words) — write prices, weights, and ratios normally "
+    "(e.g. '$16.34', '3.5g', '1:1'). The same grounding and safety rules apply: answer only from "
+    "the tools, never invent a price, hour, product, or dose.\n"
+)
+
+WRITTEN_SPEAKING_RULES = (
+    "\n\nWRITING STYLE:\n"
+    "  - Keep replies short — a few sentences or a short list, not a wall of text.\n"
+    "  - Use plain numerals and units ('$16.34', '3.5g', '24% THC', '1:1') — do not spell numbers "
+    "out as words.\n"
+    "  - No emojis, no markdown headers; a short bullet list is fine for multiple picks.\n"
+)
+
 # ── 16. The persona AgentPrompt (§8.8) — entry_faq / role="faq" ───────────────
 
 FAQ_PERSONA_BODY = (
@@ -1139,6 +1169,11 @@ def seed_agent_prompts() -> int:
         "entry_router": {
             "body": ENTRY_ROUTER_BODY,
             "tool_names": ["faq_lookup"],
+            "first_message": ENTRY_FIRST_MESSAGE,
+        },
+        "written": {
+            "body": HAPPY_TIME_TONE + WRITTEN_CHANNEL_ADDENDUM,
+            "tool_names": [],
         },
         "budtender": {
             "body": BUDTENDER_BODY,
@@ -1154,7 +1189,8 @@ def seed_agent_prompts() -> int:
         },
     }
     for role, data in rows.items():
-        body = data["body"] + SPEAKING_RULES + NO_MEDICAL_CLAIMS
+        speaking_rules = WRITTEN_SPEAKING_RULES if role == "written" else SPEAKING_RULES
+        body = data["body"] + speaking_rules + NO_MEDICAL_CLAIMS
         if role != "vendor":  # vendor is B2B — deliberately no 21+ gate
             body += UNDER_21_DECLINE
         # ponytail: seed sets the provider DEFAULTS; a dashboard edit overrides per-row and is the
@@ -1170,6 +1206,7 @@ def seed_agent_prompts() -> int:
                 "voice_id": VOICE_ID,
                 "tool_names": data["tool_names"],
                 "is_active": True,
+                "first_message": data.get("first_message", ""),
             },
         )
     return len(rows)

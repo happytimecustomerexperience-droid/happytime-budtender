@@ -37,6 +37,10 @@
     </div>
     <label><span class="lt">Voice settings (JSON — ElevenLabs: stability, similarityBoost, style, useSpeakerBoost, model)</span>
       <textarea name="voice_settings" rows="3" placeholder='{"model":"eleven_flash_v2_5","stability":0.5,"similarityBoost":0.75}'>{{ p.voice_settings_json }}</textarea></label>
+    {% if p.role == 'entry_router' %}
+    <label><span class="lt">Greeting (firstMessage) — also shown as the website chat's opening line</span>
+      <textarea name="first_message" rows="2">{{ p.first_message }}</textarea></label>
+    {% endif %}
     <label><span class="lt">System prompt</span><textarea name="body" rows="6">{{ p.body }}</textarea></label>
     <label class="row" style="gap:6px"><input type="checkbox" name="is_active" style="width:auto" {% if p.is_active %}checked{% endif %}> Active</label>
     <div class="row between">

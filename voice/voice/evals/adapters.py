@@ -188,10 +188,10 @@ def ask_voice(question: str, *, store: str, max_rounds: int = 4) -> Answer:
     ctx = {"call_id": f"sim-{uuid.uuid4().hex[:12]}", "store": store, "caller_number": ""}
     # A real call has already opened with the greeting and the 21+ confirmation before the caller
     # asks anything, so seed that exchange — otherwise every answer is "are you twenty-one?".
-    from voice.constants import ENTRY_FIRST_MESSAGE
+    from voice.provision import entry_greeting
 
     contents = [
-        types.Content(role="model", parts=[types.Part(text=ENTRY_FIRST_MESSAGE)]),
+        types.Content(role="model", parts=[types.Part(text=entry_greeting())]),
         types.Content(role="user", parts=[types.Part(text="hi, yes I'm over twenty-one")]),
         types.Content(role="model", parts=[types.Part(text="Great, thanks. What can I help you with?")]),
         types.Content(role="user", parts=[types.Part(text=question)]),
@@ -230,7 +230,7 @@ def ask_voice(question: str, *, store: str, max_rounds: int = 4) -> Answer:
 _BRIDGE = r"""
 import json, os, sys
 sys.path.insert(0, os.environ["EVAL_REPO_ROOT"])
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
+os.environ["DJANGO_SETTINGS_MODULE"] = "core.settings"  # the parent is the VOICE project
 os.environ.setdefault("SQL_ENGINE", "django.db.backends.sqlite3")
 os.environ.setdefault("SQL_DATABASE", ":memory:")
 import django
@@ -255,7 +255,41 @@ print(json.dumps(out))
 """
 
 
+def _ask_web_http(question: str, *, store: str, base: str) -> Answer:
+    """The deployed website API (`EVAL_WEB_URL`, e.g. https://budtender-api.happytimeweed.com):
+    start a session, send one message, read back the reply and which path answered it. This is
+    the real production hop — brain vs fallback is whatever the server decided."""
+    import requests
+
+    token = os.environ.get("HHT_BACKEND_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    started = time.monotonic()
+    try:
+        s = requests.post(f"{base}/api/v1/chat/session/start", json={"location": store, "channel": "chat"},
+                          headers=headers, timeout=(5, 30))
+        s.raise_for_status()
+        session_token = s.json().get("session_token", "")
+        r = requests.post(f"{base}/api/v1/chat/message",
+                          json={"session_token": session_token, "message": question, "location": store},
+                          headers=headers, timeout=(5, 60))
+        r.raise_for_status()
+        data = r.json()
+    except Exception as exc:  # noqa: BLE001
+        return Answer(channel="web", text="", error=f"{type(exc).__name__}: {exc}"[:300],
+                      latency_ms=int((time.monotonic() - started) * 1000))
+    msg = data.get("message") or {}
+    return Answer(
+        channel="web", text=str(msg.get("content") or ""), source=str(data.get("source") or ""),
+        latency_ms=int((time.monotonic() - started) * 1000), meta={"intent": data.get("intent", "")},
+    )
+
+
 def _ask_web(question: str, *, store: str, force_fallback: bool) -> Answer:
+    base = os.environ.get("EVAL_WEB_URL", "").rstrip("/")
+    if base:
+        if force_fallback:  # the deployed server decides the path; it can't be forced from here
+            return Answer(channel="web-fallback", text="", applicable=False)
+        return _ask_web_http(question, store=store, base=base)
     env = dict(os.environ)
     env.update(
         EVAL_REPO_ROOT=str(REPO_ROOT),

@@ -171,9 +171,11 @@ def build_workflow_payload() -> dict:
 
     # Entry: greet (list the menu), capture intent->category. Then ask the store (intent first, store
     # second — the owner's rule). Cartridge routes through the concentrate branch.
+    from voice.provision import entry_greeting
+
     welcome = _conv(
         "welcome",
-        C.ENTRY_FIRST_MESSAGE,
+        entry_greeting(),
         {"category": ["flower", "concentrate", "cartridge", "edible", "tincture"]},
         is_start=True,
     )

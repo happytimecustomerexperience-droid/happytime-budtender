@@ -77,15 +77,6 @@ ASSISTANT_MODEL = "gemini-2.5-flash"
 ASSISTANT_TEMPERATURE = 0.3  # export per-node value (L17)
 ASSISTANT_MAX_TOKENS = 250  # export per-node value (L18); router member can run 200
 
-# The fixed opener the entry member speaks first (firstMessageMode=assistant-speaks-first). Set as
-# `firstMessage` on the entry_router payload so every call opens with the Happy Time greeting
-# (deterministic — no model variance) and we DON'T ask the store until it matters.
-ENTRY_FIRST_MESSAGE = (
-    "Welcome to Happy Time! I can help you pick out flower, carts, edibles, concentrates, or "
-    "tinctures, answer questions about our hours, deals, payment, or returns, or get you over to "
-    "the team — what can I do for you today?"
-)
-
 # ── serverMessages — webhook events voice/webhooks.py handles (§4.4) ──────────
 # NOTE: "assistant-request" is NOT a valid Vapi serverMessage (rejected with 400);
 # assistants here are pre-provisioned squad members, so it isn't needed.

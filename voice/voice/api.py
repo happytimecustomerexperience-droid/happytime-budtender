@@ -8,7 +8,7 @@ import json
 from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 from voice.chat import answer_text_chat
 from voice.tools import dispatch
@@ -65,3 +65,35 @@ def text_chat(request):
     result = answer_text_chat(_body(request))
     status = 200 if result.get("ok") else 400
     return JsonResponse(result, status=status)
+
+
+@csrf_exempt
+@require_GET
+def persona(request):
+    """The owner-editable agent persona for the website chat's Vertex fallback (root project's
+    ``budtender/gemini_chat.py::fetch_persona``). Bearer-gated exactly like ``text_chat``. The
+    "written" AgentPrompt row is NOT a squad member — it carries the same tone/rules as the phone
+    persona, phrased for text, and is never provisioned as a Vapi assistant."""
+    if not _authorized(request):
+        return JsonResponse({"ok": False, "error": "unauthorized"}, status=401)
+
+    from kb.models import AgentPrompt
+    from voice.provision import _with_runtime_safety, entry_greeting
+
+    written = AgentPrompt.objects.filter(role="written", is_active=True).first()
+    if not written:
+        return JsonResponse({"ok": False}, status=404)
+
+    entry = AgentPrompt.objects.filter(role="entry_router", is_active=True).first()
+    updated_at = written.updated_at
+    if entry and entry.updated_at > updated_at:
+        updated_at = entry.updated_at
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "written_system_instruction": _with_runtime_safety(written.body, "written"),
+            "greeting": entry_greeting(),
+            "updated_at": updated_at.isoformat(),
+        }
+    )

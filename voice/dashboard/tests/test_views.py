@@ -647,3 +647,38 @@ def test_store_fact_form_saves_the_window_and_rejects_a_backwards_one():
                                   "valid_from": "", "valid_to": ""})
     assert undated.is_valid(), undated.errors
     assert undated.save().is_current(), "a row with no window always applies"
+
+
+@pytest.mark.django_db
+def test_agent_save_persists_entry_router_first_message(client_staff):
+    from kb.models import AgentPrompt
+
+    prompt = AgentPrompt.objects.create(
+        role="entry_router",
+        body="You are Koptza. Confirm 21+. Classify.",
+        first_message="Old greeting.",
+        is_active=True,
+    )
+    resp = client_staff.post(
+        reverse("dash-agent-save", args=[prompt.pk]),
+        {
+            "body": prompt.body,
+            "first_message": "Welcome to Happy Time! New greeting.",
+            "is_active": "on",
+        },
+    )
+    assert resp.status_code == 200
+    prompt.refresh_from_db()
+    assert prompt.first_message == "Welcome to Happy Time! New greeting."
+
+
+@pytest.mark.django_db
+def test_agent_config_page_shows_the_written_role(client_staff):
+    from kb.models import AgentPrompt
+
+    AgentPrompt.objects.create(role="written", body="written body", is_active=True)
+
+    resp = client_staff.get(reverse("dash-agents"))
+
+    assert resp.status_code == 200
+    assert b"Website chat (written)" in resp.content

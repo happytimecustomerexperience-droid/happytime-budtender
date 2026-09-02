@@ -259,7 +259,7 @@ def agent_save(request, pk: int):
     p = get_object_or_404(AgentPrompt, pk=pk)
     errors: list[str] = []
 
-    for f in ("body", "model_provider", "vapi_model", "voice_provider", "voice_id"):
+    for f in ("body", "model_provider", "vapi_model", "voice_provider", "voice_id", "first_message"):
         if f in request.POST:
             setattr(p, f, request.POST[f].strip())
 
