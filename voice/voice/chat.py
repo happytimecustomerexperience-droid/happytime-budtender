@@ -83,19 +83,28 @@ _HUMAN_RE = re.compile(
 # alternative below requires an actual request SHAPE (a verb like talk/speak/get/connect/want/
 # need, or an availability question) pointed at a role noun, not just the noun appearing anywhere
 # in the sentence.
-_HUMAN_ROLE = r"(?:human|person|someone|manager|supervisor|staff(?:\s+member)?|budtender|rep|representative)"
+_HUMAN_ROLE = r"(?:human|person|someone|manager|supervisor|staff(?:\s+member)?|budtender|rep|representative|agent)"
+# 2026-09-01: the qualifier a frustrated caller actually uses — "a REAL person", "an ACTUAL human",
+# "a LIVE agent" — had no slot in these alternatives, so "I want to talk to a real person" matched
+# nothing at all and the turn fell through to retrieval, which grounded it on the online-ordering
+# FAQ row ("...pick it up in person"). ``_HUMAN_DET`` is the optional article + optional qualifier
+# every role noun below may carry; both halves are optional, so nothing that matched before stops
+# matching. ``_HUMAN_ART`` is the same with the article REQUIRED — used only where dropping it
+# would turn a neutral sentence into an escalation ("can someone tell me your hours").
+_HUMAN_QUALIFIER = r"(?:(?:real|actual|live|human|actual\s+live)\s+)?"
+_HUMAN_DET = r"(?:(?:an?|the)\s+)?" + _HUMAN_QUALIFIER
+_HUMAN_ART = r"(?:an?|the)\s+" + _HUMAN_QUALIFIER
 _HUMAN_REQUEST_RE = re.compile(
-    r"\b(?:talk|speak|chat)\s+(?:to|with)\s+(?:a\s+)?" + _HUMAN_ROLE + r"\b|"
-    r"\b(?:get|connect|transfer)\s+me\s+(?:to\s+|with\s+)?(?:a\s+)?" + _HUMAN_ROLE + r"\b|"
-    r"\b(?:can|could|may|will)\s+(?:i|you)\s+(?:talk|speak|chat)\s+(?:to|with)\s+(?:a\s+)?" + _HUMAN_ROLE + r"\b|"
-    r"\b(?:can|could)\s+(?:a|the)\s+" + _HUMAN_ROLE + r"\b|"
-    r"\bescalate\s+(?:this|it)\s+to\s+(?:an?\s+|the\s+)?(?:actual\s+)?" + _HUMAN_ROLE + r"\b|"
-    r"\bi\s+want\s+(?:a\s+|to\s+talk\s+to\s+(?:a\s+)?)?" + _HUMAN_ROLE + r"\b|"
-    r"\bi\s+need\s+(?:a\s+|to\s+talk\s+to\s+(?:a\s+)?)?" + _HUMAN_ROLE + r"\b|"
-    r"\bis\s+(?:the|a)\s+" + _HUMAN_ROLE + r"\s+(?:available|there|around|in)\b|"
-    r"\bis\s+there\s+a\s+" + _HUMAN_ROLE + r"\b|"
-    r"\blet\s+me\s+(?:talk|speak)\s+(?:to|with)\s+(?:a\s+)?" + _HUMAN_ROLE + r"\b|"
-    r"\bhave\s+(?:the|a)\s+" + _HUMAN_ROLE + r"\s+call\s+me\b|"
+    r"\b(?:talk|speak|chat)\s+(?:to|with)\s+" + _HUMAN_DET + _HUMAN_ROLE + r"\b|"
+    r"\b(?:get|connect|transfer)\s+me\s+(?:to\s+|with\s+)?" + _HUMAN_DET + _HUMAN_ROLE + r"\b|"
+    r"\b(?:can|could|may|will)\s+(?:i|you)\s+(?:talk|speak|chat)\s+(?:to|with)\s+" + _HUMAN_DET + _HUMAN_ROLE + r"\b|"
+    r"\b(?:can|could)\s+" + _HUMAN_ART + _HUMAN_ROLE + r"\b|"
+    r"\bescalate\s+(?:this|it)\s+to\s+" + _HUMAN_DET + _HUMAN_ROLE + r"\b|"
+    r"\bi\s+(?:want|need|would\s+like)\s+(?:to\s+(?:talk|speak|chat)\s+(?:to|with)\s+)?" + _HUMAN_DET + _HUMAN_ROLE + r"\b|"
+    r"\bis\s+(?:the|a)\s+" + _HUMAN_QUALIFIER + _HUMAN_ROLE + r"\s+(?:available|there|around|in)\b|"
+    r"\bis\s+there\s+a\s+" + _HUMAN_QUALIFIER + _HUMAN_ROLE + r"\b|"
+    r"\blet\s+me\s+(?:talk|speak)\s+(?:to|with)\s+" + _HUMAN_DET + _HUMAN_ROLE + r"\b|"
+    r"\bhave\s+(?:the|a)\s+" + _HUMAN_QUALIFIER + _HUMAN_ROLE + r"\s+call\s+me\b|"
     r"\bgive\s+me\s+(?:the\s+)?(?:\w+\s+)?" + _HUMAN_ROLE + r"\b",
     re.I,
 )
