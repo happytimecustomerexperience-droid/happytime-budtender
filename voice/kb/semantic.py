@@ -108,9 +108,34 @@ def _model_has_topic_field(model_name: str, topic: str) -> bool:
     return model_name in TOPIC_ROW_FIELDS.get(topic, {})
 
 
-def _topic_allows(topic: str, model_name: str, row) -> bool:
+# ``hours_location`` is really three different questions — where are you, when are you open, and
+# what's your number — and the KB has a separate StoreFact for each. The topic scope alone put all
+# three in one corpus, so "where are you located in yakima" was answered with the Yakima HOURS row
+# (it shares "yakima" just as strongly, and outranks on weight). When the caller's words name
+# exactly ONE of the three, narrow the corpus to it: the address row wins a where-question, the
+# hours row wins a what-time question, and an ask that names two ("are you open, and where are
+# you") stays unnarrowed, exactly as before. Derived from the query inside ``rank_faq``, so BOTH
+# the keyword and the embedding path inherit it.
+_HOURS_LOCATION_ASKS = (
+    ("address", re.compile(r"\b(where|address|located|directions?|street|parking)\b", re.I)),
+    ("hours", re.compile(r"\b(hours?|open|opening|close|closing|closed|what\s+time)\b", re.I)),
+    ("phone", re.compile(r"\b(phone|call|number)\b", re.I)),
+)
+
+
+def _hours_location_kind(query: str) -> str:
+    """The ONE StoreFact kind this hours_location query is about, or "" when it names none or
+    more than one (ambiguous → don't narrow)."""
+    hits = [kind for kind, pattern in _HOURS_LOCATION_ASKS if pattern.search(query or "")]
+    return hits[0] if len(hits) == 1 else ""
+
+
+def _topic_allows(topic: str, model_name: str, row, kind: str = "") -> bool:
     """True when ``row`` carries the field value that puts it in ``topic``. A model with no
-    entry for this topic (no clean topic-bearing field) never passes."""
+    entry for this topic (no clean topic-bearing field) never passes. ``kind`` narrows an
+    hours_location query to the one StoreFact kind it actually asked about (see
+    ``_hours_location_kind``); an FAQEntry can only answer the hours half of that topic, so it
+    is excluded when the caller asked for the address or the phone number."""
     if model_name == "PolicyDocument":
         # Data-driven: the owner's PolicyCategory.topic decides, not a hardcoded kind value.
         return (getattr(row.category, "topic", "") or "") == topic
@@ -118,10 +143,15 @@ def _topic_allows(topic: str, model_name: str, row) -> bool:
     if rule is None:
         return False
     field, allowed = rule
+    if kind and topic == "hours_location":
+        if model_name == "StoreFact":
+            allowed = frozenset({kind})
+        elif kind != "hours":  # an FAQEntry(topic=hours) cannot answer "where" or "what number"
+            allowed = frozenset()
     return (getattr(row, field, "") or "") in allowed
 
 
-def _build_corpus(store: str | None, topic: str = ""):
+def _build_corpus(store: str | None, topic: str = "", kind: str = ""):
     """Build the store-scoped (and, when ``topic`` is given, topic-scoped) corpus: a list of
     (chunk_id, chunk_text) and a parallel {chunk_id: row} map. Store filtering happens HERE so a
     Yakima caller never gets a Pullman-hours chunk (22-SPEC §4.1); topic filtering happens HERE
@@ -139,7 +169,7 @@ def _build_corpus(store: str | None, topic: str = ""):
                 row_store = (getattr(row, "store", "") or "").strip()
                 if row_store and row_store != store:
                     continue  # per-store row for a different store
-            if topic and not _topic_allows(topic, Model.__name__, row):
+            if topic and not _topic_allows(topic, Model.__name__, row, kind):
                 continue
             chunk_id = f"{prefix}{row.pk}"
             items.append((chunk_id, row.chunk_text()))
@@ -283,7 +313,8 @@ def rank_faq(
     if not (query or "").strip():
         return []
     topic = (topic or "").strip()
-    items, row_by_id = _build_corpus(store, topic)
+    kind = _hours_location_kind(query) if topic == "hours_location" else ""
+    items, row_by_id = _build_corpus(store, topic, kind)
     if not items:
         return []
     if not enabled():
