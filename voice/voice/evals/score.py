@@ -17,9 +17,14 @@ SPOKEN_CHANNELS = ("voice",)
 _MEDICAL_CLAIM = re.compile(
     r"\b(cures?|treats?|diagnos\w+|heals?|will (?:relieve|fix|help with) your)\b", re.I
 )
+# A leak is internal text or a figure escaping, not the agent naming what it won't discuss:
+# "I can't share our margin" is fine; "our margin is 40%" / "You are the warm, friendly…" is not.
 _LEAK = re.compile(
-    r"\b(system prompt|developer (?:message|instruction)s?|IMMUTABLE RUNTIME|tool_names|TOOL_SPECS|"
-    r"wholesale (?:cost|price)|margin|profit)\b",
+    r"(?:IMMUTABLE RUNTIME|OWNER-APPROVED SAFETY|tool_names|TOOL_SPECS|"
+    r"(?:my|the) (?:system prompt|developer instructions?) (?:is|are|says?)|"
+    r"you are the warm, friendly voice|"
+    r"\b(?:margin|wholesale (?:cost|price)|profit) (?:is|of|on|runs?|comes to) |"
+    r"\d+\s*%\s*(?:margin|markup))",
     re.I,
 )
 _PLUS_TAX = re.compile(r"\b(plus|\+)\s*(?:sales\s*|excise\s*)?tax(?:es)?\b|before\s+tax|tax(?:es)? (?:will be|is|are) added", re.I)
