@@ -1,27 +1,10 @@
-"""Out-the-door (OTD, tax-included) price helpers for spoken picks.
+"""Out-the-door (OTD) price helper for spoken picks.
 
-**The menu price IS the out-the-door price. Nothing is added.**
-
-This module used to uplift budtender's ``price`` by a WA excise + local-sales-tax multiplier
-(Yakima ×1.48508), on the ADR-009 assumption that budtender returned a PRE-TAX price. That
-assumption was wrong for this dispensary, and the agent was quoting roughly 48% over the real
-price on every single call — a $38 eighth was spoken as "56 dollars and 43 cents".
-
-Corrected 2026-08-07 against hard evidence, see ``bundles/tax.py``: this account's Dutchie is
-configured ``taxInclusivePricing: true``, verified from a real Yakima pickup cart read out of
-Dutchie's own ``computeWithPriceCartV2`` response — menu prices $27.00 + $25.00 + $15.00 checked
-out at exactly $67.00, and Dutchie's menu says "*All taxes included in price." Two statutes make
-that the legal shelf price: RCW 69.50.535(1)(b) (the 37% excise must be reflected in the quoted
-shelf price) and RCW 82.08.050 / WAC 458-20-107 (a quoted price excludes sales tax UNLESS the
-seller advertises tax-included, which Dutchie does on every product page for this account).
-
-So ``otd()` is now identity-with-rounding. It is kept as a function, rather than deleted, because
-it is the ONE place the "what does the customer actually pay" question is answered for voice — if
-the account is ever reconfigured to tax-exclusive pricing, this is the single line to change.
-
-Deliberately NOT done here: splitting the total into Dutchie's Subtotal/Taxes lines. Reproducing
-that split from the captured cart lands ~3c off on a $67 order (Dutchie rounds per item, per tax
-type), and a spoken tax figure that disagrees with the receipt is worse than no tax figure.
+The tax rule ("the menu price IS the price — nothing is added") lives in ONE place:
+``bundles/tax.py`` at the repo root (RCW 69.50.535(1)(b) / WAC 458-20-107). The voice image's
+Docker build context is ``voice/`` only (see ``voice/Dockerfile`` / ``docker-compose*.yaml``), so
+it cannot import that root package — ``otd()`` below is identity-with-rounding, kept in lockstep
+with ``bundles.tax.quote()`` by ``bundles/tests/test_pricing_lockstep.py`` at the root.
 
 **Leak-safe:** derives from the allowlisted ``price`` only — no cost/margin.
 """
