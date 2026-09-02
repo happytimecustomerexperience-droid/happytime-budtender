@@ -53,6 +53,24 @@ FAQ_ROWS = [
         ],
     },
     {
+        # SOURCE: bundles/tax.py's module docstring — "The menu price IS the price. Nothing is
+        # added at checkout." Verified there against Dutchie's own pre-submit checkout for this
+        # account (``taxInclusivePricing: true``; its ORDER TOTAL equals the sum of the menu
+        # prices exactly), and legal under RCW 69.50.535(1)(b), which requires the cannabis
+        # excise to be reflected in the quoted shelf price. Deliberately states NO percentage:
+        # the same docstring records that the per-item split could not be reproduced to the
+        # cent, and a tax figure that disagrees with the receipt is worse than none.
+        "key": "tax-included",
+        "question": "Does the price include tax?",
+        "answer": "Yes — every price on our menu already includes all taxes, so the price you "
+        "see is the price you pay. Nothing is added at the register.",
+        "topic": "payment",
+        "paraphrases": [
+            "is tax included", "do I pay tax on top", "plus tax", "out the door price",
+            "is that the final price",
+        ],
+    },
+    {
         "key": "delivery",
         "question": "Do you deliver?",
         "answer": "No delivery — it's pickup only, which is Washington state law. You can "
