@@ -785,6 +785,62 @@ def _named_stock_query(message: str) -> str:
     return ""
 
 
+# ── pairing / add-on ────────────────────────────────────────────────────────────────────
+# ``pair_upsell`` was registered and reachable from the phone squad, and chat.py never named it —
+# so "what would go well with that" fell all the way through to the honest-miss fallback. The
+# anchor is the caller's own most recently suggested SKU (``_last_suggested_sku``, the same
+# durable field the staging flow already reads); with no prior suggestion there is no anchor and
+# the turn keeps its existing route rather than guessing at one.
+_PAIRING_RE = re.compile(
+    r"\bgo(?:es)?\s+(?:well\s+)?with\s+(?:that|this|it|those|them)\b|"
+    r"\bwhat\s+would\s+go\s+(?:well\s+)?with\b|"
+    r"\bpair(?:s|ed|ing)?\s+(?:it\s+|that\s+|this\s+)?with\b|"
+    r"\bwhat\s+else\s+should\s+i\s+(?:get|buy|grab|try|add)\b|"
+    r"\banything\s+(?:else\s+)?to\s+go\s+with\b|"
+    r"\bgoes?\s+good\s+with\b",
+    re.I,
+)
+
+
+def _is_pairing_request(message: str) -> bool:
+    return bool(_PAIRING_RE.search(message or ""))
+
+
+def _pair_upsell_reply(sku: str, store: str, phone: str, ctx: dict, tool_results: list) -> dict:
+    """One complementary add-on for the caller's own last pick, through ``pair_upsell``'s own
+    strength gate. ``offer: false`` means the gate said stay quiet — so the reply suggests
+    nothing rather than inventing a pairing."""
+    args = {"anchor_sku": sku, "store": store}
+    result = dispatch("pair_upsell", args, ctx)
+    tool_results = tool_results + [{"tool": "pair_upsell", "args": dict(args), "result": result}]
+    pair = result.get("pair") or {}
+    if result.get("offer") and pair.get("name"):
+        reason = str(result.get("reason_text") or "").strip()
+        answer = f"People often add the {pair['name']}. {reason}".strip()
+    else:
+        # NEW COPY — REQUIRES OWNER APPROVAL.
+        answer = (
+            "Nothing jumps out as a natural add-on for that one. Tell me what else you're after "
+            "and I'll take a look."
+        )
+    return {
+        "ok": True,
+        "intent": "product_suggestion",
+        "answer": answer,
+        "grounded": bool(result.get("offer")),
+        "sources": [{"kind": "tool", "title": "Live budtender inventory"}],
+        "tool_results": tool_results,
+        "escalation_required": False,
+        "escalation_flag": False,
+        "safe_next_action": "show_products" if result.get("offer") else "answer",
+        "safe_suggested_next_action": _suggested_next_action(
+            "show_products" if result.get("offer") else "answer"
+        ),
+        "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+        "store": store,
+    }
+
+
 def _matches_name(query: str, name: str) -> bool:
     """Every distinctive word of the caller's name appears in the product's name."""
     wanted = {w.lower() for w in re.findall(r"[a-z0-9#]+", query.lower()) if len(w) > 1}
@@ -1507,6 +1563,14 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     stock_name = _named_stock_query(message)
     if stock_name:
         return _stock_check_reply(stock_name, category, store, phone, ctx, tool_results)
+
+    # "what would go well with that" is an add-on question about the caller's OWN last pick (see
+    # ``_PAIRING_RE``). With no prior suggestion there is no anchor to pair against, so the turn
+    # keeps whatever route it had rather than guessing at one.
+    if _is_pairing_request(message):
+        anchor_sku = _last_suggested_sku(ctx.get("call_id") or session_token)
+        if anchor_sku:
+            return _pair_upsell_reply(anchor_sku, store, phone, ctx, tool_results)
 
     if category or attempt_product_search:
         suggest_args = {key: slots[key] for key in _PRODUCT_SLOT_KEYS if key in slots}
