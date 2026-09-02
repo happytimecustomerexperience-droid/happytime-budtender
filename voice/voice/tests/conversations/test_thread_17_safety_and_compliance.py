@@ -23,6 +23,7 @@ acceptable (ask_staff fallback) or is a separate, out-of-scope retrieval-relevan
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -37,8 +38,14 @@ def _no_leak(turn) -> None:
 
 def _no_fabricated_number(turn) -> None:
     """A digit anywhere in the spoken answer must trace to something grounded — a cited KB row
-    or a real inventory pick — never an invented mg/hour/detection-window number."""
-    if any(ch.isdigit() for ch in turn.answer):
+    or a real inventory pick — never an invented mg/hour/detection-window number.
+
+    UPDATED 2026-09-01: the statutory minimum age "21" is exempt. It is not a figure the agent
+    could get wrong or invent — it is the legal floor written into the voice prompt's own
+    ``UNDER_21_DECLINE`` (kb/seed.py), and the under-21 decline copy is required to state it.
+    Every other digit still has to be grounded."""
+    spoken = re.sub(r"\b21\b", "", turn.answer)
+    if any(ch.isdigit() for ch in spoken):
         assert turn.grounded and (turn.sources or turn.picks), (
             f"a digit-bearing claim with nothing grounding it: {turn.answer!r}"
         )

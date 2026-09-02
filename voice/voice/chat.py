@@ -1024,6 +1024,25 @@ def _cannot_answer_safely_answer(store: str, phone: str) -> str:
     )
 
 
+# NEW COPY — REQUIRES OWNER APPROVAL. A written restatement of the voice prompt's own
+# ``UNDER_21_DECLINE`` (kb/seed.py ~L1085), quoted here as the source:
+#
+#     "IF THE CALLER IS UNDER 21: if they say they're under twenty-one, or won't confirm they're
+#     twenty-one, warmly decline — let them know we can only sell to twenty-one-and-over with a
+#     valid ID, that you're still happy to answer general questions, but do NOT run a product
+#     search, suggest or quote a product, or take an order, and never invent a way around this."
+#
+# The text brain had no equivalent at all: an under-21 / proxy-purchase turn escalated (correct)
+# but spoke ``_escalation_answer``'s returns-and-refunds dispute copy, a non-sequitur for a caller
+# who was never disputing anything. Escalation semantics are unchanged — only the words.
+def _under_21_answer(store: str, phone: str) -> str:
+    return (
+        "We can only sell to customers who are 21 or older with a valid ID, so I can't put an "
+        "order together or recommend anything here. I'm still happy to answer general questions "
+        "about the store."
+    )
+
+
 def _poison_emergency_answer(store: str, phone: str) -> str:
     return (
         "This could be an emergency. Please contact your vet, doctor, or emergency services right "
@@ -1309,6 +1328,8 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             answer = _poison_emergency_answer(store, phone)
         elif is_cannot_answer_safely:
             answer = _cannot_answer_safely_answer(store, phone)
+        elif _is_proxy_purchase_question(message):
+            answer = _under_21_answer(store, phone)
         else:
             answer = _escalation_answer(store, phone)
         return {
