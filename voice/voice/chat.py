@@ -736,6 +736,128 @@ def _is_education_question(message: str) -> bool:
     return bool(_EDUCATION_QUESTION_RE.search(message or ""))
 
 
+# ── named-product stock check ───────────────────────────────────────────────────────────
+# "is the Jetty Blue Dream cart in stock" is a question about ONE product, and it was answered by
+# ``suggest_products`` with a DIFFERENT product (the cheapest cartridge on the shelf) — the router
+# saw "cart", derived the category, and never noticed the caller had named an item. ``check_inventory``
+# is the tool for this question and chat.py only ever reached it from the staging flow.
+#
+# LIMITATION (documented, not worked around): budtender exposes no name/query product search —
+# ``budtender_client`` has ``/products/search/`` (slot-filtered) and ``/products/by-sku/`` (exact
+# SKU) and nothing in between. So the name is resolved against the ranked results of the ordinary
+# category search and then confirmed with ``check_inventory`` on that SKU. When the named item is
+# not among them, the honest answer is that we could not confirm it — never a different product.
+_STOCK_QUESTION_RE = re.compile(
+    r"\b(?:is|are)\s+(?:the\s+|a\s+|any\s+)?(?P<a>[^?.!]+?)\s+(?:still\s+)?in\s+stock\b|"
+    r"\bdo\s+you\s+(?:still\s+)?(?:have|carry|stock)\s+(?:the\s+|any\s+)?(?P<b>[^?.!]+?)\s+in\s+stock\b|"
+    r"\b(?:do\s+you\s+)?still\s+have\s+(?:the\s+|any\s+)?(?P<c>[^?.!]+?)\s*(?:left|\?|$)",
+    re.I,
+)
+# Words that describe HOW the caller wants to shop rather than WHICH product they mean. A residual
+# name made only of these is a category browse ("do you have edibles under 20"), not a named item.
+_SHOPPING_QUALIFIER_RE = re.compile(
+    r"^(?:under|below|over|above|cheap|cheapest|best|good|strong|strongest|small|big|any|"
+    r"some|more|other|another|left|thing|things|one|ones|\d+\S*)$",
+    re.I,
+)
+
+
+def _named_stock_query(message: str) -> str:
+    """The product NAME a stock question names, or "" when the question is really a category
+    browse. A name has to survive stripping the category noun, the stopwords and the shopping
+    qualifiers, and then be either two words long or an explicitly capitalized brand/strain."""
+    match = _STOCK_QUESTION_RE.search(message or "")
+    if not match:
+        return ""
+    raw = next((g for g in match.groupdict().values() if g), "").strip()
+    if not raw:
+        return ""
+    stripped = raw
+    for pattern in _CATEGORY_RE.values():
+        stripped = pattern.sub(" ", stripped)
+    words = [w for w in re.findall(r"[A-Za-z0-9'#-]+", stripped) if not _SHOPPING_QUALIFIER_RE.match(w)]
+    words = [w for w in words if len(w) > 1 and w.lower() not in {"the", "a", "an", "you", "your", "my"}]
+    if not words:
+        return ""
+    capitalized = [w for w in words if w[:1].isupper()]
+    if len(words) >= 2 or capitalized:
+        return " ".join(words)
+    return ""
+
+
+def _matches_name(query: str, name: str) -> bool:
+    """Every distinctive word of the caller's name appears in the product's name."""
+    wanted = {w.lower() for w in re.findall(r"[a-z0-9#]+", query.lower()) if len(w) > 1}
+    have = {w.lower() for w in re.findall(r"[a-z0-9#]+", (name or "").lower())}
+    return bool(wanted) and wanted <= have
+
+
+def _stock_check_reply(
+    name: str, category: str, store: str, phone: str, ctx: dict, tool_results: list
+) -> dict:
+    """Answer a named-product stock question with ``check_inventory`` on THAT product."""
+    picks = []
+    if category:
+        args = {"category": category, "store": store}
+        suggest = dispatch("suggest_products", args, ctx)
+        tool_results = tool_results + [
+            {"tool": "suggest_products", "args": dict(args), "result": suggest}
+        ]
+        picks = suggest.get("picks") or []
+    match = next((p for p in picks if _matches_name(name, p.get("name", ""))), None)
+    if match is None:
+        answer = (
+            "I can't confirm that specific item is in stock right now. A team member can check "
+            "the shelf for you if you share the best way to reach you."
+        )
+        return {
+            "ok": True,
+            "intent": "product_suggestion",
+            "answer": answer,
+            "grounded": False,
+            "sources": [{"kind": "tool", "title": "Live budtender inventory"}],
+            "tool_results": tool_results,
+            "escalation_required": False,
+            "escalation_flag": False,
+            "safe_next_action": "ask_staff",
+            "safe_suggested_next_action": _suggested_next_action("ask_staff"),
+            "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+            "store": store,
+        }
+
+    check_args = {"sku": match.get("sku", ""), "store": store}
+    check = dispatch("check_inventory", check_args, ctx)
+    tool_results = tool_results + [
+        {"tool": "check_inventory", "args": dict(check_args), "result": check}
+    ]
+    item = str(check.get("name") or match.get("name") or "that item")
+    if check.get("in_stock"):
+        # The only spoken value is the tool's own coarse stock band — never a figure this module
+        # composed (Numbers-Guard). The price is deliberately NOT read out: the caller asked
+        # whether it is on the shelf, and quoting an out-the-door figure they did not ask for is
+        # how a wrong price gets spoken.
+        band = str(check.get("qty_band") or "available")
+        answer = f"Yes — the {item} is {band} at the moment."
+    else:
+        answer = f"The {item} isn't showing as in stock right now. I can help you find something similar."
+    return {
+        "ok": True,
+        "intent": "product_suggestion",
+        "answer": answer,
+        "grounded": True,
+        "sources": [{"kind": "tool", "title": "Live budtender inventory"}],
+        "tool_results": tool_results,
+        "escalation_required": False,
+        "escalation_flag": False,
+        "safe_next_action": "answer" if check.get("in_stock") else "show_products",
+        "safe_suggested_next_action": _suggested_next_action(
+            "answer" if check.get("in_stock") else "show_products"
+        ),
+        "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+        "store": store,
+    }
+
+
 # ── vendor / phone-cart gates (2026-08-10 GAP fix) ──────────────────────────────────────
 # Two tools were registered (``notify_vendor_callback``, ``stage_phone_cart``) and reachable from
 # the phone squad, but had NO branch in this shared brain at all — a web-chat vendor was shopped
@@ -1379,6 +1501,12 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
             "store": store,
         }
+
+    # A stock question about a NAMED product is answered about that product (see
+    # ``_named_stock_query``), not with whatever the ranker likes best in its category.
+    stock_name = _named_stock_query(message)
+    if stock_name:
+        return _stock_check_reply(stock_name, category, store, phone, ctx, tool_results)
 
     if category or attempt_product_search:
         suggest_args = {key: slots[key] for key in _PRODUCT_SLOT_KEYS if key in slots}
