@@ -52,7 +52,13 @@ def test_defective_cartridge_return_thread(convo, fake_bt):
     assert not _promises_refund(t.answer), _promises_refund(t.answer)
     # A caller reporting a dead cart is NOT a shopping lead: no product search fires even though
     # the word "cartridge" is right there in the sentence.
-    assert t.tools == ["faq_lookup"]
+    # UPDATED 2026-09-01: the assertion used to pin the exact tool list, which also pinned the
+    # DEFECT that the text channel never filed the staff alert the Vapi escalation member files.
+    # Dana's number is on the session, so ``notify_staff_issue`` now fires here. The claim this
+    # line was actually making — "no product search" — is unchanged and still asserted.
+    assert "suggest_products" not in t.tools
+    assert "notify_staff_issue" in t.tools, "a dispute with a known number reaches the store team"
+    assert t.args("notify_staff_issue")["issue_type"] == "defective_return"
     assert t.raw["contact_hint"] == {"store": "yakima", "customer_phone": "+15095550142"}
 
     # 2 ─ the question the whole call is about. "refund" is itself an escalation trigger, so the
@@ -88,7 +94,8 @@ def test_defective_cartridge_return_thread(convo, fake_bt):
     t = c.say("I'd really like a staff member to call me back about it")
     assert t.intent == "conflict_resolution"
     assert t.escalated is True and t.next_action == "escalate"
-    assert t.tools == ["faq_lookup"]
+    assert "suggest_products" not in t.tools  # UPDATED 2026-09-01 — see turn 1
+    assert "notify_staff_issue" in t.tools, "the ask for a callback reaches the store team"
     # FIXED 2026-08-07 (was FINDING 3): the relevance gate means the off-topic EVENTS row is no
     # longer read out for a message that doesn't ask about anything the KB covers — no more
     # promo blurb bracketing the apology.
@@ -196,7 +203,10 @@ def test_money_back_demand_without_the_word_refund(convo):
     t = c.say("I want my money back for that busted vape pen")
     assert t.intent == "conflict_resolution", "fixed 2026-08-07: money-back demand now escalates"
     assert t.escalated is True and t.next_action == "escalate"
-    assert t.tools == ["faq_lookup"], "an escalated turn must not shop at her"
+    # UPDATED 2026-09-01: the exact-list assertion also pinned the missing staff alert; the
+    # claim it makes ("must not shop at her") is preserved, and the alert is now asserted too.
+    assert "suggest_products" not in t.tools, "an escalated turn must not shop at her"
+    assert "notify_staff_issue" in t.tools
     assert t.picks == []
     # FIXED 2026-08-07 (was a REGRESSION left failing on purpose): "money back" and "busted" are
     # now in _DISPUTE_TOPIC_RE, so the relevance gate stays open and a real grounded row is
@@ -211,7 +221,10 @@ def test_money_back_demand_without_the_word_refund(convo):
     t = c.say("no, I don't want another cart, I want a refund")
     assert t.intent == "conflict_resolution"
     assert t.escalated is True and t.next_action == "escalate"
-    assert t.tools == ["faq_lookup"], "an escalated turn must not shop at her"
+    # UPDATED 2026-09-01: the exact-list assertion also pinned the missing staff alert; the
+    # claim it makes ("must not shop at her") is preserved, and the alert is now asserted too.
+    assert "suggest_products" not in t.tools, "an escalated turn must not shop at her"
+    assert "notify_staff_issue" in t.tools
     assert t.grounded and RETURNS_ROW_ANSWER in t.answer
     assert not _promises_refund(t.answer), _promises_refund(t.answer)
     assert "+13605550188" in t.answer
@@ -227,8 +240,61 @@ def test_money_back_demand_without_the_word_refund(convo):
     t = c.say("the pen was dead out of the box, it doesn't work")
     assert t.intent == "conflict_resolution"
     assert t.escalated is True and t.next_action == "escalate"
-    assert t.tools == ["faq_lookup"]
+    assert "suggest_products" not in t.tools  # UPDATED 2026-09-01 — see the note above
+    assert "notify_staff_issue" in t.tools
     assert t.grounded is False, "no topic-bearing word this turn — the relevance floor declines"
     assert not _promises_refund(t.answer), _promises_refund(t.answer)
 
     assert len(c.turns) == 3
+
+
+@pytest.mark.django_db
+def test_text_dispute_files_the_staff_alert_without_sending_mail(convo):
+    """The text channel now files the SAME ``notify_staff_issue`` record the Vapi escalation
+    member files — durably, and without anything leaving the machine under test.
+
+    Two halves matter. (1) A dispute on a session that already carries the caller's number
+    reaches ``notify_staff_issue`` with the escalation member's own args, and the resulting
+    ``VoiceCall`` row is stamped ``outcome=escalation``. (2) An escalation with NO number on the
+    session still only gathers — there is nothing to hand staff yet — and a plain safety question
+    is never filed as a staff complaint at all.
+    """
+    from django.core import mail
+
+    from voice.models import Outcome, VoiceCall
+
+    mail.outbox.clear()
+
+    c = convo(store="yakima", phone="+15095550142")
+    t = c.say("the register overcharged me yesterday, someone needs to call me back")
+    assert t.escalated is True
+    assert "notify_staff_issue" in t.tools
+    assert t.args("notify_staff_issue") == {
+        "store": "yakima",
+        "issue_type": "dispute",
+        "summary": "the register overcharged me yesterday, someone needs to call me back",
+    }
+    assert t.result("notify_staff_issue")["logged"] is True
+    row = VoiceCall.objects.get(call_id=c.session_token)
+    assert row.outcome == Outcome.ESCALATION
+    assert "overcharged" in (row.ai_summary or "")
+    # The alert is a DB record + a sink dispatch. NOTE: ``STAFF_ALERT_EMAIL`` is configured in
+    # this environment, so ``EmailSink`` IS enabled and one message is built — pytest-django's
+    # locmem backend captures it, so nothing leaves the machine. The load-bearing guarantee is
+    # that ``crm.sinks.dispatch`` is idempotent per (voice_call, sink): a second dispute turn on
+    # the SAME session updates the one record and does not email the team again.
+    assert len(mail.outbox) <= 1, "at most one staff alert per session"
+    sent_after_first = len(mail.outbox)
+    t = c.say("and nobody has called me yet, this is ridiculous")
+    assert "notify_staff_issue" in t.tools
+    assert len(mail.outbox) == sent_after_first, "a follow-up turn must not re-alert the team"
+
+    # No number on the session — nothing to hand staff yet, so nothing is filed.
+    anon = convo(store="yakima")
+    t = anon.say("the register overcharged me yesterday")
+    assert t.escalated is True and "notify_staff_issue" not in t.tools
+
+    # A safety question is not a staff complaint.
+    safe = convo(store="yakima", phone="+15095550142")
+    t = safe.say("can I take this with my blood pressure medication")
+    assert t.escalated is True and "notify_staff_issue" not in t.tools

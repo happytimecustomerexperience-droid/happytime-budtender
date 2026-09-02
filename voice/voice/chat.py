@@ -70,6 +70,12 @@ _HUMAN_RE = re.compile(
     r"missing\s+(?:\w+\s+){0,3}(?:item|product|order)|"
     r"not\s+what\s+i\s+(ordered|bought)|"
     r"refused\s+to\s+sell|turned\s+(?:me\s+)?away|misled|false\s+advertising|"
+    # Register/billing disputes had NO vocabulary here at all, so "the register overcharged me
+    # yesterday" carried no escalation signal and the turn fell through to unconstrained
+    # retrieval, which answered a retail customer with the store's VENDOR RECEIVING StoreFact
+    # (it is the row that talks about someone calling you back). A billing dispute is a dispute.
+    r"over\s*charg(?:ed|e|ing)|double[\s-]?charg(?:ed|e)|charged\s+me\s+twice|"
+    r"wrong\s+(?:amount|price)|billing\s+(?:error|issue|problem)|"
     r"discriminat(?:ion|ed|ing)"
     r")\b",
     re.I,
@@ -105,6 +111,10 @@ _HUMAN_REQUEST_RE = re.compile(
     r"\bis\s+there\s+a\s+" + _HUMAN_QUALIFIER + _HUMAN_ROLE + r"\b|"
     r"\blet\s+me\s+(?:talk|speak)\s+(?:to|with)\s+" + _HUMAN_DET + _HUMAN_ROLE + r"\b|"
     r"\bhave\s+(?:the|a)\s+" + _HUMAN_QUALIFIER + _HUMAN_ROLE + r"\s+call\s+me\b|"
+    # "someone needs to call me back" is a request for a person said the other way round — the
+    # role noun is the SUBJECT of the callback, not the object of a talk/speak verb.
+    r"\b" + _HUMAN_ROLE + r"\s+(?:needs?\s+to|has\s+to|have\s+to|should|must)\s+"
+    r"(?:call|phone|contact|get\s+back\s+to)\s+me\b|"
     r"\bgive\s+me\s+(?:the\s+)?(?:\w+\s+)?" + _HUMAN_ROLE + r"\b",
     re.I,
 )
@@ -968,6 +978,24 @@ def _staff_followup_hint(store: str, phone: str) -> str:
     return f"Please share your preferred contact method ({phone_hint}) so the team can follow up."
 
 
+# The ``issue_type`` the Vapi escalation member would classify this dispute as — the same enum
+# ``TOOL_SPECS["notify_staff_issue"]`` declares (voice/constants.py). Nothing is invented: a
+# defect complaint is a defective_return, a bare "get me a person" is a repeated_request, and
+# everything else is the generic dispute (which is also the handler's own default).
+_DEFECT_RE = re.compile(
+    r"\b(defective|broken|busted|damaged|won'?t\s+fire|doesn'?t\s+work|dead\s+on\s+arrival)\b", re.I
+)
+
+
+def _staff_issue_type(message: str) -> str:
+    text = message or ""
+    if _DEFECT_RE.search(text):
+        return "defective_return"
+    if _HUMAN_REQUEST_RE.search(text) and not _HUMAN_RE.search(text):
+        return "repeated_request"
+    return "dispute"
+
+
 def _escalation_answer(store: str, phone: str) -> str:
     """The un-grounded dispute reply. Personalized through ``_staff_followup_hint`` — the previous
     hardcoded string dropped store/phone entirely, so a caller who had just read out her callback
@@ -1190,6 +1218,26 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
 
     if not escalation and _is_staging_request(message):
         return _stage_cart_reply(ctx, store, phone, tool_results)
+
+    # The text channel had no equivalent of the Vapi escalation member's ``notify_staff_issue``
+    # call at all (grep: the tool was registered and reachable from the phone squad, and this
+    # module never named it) — a genuine dispute raised the escalation flag and asked for a
+    # callback number, but NOTHING ever reached the store team. When the caller's number is
+    # already on the session there is nothing left to gather, so file the alert here with the
+    # same args the escalation member sends. Gated on a real DISPUTE (a fresh or carried
+    # ``_wants_human`` trigger), never on a bare ``safety_hit`` — a dosing/allergen question is
+    # not a staff complaint. The tool is idempotent per ``ctx['call_id']``, so a multi-turn
+    # dispute updates the one durable record instead of spamming the team.
+    if (escalation_now or carried) and phone:
+        staff_args = {
+            "store": store,
+            "issue_type": _staff_issue_type(message),
+            "summary": message,
+        }
+        staff_result = dispatch("notify_staff_issue", staff_args, ctx)
+        tool_results.append(
+            {"tool": "notify_staff_issue", "args": dict(staff_args), "result": staff_result}
+        )
 
     # Relevance gate: retrieval always returns its best row, even when that row has nothing to do
     # with the complaint. On a dispute turn we used to wrap an apology around whatever came back
