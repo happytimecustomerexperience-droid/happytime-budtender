@@ -941,7 +941,9 @@ _VENDOR_RE = re.compile(
     r"purchasing\s+manager|handles?\s+purchasing|purchasing\s+(department|team)|"
     r"(?:is\s+)?your\s+buyer\s+(?:available|there|in)|the\s+buyer\s+available|"
     r"delivery\s+driver|i'?m\s+the\s+driver|dropping\s+off\s+a\s+delivery|here\s+with\s+a\s+delivery|"
-    r"transfer\s+manifest|\bmanifest\b|\bmetrc\b|\bccrs\b|\bwcia\b|"
+    # "manifests" (plural) is how a driver actually asks — "when does receiving take manifests" —
+    # and the singular-only \bmanifest\b missed it, so the call fell through to retail retrieval.
+    r"transfer\s+manifests?|\bmanifests?\b|\bmetrc\b|\bccrs\b|\bwcia\b|"
     r"purchase\s+order|"
     r"\binvoice\b|accounts?\s+payable|"
     r"sample\s+drop"
