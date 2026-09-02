@@ -13,7 +13,7 @@ Template grammar (inside ``must_include`` / ``must_not_include``)::
     {{faq:<key>}}                     kb.FAQEntry(key).answer
     {{policy:<slug>}}                 kb.PolicyDocument(category.slug).body
     {{safety:<name>}}                 the owner-signed safety strings in voice.chat
-    {{greeting}}                      the spoken opener (voice.constants.ENTRY_FIRST_MESSAGE)
+    {{greeting}}                      the spoken opener (AgentPrompt entry_router.first_message)
     {{faq_fallback}}                  voice.tools.faq._FALLBACK
     {{other_months}}                  a regex of every month name EXCEPT the current one — a
                                       deal answer naming one of them is stale
@@ -244,9 +244,9 @@ def _fact_value(kind: str, arg: str) -> str:
         # The follow-up hint varies by store/phone; the owner-signed sentence is the fixed part.
         return fn("", "").split(" Please share")[0]
     if kind == "greeting":
-        from voice import constants
+        from voice.provision import entry_greeting
 
-        return constants.ENTRY_FIRST_MESSAGE
+        return entry_greeting()
     if kind == "faq_fallback":
         from voice.tools import faq
 
