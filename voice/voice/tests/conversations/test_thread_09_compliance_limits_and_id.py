@@ -26,15 +26,15 @@ def test_compliance_limits_and_doh_thread(convo, fake_bt):
     assert "21 or older" in t.answer
     assert t.next_action == "answer"
 
-    # 2. Follow-up that only makes sense after turn 1. KNOWN GAP (retrieval-precision follow-up):
-    # chat.py's topic classifier is per-message and this turn names no return/hours/specials word,
-    # so retrieval runs unconstrained; the ONLY word this turn shares with the accepted-ID row is
-    # the short, generic "ID" — the same "one incidental shared word" the relevance floor exists to
-    # reject (thread_16 only carries a product CATEGORY across turns, not an FAQ topic). She now
-    # gets a safe, honest "let me get a team member" instead of a lucky-keyword answer.
+    # 2. Follow-up that only makes sense after turn 1. FIXED 2026-09-01 (was a KNOWN GAP): the
+    # relevance floor used to drop every token shorter than three letters, which threw away the
+    # one word this question is ABOUT — "ID" — so the accepted-ID row (passport / driver's
+    # licence / unexpired) could never clear the bar and she was told "I can't confirm that".
+    # ``kb.semantic._SHORT_CONTENT_WORDS`` keeps it now, and she gets the real rule.
     t = c.say("my partner only has an expired ID, is that okay?")
     assert t.intent == "general_faq"
-    assert t.grounded is False
+    assert t.grounded is True
+    assert "unexpired" in t.answer.lower()
 
     # 3. The daily legal limit - a WA-law number that must be quoted from the KB verbatim.
     t = c.say("got it. what's the legal limit I can buy in one day?")

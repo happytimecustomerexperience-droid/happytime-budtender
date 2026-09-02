@@ -262,10 +262,22 @@ def _keyword_fallback(query: str, items: list[tuple[str, str]], row_by_id: dict,
 # that mean nothing. ``_LEXICAL_MIN_LEN`` drops those fragments from the floor's own token set
 # (ranking above is untouched — it still scores every token, including short ones).
 _LEXICAL_MIN_LEN = 3
+# ...but the flat cut also threw away real short words, and one of them is the single most
+# load-bearing noun in the compliance FAQ: "ID". "what kind of ID do you accept" reduced to
+# {kind, accept} — the question's actual subject was invisible to the floor, so the FAQEntry that
+# answers it (passport / driver's licence / unexpired) could never clear the bar and the caller
+# was told "I can't confirm that right now". An ALLOWLIST rather than a lower cut: lifting the
+# length rule wholesale would also readmit the apostrophe debris it exists for ("t", "ll", "ve")
+# and greeting noise ("hi"), both of which only dilute the coverage ratio below.
+_SHORT_CONTENT_WORDS = frozenset({"id", "oz", "mg", "wa", "og"})
 
 
 def _content_words(text: str) -> set[str]:
-    return {t for t in _tokens(text, drop_stop=True) if len(t) >= _LEXICAL_MIN_LEN}
+    return {
+        t
+        for t in _tokens(text, drop_stop=True)
+        if len(t) >= _LEXICAL_MIN_LEN or t in _SHORT_CONTENT_WORDS
+    }
 
 
 # COVERAGE FLOOR (2026-09-01). "shares at least two content words" is blind to how much of the
@@ -276,7 +288,24 @@ def _content_words(text: str) -> set[str]:
 # (2/6 = 0.33) while leaving every genuine hit alone: a defective-cart complaint covers 0.40 of
 # its own words, an hours/address/phone question covers 0.75-1.00. The short-query escape below
 # (``overlap == q``) is untouched, so "what are your hours" still grounds on its one word.
+#
+# Coverage alone would be too blunt, though: "what's the legal limit I can buy in one day?" also
+# covers only 0.33 of itself against the WA purchase-limits row, and that is a real, correct hit.
+# What separates the two is the row's own ALTERNATIVE PHRASINGS — the limits row is written with
+# paraphrases like "how much can I buy"; the Mount Vernon address blurb has nothing resembling a
+# price comparison. So a row whose paraphrases/synonyms answer this ask clears the floor on
+# thinner coverage. This is the same signal the keyword ranker already boosts on, re-derived here
+# so it gates the embedding path identically.
 _MIN_COVERAGE = 0.4
+
+
+def _paraphrase_hit(query_words: set[str], row) -> bool:
+    """True when one of the row's own alternative phrasings (FAQEntry.paraphrases /
+    WeightTypeTaxonomy.synonyms) shares a content word with the question."""
+    for extra in (getattr(row, "paraphrases", None) or []) + (getattr(row, "synonyms", None) or []):
+        if query_words & _content_words(extra):
+            return True
+    return False
 
 
 def relevant_enough(query: str, row) -> bool:
@@ -298,7 +327,9 @@ def relevant_enough(query: str, row) -> bool:
     overlap = q & _content_words(chunk_text)
     if overlap == q:  # short query, every word of it is in the row
         return True
-    return len(overlap) >= 2 and len(overlap) / len(q) >= _MIN_COVERAGE
+    if len(overlap) < 2:
+        return False
+    return len(overlap) / len(q) >= _MIN_COVERAGE or _paraphrase_hit(q, row)
 
 
 def rank_faq(

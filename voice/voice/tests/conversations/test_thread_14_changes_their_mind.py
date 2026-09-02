@@ -98,10 +98,13 @@ def test_dana_switches_flower_to_edibles_then_adds_something_small(convo, fake_b
     assert t.picks == []
     assert t.intent == "greeting_other"
     assert t.next_action != "show_products"
-    # ...and, like turn 2, the miss is dressed up as a confident grounded answer about something
-    # else entirely (the KB keyword path — semantic search is off in this offline suite).
-    assert t.grounded is True
-    assert t.sources[0]["title"] == 'Is Happy Times the same as Happy Time? What about "happytime"?'
+    # FIXED 2026-09-01 (was: the miss was dressed up as a confident grounded answer about
+    # something else entirely — the "Is Happy Times the same as Happy Time?" row, which shares
+    # nothing with this question but a couple of incidental words). The relevance floor
+    # (kb/semantic.py::relevant_enough) now requires the shared words to be a real share of the
+    # question, so the pronoun-only back-reference gets an honest miss instead.
+    assert t.grounded is False
+    assert t.sources == []
 
     assert len(c.turns) == 7
     assert "pair_for_sku" not in fake_bt.calls
