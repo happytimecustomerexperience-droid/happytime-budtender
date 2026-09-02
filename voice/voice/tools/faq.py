@@ -68,6 +68,31 @@ _INJECTION_QUERY = re.compile(
 def _is_injection_query(text: str) -> bool:
     return bool(_PROMPT_INJECTION.search(text or "") or _INJECTION_QUERY.search(text or ""))
 
+
+# 2026-09-01 — "what do you do with my phone number" was answered with the store's OWN phone
+# number: the query and the Yakima phone StoreFact share both content words ("phone", "number"),
+# so no lexical relevance floor can ever tell them apart. They are not the same question. A
+# privacy ask is answerable only by a privacy POLICY, and the KB ships none — so until the owner
+# writes one under a privacy PolicyCategory (``kb.PolicyDocument``, dashboard-editable), the
+# honest answer is a hand-off. When one does exist, this gate steps aside and ordinary retrieval
+# runs, so posting the document is all it takes to start answering. No code change needed.
+_PRIVACY_QUERY = re.compile(
+    r"\bprivacy\b|"
+    r"\bdo\s+you\s+do\s+with\s+my\b|"
+    r"\b(?:do|will|would)\s+you\s+(?:share|sell|keep|store|save|track)\b[^.?!]{0,30}\bmy\b|"
+    r"\bmy\s+(?:personal\s+)?(?:information|info|data)\b|"
+    r"\bopt\s+out\b",
+    re.IGNORECASE,
+)
+
+
+def _has_privacy_policy() -> bool:
+    from kb.models import PolicyDocument
+
+    return PolicyDocument.objects.filter(
+        is_active=True, category__slug__icontains="privacy"
+    ).exists()
+
 _FALLBACK = "I'm not certain on that one — let me get a team member who can help."
 
 # Map a KB model class name to the stable ``kind`` string surfaced as a source.
@@ -174,6 +199,11 @@ def faq_lookup(args: dict, ctx: dict) -> dict:
     # answer — no decline speech, no acknowledgement of the attempt.
     if _is_injection_query(query):
         logger.warning("refusing prompt-injection-shaped query")
+        return {"answer": None, "grounded": False, "fallback": _FALLBACK, "store": store or ""}
+
+    # A privacy question with no privacy policy in the KB is a hand-off, never a store fact that
+    # happens to share the caller's words (see ``_PRIVACY_QUERY``).
+    if _PRIVACY_QUERY.search(query) and not _has_privacy_policy():
         return {"answer": None, "grounded": False, "fallback": _FALLBACK, "store": store or ""}
 
     result = _grounded(query, store, topic)

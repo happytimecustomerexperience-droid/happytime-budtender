@@ -238,22 +238,37 @@ def _content_words(text: str) -> set[str]:
     return {t for t in _tokens(text, drop_stop=True) if len(t) >= _LEXICAL_MIN_LEN}
 
 
+# COVERAGE FLOOR (2026-09-01). "shares at least two content words" is blind to how much of the
+# question those two words are: "is your weed cheaper than the shop down the street" shares
+# exactly "weed" and "shop" with the Mount Vernon address blurb — two words out of six, none of
+# them what the caller asked about — and was answered with the store's address as though it were
+# a price comparison. Requiring the shared words to be a real SHARE of the question rejects that
+# (2/6 = 0.33) while leaving every genuine hit alone: a defective-cart complaint covers 0.40 of
+# its own words, an hours/address/phone question covers 0.75-1.00. The short-query escape below
+# (``overlap == q``) is untouched, so "what are your hours" still grounds on its one word.
+_MIN_COVERAGE = 0.4
+
+
 def relevant_enough(query: str, row) -> bool:
     """RELEVANCE FLOOR for unconstrained retrieval (22-SPEC follow-up) — deliberately independent
     of the ranking score above; it re-derives relevance from the raw query text against the
     winning row's chunk text, so it gates BOTH the keyword and the embedding (cosine) ranking
-    paths alike. Passes when the row shares AT LEAST TWO of the query's distinctive content
-    words with it ("a cartridge ... won't fire" ↔ the WAC row's "a vape cart that won't fire"),
-    OR — for a short query with only one content word — that one word IS the shared word ("what
-    are your hours" ↔ "hours"). Rejects a row that shares just ONE incidental word out of several
-    ("best" in "just give me your best guess", "bring" in "alright, I'll bring the box in").
+    paths alike. Passes when the row covers the WHOLE of a short query ("what are your hours" ↔
+    "hours"), or shares at least two of the query's distinctive content words AND those shared
+    words are at least ``_MIN_COVERAGE`` of the question ("a cartridge ... won't fire" ↔ the WAC
+    row's "a vape cart that won't fire"). Rejects a row that shares just ONE incidental word out
+    of several ("best" in "just give me your best guess", "bring" in "alright, I'll bring the box
+    in") and — since 2026-09-01 — a row that shares two words that are still only a fragment of
+    what was asked ("weed"/"shop" out of "is your weed cheaper than the shop down the street").
     False when the query has no content words at all (never confident on nothing)."""
     q = _content_words(query)
     if not q:
         return False
     chunk_text = row.chunk_text() if hasattr(row, "chunk_text") else str(row)
     overlap = q & _content_words(chunk_text)
-    return len(overlap) >= 2 or overlap == q
+    if overlap == q:  # short query, every word of it is in the row
+        return True
+    return len(overlap) >= 2 and len(overlap) / len(q) >= _MIN_COVERAGE
 
 
 def rank_faq(
