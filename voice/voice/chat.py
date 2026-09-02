@@ -1289,17 +1289,25 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         }
 
     if escalation:
-        # GAP3: driving/allergen safety escalations get their own neutral non-medical copy
-        # instead of the returns/refunds dispute apology. Poison-emergency keeps its own
-        # dedicated line; every other escalation reason (dispute, dosing-advice, drug
-        # interaction, adverse event, proxy purchase) keeps the existing dispute copy — reuse
-        # only, per the brief.
-        is_driving_or_allergen_safety = not is_poison_emergency and (
-            _is_impaired_driving_question(message) or _is_allergen_question(message)
+        # GAP3: a safety escalation gets neutral non-medical copy instead of the returns/refunds
+        # dispute apology. Poison-emergency keeps its own dedicated line; a genuine DISPUTE keeps
+        # the dispute copy.
+        #
+        # 2026-09-01: condition-dosing ("how much should I take for my anxiety") and drug
+        # interaction ("can I take this with my blood pressure medication") were escalating with
+        # ``_escalation_answer``'s "I can't confirm a return or refund outcome" — a non-sequitur
+        # for a caller who is not disputing anything. They are the SAME class of question as
+        # driving/allergen (the agent cannot answer it safely), so they now pick the same
+        # already-owner-signed copy. No new wording.
+        is_cannot_answer_safely = not is_poison_emergency and (
+            _is_impaired_driving_question(message)
+            or _is_allergen_question(message)
+            or _is_dosing_advice_question(message)
+            or _is_drug_interaction_question(message)
         )
         if is_poison_emergency:
             answer = _poison_emergency_answer(store, phone)
-        elif is_driving_or_allergen_safety:
+        elif is_cannot_answer_safely:
             answer = _cannot_answer_safely_answer(store, phone)
         else:
             answer = _escalation_answer(store, phone)
