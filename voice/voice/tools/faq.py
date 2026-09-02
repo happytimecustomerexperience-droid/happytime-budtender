@@ -86,6 +86,66 @@ _PRIVACY_QUERY = re.compile(
 )
 
 
+# NEW COPY — REQUIRES OWNER APPROVAL. Spoken only when the KB holds no special that is valid
+# today. It states the absence and hands the caller to a person; it never invents a deal, and it
+# never falls back to last month's.
+_NO_CURRENT_SPECIALS = (
+    "We don't have any specials posted right now. Our deals change month to month, so a "
+    "budtender in store can tell you what's running today."
+)
+# How many deal lines one spoken answer may carry. A store runs about nine; reading all of them
+# blows past the written word cap and stops sounding like an answer.
+_MAX_SPOKEN_SPECIALS = 8
+
+
+def _specials_answer(store: str | None) -> dict:
+    """The specials answer, composed from the store's own CURRENT deal rows.
+
+    The deal percentages used to live in the ``specials`` FAQEntry's prose, which meant they were
+    frozen at whatever month was seeded — callers were told about July's deals in September, and
+    the row could not be fixed without a code change. The numbers now live only in dated
+    ``StoreFact(kind="special")`` rows, so this reads whatever is valid TODAY and says so plainly
+    when that is nothing.
+
+    Only ``value`` is spoken, never ``label``: the label carries the owner-facing month name
+    ("July: 30% off all flower"), which has no business in a caller's answer.
+    """
+    from django.db.models import Q
+
+    from kb.models import StoreFact
+
+    qs = StoreFact.objects.current().filter(kind="special", is_active=True, confirmed=True)
+    if store:
+        qs = qs.filter(Q(store=store) | Q(store=""))
+    rows = list(qs.order_by("-weight", "label")[:_MAX_SPOKEN_SPECIALS])
+    if not rows:
+        # NOT grounded: there is no KB row that says "there are no specials" — this is a report
+        # of an ABSENCE, and claiming it as a cited fact is exactly the overstatement
+        # Numbers-Guard exists to stop. It rides back as the ``fallback`` so the caller still
+        # hears this line rather than the generic "I'm not certain on that one".
+        return {
+            "answer": None,
+            "grounded": False,
+            "fallback": _NO_CURRENT_SPECIALS,
+            "store": store or "",
+        }
+    answer = " ".join(str(row.value).strip() for row in rows if str(row.value).strip())
+    return {
+        "answer": answer,
+        "grounded": True,
+        "sources": [
+            {
+                "kind": "store_fact",
+                "id": row.pk,
+                "title": _row_title(row),
+                "source_url": _row_url(row),
+            }
+            for row in rows
+        ],
+        "store": store or "",
+    }
+
+
 def _has_privacy_policy() -> bool:
     from kb.models import PolicyDocument
 
@@ -205,6 +265,13 @@ def faq_lookup(args: dict, ctx: dict) -> dict:
     # happens to share the caller's words (see ``_PRIVACY_QUERY``).
     if _PRIVACY_QUERY.search(query) and not _has_privacy_policy():
         return {"answer": None, "grounded": False, "fallback": _FALLBACK, "store": store or ""}
+
+    # "What's on sale" is answered from the deal rows that are valid TODAY, not from whichever
+    # row ranks first (see ``_specials_answer``). Ranking cannot decide this: the generic
+    # specials FAQEntry and the dated StoreFact rows are both on-topic, and only the dates say
+    # which one is true right now.
+    if topic == "specials":
+        return _specials_answer(store)
 
     result = _grounded(query, store, topic)
     if result is not None:

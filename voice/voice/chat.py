@@ -1572,6 +1572,14 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         if anchor_sku:
             return _pair_upsell_reply(anchor_sku, store, phone, ctx, tool_results)
 
+    # A specials turn is answered by ``faq_lookup``'s specials branch either way — with the deals
+    # that are actually running, or with the honest "nothing posted right now". Falling through
+    # to the shelf when no deal is current would quietly swap the caller's question ("any
+    # specials on edibles?") for a product pitch that never mentions a deal at all.
+    if faq_topic == "specials":
+        category = ""
+        attempt_product_search = False
+
     if category or attempt_product_search:
         suggest_args = {key: slots[key] for key in _PRODUCT_SLOT_KEYS if key in slots}
         if "price_max" not in suggest_args:

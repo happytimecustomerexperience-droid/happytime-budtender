@@ -60,7 +60,15 @@ def _render_store_facts() -> str:
     from kb.models import StoreFact
 
     out = [_h("Store facts")]
-    rows = StoreFact.objects.filter(is_active=True).exclude(kind="limit").order_by("store", "kind")
+    # ``.current()``: the file mirrored to Vapi is what the PHONE agent reads, so an expired
+    # monthly deal left here would keep being recited on calls even after the KB stopped
+    # serving it to text chat.
+    rows = (
+        StoreFact.objects.current()
+        .filter(is_active=True)
+        .exclude(kind="limit")
+        .order_by("store", "kind")
+    )
     by_store: dict[str, list] = {}
     for r in rows:
         by_store.setdefault(r.store or "all stores", []).append(r)
@@ -75,7 +83,11 @@ def _render_wa_law() -> str:
     from kb.models import StoreFact, WeightTypeTaxonomy
 
     out = [_h("Washington law — purchase limits + age")]
-    for r in StoreFact.objects.filter(is_active=True, kind__in=["limit", "age"]).order_by("label"):
+    for r in (
+        StoreFact.objects.current()
+        .filter(is_active=True, kind__in=["limit", "age"])
+        .order_by("label")
+    ):
         out.append(r.chunk_text() + "\n\n")
     out.append("## Limits (reference)\n\n")
     for r in WeightTypeTaxonomy.objects.filter(is_active=True, axis="limit").order_by("id"):

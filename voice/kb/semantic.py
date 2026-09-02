@@ -164,6 +164,10 @@ def _build_corpus(store: str | None, topic: str = "", kind: str = ""):
         qs = Model.objects.filter(is_active=True)
         if Model.__name__ == "PolicyDocument":
             qs = qs.select_related("category")
+        if Model.__name__ == "StoreFact":
+            # A dated promotion outside its window is not a fact any more (kb.models
+            # StoreFactQuerySet.current) — it must never enter the retrieval corpus at all.
+            qs = qs.current()
         for row in qs:
             if _store_scoped(prefix) and store:
                 row_store = (getattr(row, "store", "") or "").strip()
@@ -172,7 +176,10 @@ def _build_corpus(store: str | None, topic: str = "", kind: str = ""):
             if topic and not _topic_allows(topic, Model.__name__, row, kind):
                 continue
             chunk_id = f"{prefix}{row.pk}"
-            items.append((chunk_id, row.chunk_text()))
+            text = row.chunk_text()
+            if not text.strip():
+                continue  # a row that declines to describe itself (see StoreFact.chunk_text)
+            items.append((chunk_id, text))
             row_by_id[chunk_id] = row
     return items, row_by_id
 

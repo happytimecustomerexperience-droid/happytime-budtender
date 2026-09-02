@@ -6,7 +6,10 @@
     <h1>Specials &amp; hours</h1>
     <p class="muted">The weekly specials + per-store hours the <strong>faq</strong> assistant
       speaks. Edits go live on the next call (no redeploy). The % / times come from these KB rows
-      only — the agent never invents a number (Numbers-Guard).</p>
+      only — the agent never invents a number (Numbers-Guard). Give a deal a
+      <strong>Runs</strong> window and it starts and stops speaking itself on those dates — a row
+      marked <span class="badge slate">not running</span> is never read to a caller, so you can
+      post next month's deals today.</p>
   </div>
   <a class="btn btn-primary" href="{% url 'dash-kb-row-new' 'store-fact' %}">+ New row</a>
 </div>
@@ -28,15 +31,22 @@
 
 <div class="card">
   <table>
-    <tr><th>Kind</th><th>Store</th><th>Label</th><th>Value</th><th>Status</th><th></th></tr>
+    <tr><th>Kind</th><th>Store</th><th>Label</th><th>Value</th><th>Runs</th><th>Status</th><th></th></tr>
     {% for r in rows %}
       <tr>
         <td><span class="badge blue">{{ r.get_kind_display }}</span></td>
         <td>{{ r.store|default:"all" }}</td>
         <td>{{ r.label }}</td>
         <td class="muted">{{ r.value|truncatechars:60 }}</td>
+        <td class="muted">
+          {% if r.valid_from or r.valid_to %}
+            {{ r.valid_from|date:"M j, Y"|default:"any time" }} –
+            {{ r.valid_to|date:"M j, Y"|default:"no end" }}
+          {% else %}always{% endif %}
+        </td>
         <td>
           {% if not r.is_active %}<span class="badge slate">inactive</span>
+          {% elif not r.is_current %}<span class="badge slate">not running</span>
           {% elif r.confirmed %}<span class="badge green">confirmed</span>
           {% else %}<span class="badge amber">call to confirm</span>{% endif %}
         </td>
@@ -49,7 +59,7 @@
         </td>
       </tr>
     {% empty %}
-      <tr><td colspan="6" class="muted">No specials or hours rows yet.</td></tr>
+      <tr><td colspan="7" class="muted">No specials or hours rows yet.</td></tr>
     {% endfor %}
   </table>
 </div>

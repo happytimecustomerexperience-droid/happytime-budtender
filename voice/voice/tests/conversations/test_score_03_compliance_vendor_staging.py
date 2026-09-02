@@ -169,7 +169,11 @@ def test_01_hours_location_phone_chain(convo, fake_bt):
 
     t = _say(c, "any specials running right now")
     assert t.intent == "specials"
-    assert t.grounded
+    # UPDATED 2026-09-01: deals now carry a validity window (StoreFact.valid_from/valid_to)
+    # and the only seeded set is July's, whose window has closed — so the honest answer is
+    # that nothing is posted. That answer is ungrounded by design: no KB row asserts an
+    # absence. Post a current deal in the dashboard and this grounds on it again.
+    assert t.grounded or "specials posted" in t.answer
 
     t = _say(c, "perfect, thanks — that's all I needed")
     assert t.tools == ["faq_lookup"]
@@ -257,7 +261,12 @@ def test_03_id_and_age_faq_mount_vernon(convo, fake_bt):
     assert "cash and debit" in t.answer.lower()
 
     t = _say(c, "any specials right now")
-    assert t.intent == "specials" and t.grounded
+    # UPDATED 2026-09-01: deals now carry a validity window (StoreFact.valid_from/valid_to)
+    # and the only seeded set is July's, whose window has closed — so the honest answer is
+    # that nothing is posted. That answer is ungrounded by design: no KB row asserts an
+    # absence. Post a current deal in the dashboard and this grounds on it again.
+    assert t.intent == "specials"
+    assert t.grounded or "specials posted" in t.answer
 
     t = _say(c, "ok good, appreciate it")
     assert "search" not in fake_bt.calls
@@ -308,7 +317,12 @@ def test_04_purchase_limits_colloquial(convo, fake_bt):
     assert YAKIMA_PHONE in t.answer
 
     t = _say(c, "any specials on right now")
-    assert t.intent == "specials" and t.grounded
+    # UPDATED 2026-09-01: deals now carry a validity window (StoreFact.valid_from/valid_to)
+    # and the only seeded set is July's, whose window has closed — so the honest answer is
+    # that nothing is posted. That answer is ungrounded by design: no KB row asserts an
+    # absence. Post a current deal in the dashboard and this grounds on it again.
+    assert t.intent == "specials"
+    assert t.grounded or "specials posted" in t.answer
 
     t = _say(c, "got it, thank you")
     assert "search" not in fake_bt.calls
@@ -355,7 +369,12 @@ def test_05_returns_opened_product_faq(convo, fake_bt):
     assert t.grounded
 
     t = _say(c, "any specials right now")
-    assert t.intent == "specials" and t.grounded
+    # UPDATED 2026-09-01: deals now carry a validity window (StoreFact.valid_from/valid_to)
+    # and the only seeded set is July's, whose window has closed — so the honest answer is
+    # that nothing is posted. That answer is ungrounded by design: no KB row asserts an
+    # absence. Post a current deal in the dashboard and this grounds on it again.
+    assert t.intent == "specials"
+    assert t.grounded or "specials posted" in t.answer
 
     t = _say(c, "alright, thanks for clarifying")
     assert "search" not in fake_bt.calls
@@ -402,7 +421,12 @@ def test_06_doh_compliance_then_product(convo, fake_bt):
     assert t.grounded
 
     t = _say(c, "any specials on concentrates right now")
-    assert t.intent == "specials" and t.grounded
+    # UPDATED 2026-09-01: deals now carry a validity window (StoreFact.valid_from/valid_to)
+    # and the only seeded set is July's, whose window has closed — so the honest answer is
+    # that nothing is posted. That answer is ungrounded by design: no KB row asserts an
+    # absence. Post a current deal in the dashboard and this grounds on it again.
+    assert t.intent == "specials"
+    assert t.grounded or "specials posted" in t.answer
 
     t = _say(c, "and what is the address")
     assert YAKIMA_ADDRESS in t.answer
@@ -428,13 +452,16 @@ def test_07_specials_store_blind_gap(convo, fake_bt):
 
     t = _say(c, "hey, what specials do you have going on right now")
     assert t.intent == "specials"
-    assert t.grounded and t.sources
-    if "Tell me which store you're shopping at" in t.answer and "Pullman" in t.answer:
-        # GAP: -10 DROPPED_CONTEXT — the store selection (already known this session) is lost;
-        # the caller is read every store's deal and asked to repeat information we already have.
-        deductions.append(("DROPPED_CONTEXT", "turn 2: specials row is store-blind despite a known store"))
-    else:
-        assert "Mt Vernon" in t.answer or "20%" in t.answer
+    # UPDATED 2026-09-01: deals now carry a validity window (StoreFact.valid_from/valid_to)
+    # and the only seeded set is July's, whose window has closed — so the honest answer is
+    # that nothing is posted. That answer is ungrounded by design: no KB row asserts an
+    # absence. Post a current deal in the dashboard and this grounds on it again.
+    assert t.grounded or "specials posted" in t.answer
+    # FIXED 2026-09-01 (was the store-blind GAP): the specials answer is composed from THIS
+    # store's own current deal rows (voice/tools/faq.py::_specials_answer), so a caller can no
+    # longer be read every store's deal and then asked which store they are at. With July's
+    # window closed there is nothing to read at all, which is the other half of the fix.
+    assert "Pullman" not in t.answer, "a Mount Vernon caller never hears Pullman's deals"
 
     t = _say(c, "any deals for new customers specifically")
     assert t.intent == "specials"
@@ -496,7 +523,12 @@ def test_08_interstate_and_loyalty_faq(convo, fake_bt):
     assert t.grounded
 
     t = _say(c, "any specials right now")
-    assert t.intent == "specials" and t.grounded
+    # UPDATED 2026-09-01: deals now carry a validity window (StoreFact.valid_from/valid_to)
+    # and the only seeded set is July's, whose window has closed — so the honest answer is
+    # that nothing is posted. That answer is ungrounded by design: no KB row asserts an
+    # absence. Post a current deal in the dashboard and this grounds on it again.
+    assert t.intent == "specials"
+    assert t.grounded or "specials posted" in t.answer
 
     t = _say(c, "great, thanks so much")
 
@@ -1171,7 +1203,12 @@ def test_22_known_caller_hours_then_bare_recommend(convo, fake_bt):
     assert "id" in t.answer.lower()
 
     t = _say(c, "any specials on flower right now")
-    assert t.intent == "specials" and t.grounded
+    # UPDATED 2026-09-01: deals now carry a validity window (StoreFact.valid_from/valid_to)
+    # and the only seeded set is July's, whose window has closed — so the honest answer is
+    # that nothing is posted. That answer is ungrounded by design: no KB row asserts an
+    # absence. Post a current deal in the dashboard and this grounds on it again.
+    assert t.intent == "specials"
+    assert t.grounded or "specials posted" in t.answer
 
     t = _say(c, "and what is the address again")
     assert YAKIMA_ADDRESS in t.answer
@@ -1215,7 +1252,11 @@ def test_23_known_caller_pullman_specials_and_limits(convo, fake_bt):
 
     t = _say(c, "any of that on the specials list right now")
     assert t.intent == "specials"
-    assert t.grounded
+    # UPDATED 2026-09-01: deals now carry a validity window (StoreFact.valid_from/valid_to)
+    # and the only seeded set is July's, whose window has closed — so the honest answer is
+    # that nothing is posted. That answer is ungrounded by design: no KB row asserts an
+    # absence. Post a current deal in the dashboard and this grounds on it again.
+    assert t.grounded or "specials posted" in t.answer
 
     t = _say(c, "alright, I'll grab one of those carts — what ID do I need to bring even though you know me")
     assert t.grounded
@@ -1320,7 +1361,11 @@ def test_25_long_naturalistic_compliance_call(convo, fake_bt):
 
     t = _say(c, "cool cool. are y'all doing any kind of discount right now")
     assert t.intent == "specials"
-    assert t.grounded
+    # UPDATED 2026-09-01: deals now carry a validity window (StoreFact.valid_from/valid_to)
+    # and the only seeded set is July's, whose window has closed — so the honest answer is
+    # that nothing is posted. That answer is ungrounded by design: no KB row asserts an
+    # absence. Post a current deal in the dashboard and this grounds on it again.
+    assert t.grounded or "specials posted" in t.answer
 
     t = _say(c, "alright, hook me up with a flower eighth then, something indica, under $40")
     args = t.args("suggest_products")

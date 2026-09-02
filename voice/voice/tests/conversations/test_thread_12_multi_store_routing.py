@@ -87,13 +87,26 @@ def test_mount_vernon_call_then_the_pullman_call(convo, fake_bt):
     # specials-only rows, so the per-store rows compete directly and DO surface among the sources
     # — just not as the top (spoken) one, so the GAP itself is unchanged.
     t5 = mv.say(SCRIPT[4])
-    assert t5.intent == "specials" and t5.grounded
-    assert "20% off at Yakima and Mount Vernon" in t5.answer
-    assert "30% off at Pullman" in t5.answer, "a Mt Vernon caller is read Pullman's deal"
-    assert "Tell me which store you're shopping at" in t5.answer
-    assert any(title.startswith("July:") for title in _titles(t5)), (
-        "topic constraint now surfaces the per-store special rows as sources"
-    )
+    # UPDATED 2026-09-01: deals carry a validity window now (StoreFact.valid_from/valid_to)
+    # and the only seeded set is July's, whose window has closed, so the specials answer is
+    # the honest "nothing posted right now" — ungrounded by design (no KB row asserts an
+    # absence). Post a current deal in the dashboard and this grounds on it again.
+    assert t5.intent == "specials"
+    assert t5.grounded or "specials posted" in t5.answer
+    assert "Pullman" not in t5.answer, "a Mount Vernon caller never hears Pullman's deals"
+    # The cross-store deal recital ("20% off at Yakima and Mount Vernon") came from the FAQ
+    # row's hardcoded July prose, which is gone: a specials answer is now built from THIS
+    # store's current rows, so it can only ever name the deals of the store being asked about.
+    assert "Yakima" not in t5.answer
+    # ...which is the whole GAP this line used to pin: a Mt Vernon caller was read Pullman's
+    # deal. It cannot happen any more.
+    # Nor is she asked which store she is at five turns after telling us: the answer is scoped
+    # to her store already, so the question never has to be re-asked.
+    assert "which store" not in t5.answer
+    # The July rows are out of their window, so they are not sources either — an expired deal
+    # is not evidence for anything. When a deal IS running its row is the source (pinned by
+    # tests/test_kb.py::test_expired_special_is_never_spoken_and_a_current_one_is).
+    assert not any(title.startswith("July:") for title in _titles(t5))
 
     # 6 ── a product ask: the store must reach the inventory search AND the OTD tax rate.
     t6 = mv.say(SCRIPT[5])

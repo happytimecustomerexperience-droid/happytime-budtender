@@ -161,9 +161,11 @@ def handle_assistant_request(message: dict) -> JsonResponse:
     }.get(store, "Happy Time")
 
     hours = ""
-    hours_fact = StoreFact.objects.filter(
-        store=store, kind="hours", confirmed=True, is_active=True
-    ).first()
+    hours_fact = (
+        StoreFact.objects.current()
+        .filter(store=store, kind="hours", confirmed=True, is_active=True)
+        .first()
+    )
     if hours_fact:
         hours = hours_fact.value
 

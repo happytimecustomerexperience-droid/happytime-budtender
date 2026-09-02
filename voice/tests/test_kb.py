@@ -452,7 +452,9 @@ def test_reindex_returns_chunk_count(seeded_semantic):
     active = (
         m.FAQEntry.objects.filter(is_active=True).count()
         + m.PolicyDocument.objects.filter(is_active=True).count()
-        + m.StoreFact.objects.filter(is_active=True).count()
+        # UPDATED 2026-09-01: a StoreFact outside its validity window is not in the retrieval
+        # corpus at all (kb.models.StoreFactQuerySet.current), so it is not a chunk to index.
+        + m.StoreFact.objects.current().filter(is_active=True).count()
         + m.EducationDoc.objects.filter(is_active=True).count()
         + m.BlogDoc.objects.filter(is_active=True).count()
         + m.WeightTypeTaxonomy.objects.filter(is_active=True).count()
@@ -816,3 +818,85 @@ def test_mirror_find_by_name_then_replace_no_duplicate_creates(monkeypatch):
     assert len(state["files"]) == n_files, "a re-mirror duplicated files"
     assert state["creates"] == 2 * n_files  # each re-created exactly once
     assert len({f["name"] for f in state["files"]}) == n_files
+
+
+# ── Dated deals: an expired special is not a fact any more (2026-09-01) ────────
+@pytest.mark.django_db
+def test_expired_special_is_never_spoken_and_a_current_one_is():
+    """The whole point of ``StoreFact.valid_from``/``valid_to``.
+
+    A monthly deal used to be plain prose with its dates baked in ("30% off all flower —
+    July 1–31"), so nothing in the system knew it had stopped being true and callers were still
+    being read July's deals in September. Now the window is data, and every path that could
+    speak the row honours it.
+    """
+    import datetime
+
+    from kb import semantic
+    from kb.models import StoreFact
+    from voice.tools.faq import faq_lookup
+
+    expired = StoreFact.objects.create(
+        store="yakima", kind="special", label="July: 30% off flower",
+        value="30% off all flower.", confirmed=True,
+        valid_from=datetime.date(2026, 7, 1), valid_to=datetime.date(2026, 7, 31),
+    )
+    StoreFact.objects.create(
+        store="yakima", kind="special", label="Next year: 50% off everything",
+        value="50% off everything.", confirmed=True,
+        valid_from=datetime.date(2099, 1, 1), valid_to=datetime.date(2099, 1, 31),
+    )
+
+    # 1. The model itself, and the queryset every read path funnels through.
+    assert not expired.is_current(datetime.date(2026, 9, 2))
+    assert expired.chunk_text() == "", "an out-of-window row describes itself as nothing"
+    assert set(StoreFact.objects.current(datetime.date(2026, 9, 2))) == set()
+    assert expired in set(StoreFact.objects.current(datetime.date(2026, 7, 15)))
+
+    # 2. Retrieval never sees it, so no ranking accident can surface it.
+    corpus, _ = semantic._build_corpus("yakima")
+    assert not any("30% off all flower" in text for _id, text in corpus)
+    assert not any("50% off everything" in text for _id, text in corpus)
+
+    # 3. And the spoken specials answer says so plainly rather than reciting a stale deal.
+    out = faq_lookup({"query": "what specials do you have", "store": "yakima",
+                      "topic": "specials"}, {})
+    assert out["grounded"] is False, "an absence is reported, never cited as a KB fact"
+    assert "30%" not in out["fallback"] and "50%" not in out["fallback"]
+    assert "don't have any specials posted" in out["fallback"]
+
+    # 4. A deal that IS running today is spoken — the value only, never the owner-facing label.
+    StoreFact.objects.create(
+        store="yakima", kind="special", label="This month: 15% off pre-rolls",
+        value="15% off flower pre-rolls.", confirmed=True,
+        valid_from=datetime.date.today() - datetime.timedelta(days=1),
+        valid_to=datetime.date.today() + datetime.timedelta(days=1),
+    )
+    out = faq_lookup({"query": "what specials do you have", "store": "yakima",
+                      "topic": "specials"}, {})
+    assert out["grounded"] is True
+    assert "15% off flower pre-rolls." in out["answer"]
+    assert "This month" not in out["answer"], "the label is owner-facing, never spoken"
+    assert "30%" not in out["answer"], "the expired deal stays out of a current answer"
+
+
+@pytest.mark.django_db
+def test_seeded_specials_carry_their_window_and_no_date_prose():
+    """The July rows keep their dates as DATA. The spoken value carries no month name — a value
+    is what a caller hears, and a hardcoded month is wrong eleven months a year."""
+    import datetime
+
+    from kb import seed
+    from kb.models import StoreFact
+
+    seed.seed_all()
+    rows = StoreFact.objects.filter(kind="special")
+    assert rows.exists()
+    for row in rows:
+        assert row.valid_from == datetime.date(2026, 7, 1)
+        assert row.valid_to == datetime.date(2026, 7, 31)
+        assert "july" not in row.value.lower(), f"month name spoken in {row.label!r}"
+
+    specials_faq = m.FAQEntry.objects.get(key="specials")
+    assert "%" not in specials_faq.answer, "deal percentages belong to the dated StoreFact rows"
+    assert "july" not in specials_faq.answer.lower()

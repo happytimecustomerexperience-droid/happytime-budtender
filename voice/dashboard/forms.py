@@ -80,6 +80,11 @@ class PolicyCategoryForm(forms.ModelForm):
 
 
 class StoreFactForm(forms.ModelForm):
+    """``valid_from``/``valid_to`` are how the owner posts next month's deals without anyone
+    having to remember to take this month's down: a row outside its window stops being spoken
+    on its own. Both are optional — leave them blank for anything that does not expire, which
+    is every row except a dated promotion."""
+
     class Meta:
         model = StoreFact
         fields = [
@@ -89,9 +94,26 @@ class StoreFactForm(forms.ModelForm):
             "value",
             "source_url",
             "confirmed",
+            "valid_from",
+            "valid_to",
             "weight",
             "is_active",
         ]
+        widgets = {
+            "valid_from": forms.DateInput(attrs={"type": "date"}),
+            "valid_to": forms.DateInput(attrs={"type": "date"}),
+        }
+        help_texts = {
+            "valid_from": "Optional. The agent won't speak this row before this date.",
+            "valid_to": "Optional. The agent stops speaking this row after this date.",
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        start, end = cleaned.get("valid_from"), cleaned.get("valid_to")
+        if start and end and end < start:
+            raise forms.ValidationError("'Valid to' cannot be earlier than 'Valid from'.")
+        return cleaned
 
 
 class EducationDocForm(forms.ModelForm):

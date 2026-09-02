@@ -20,6 +20,8 @@ signature so no caller changes.
 
 from __future__ import annotations
 
+import datetime
+
 from django.db import models
 
 
@@ -141,6 +143,20 @@ class PolicyDocument(SourceSyncMixin, models.Model):
         return f"{self.title} [{self.category.slug}]"
 
 
+class StoreFactQuerySet(models.QuerySet):
+    """``current()`` is the one place the validity window is expressed. Every path that RETRIEVES
+    or SPEAKS a store fact goes through it (``kb.semantic._build_corpus``, ``kb.vapi_files``, the
+    ``faq_lookup`` specials answer, the webhook's hours lookup); the dashboard editor deliberately
+    does NOT, so the owner can still see and edit a deal whose window has closed."""
+
+    def current(self, today=None):
+        today = today or datetime.date.today()
+        return self.filter(
+            models.Q(valid_from__isnull=True) | models.Q(valid_from__lte=today),
+            models.Q(valid_to__isnull=True) | models.Q(valid_to__gte=today),
+        )
+
+
 class StoreFact(SourceSyncMixin, models.Model):
     """Per-store + global operational facts the agent localizes — address, phone, hours,
     email, payment, pickup, specials, limits, age. The ``confirmed`` flag carries O-8
@@ -163,16 +179,37 @@ class StoreFact(SourceSyncMixin, models.Model):
     value = models.TextField(blank=True)  # the spoken value ("9 AM–11 PM daily")
     source_url = models.URLField(blank=True)
     confirmed = models.BooleanField(default=True)  # O-8: False => "call to confirm", never a fact
+    # Validity window (2026-09-01). A monthly deal used to be a plain row with its dates baked
+    # into the prose ("30% off all flower — July 1–31"), so it kept being read out to callers in
+    # September: the KB had no way to know a row had stopped being true. Both ends are nullable
+    # and both default to open, so every row that is not a dated promotion behaves exactly as
+    # before — an address does not expire.
+    valid_from = models.DateField(null=True, blank=True)
+    valid_to = models.DateField(null=True, blank=True)
     weight = models.IntegerField(default=110)
     embedding = models.JSONField(null=True, blank=True)  # pgvector swap-seam
     is_active = models.BooleanField(default=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = StoreFactQuerySet.as_manager()
+
     class Meta:
         unique_together = [("store", "kind", "label")]  # natural key for idempotent seed
         ordering = ["store", "kind", "label"]
 
+    def is_current(self, today=None) -> bool:
+        """Whether this row is inside its validity window today. An absent bound is open."""
+        today = today or datetime.date.today()
+        if self.valid_from and today < self.valid_from:
+            return False
+        return not (self.valid_to and today > self.valid_to)
+
     def chunk_text(self) -> str:
+        # Fail closed: an out-of-window row contributes NO text, so any retrieval path that
+        # forgets to filter (``StoreFactQuerySet.current``) still cannot speak a stale deal.
+        # ``kb.semantic._build_corpus`` drops empty chunks.
+        if not self.is_current():
+            return ""
         scope = f"{self.store} " if self.store else ""
         if not self.confirmed:
             return (

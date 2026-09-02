@@ -588,3 +588,62 @@ def test_conversation_history_combines_voice_and_chat(client_staff, settings, mo
     assert "pullman" in content
     assert "Caller asked about hours." in content
     assert "What effect?" in content
+
+
+# ── Deal validity window (2026-09-01) ──────────────────────────────────────────
+@pytest.mark.django_db
+def test_specials_hours_shows_the_run_window_and_flags_a_closed_one(client_staff):
+    """The owner can see WHEN each deal runs, and that a finished one is no longer being read out.
+
+    The editor deliberately still LISTS an out-of-window row — the owner has to be able to find
+    last month's deal to edit or re-date it — it is just labelled as not running.
+    """
+    import datetime
+
+    from kb.models import StoreFact
+
+    StoreFact.objects.create(
+        kind="special", label="July: 30% off flower", value="30% off all flower.",
+        valid_from=datetime.date(2026, 7, 1), valid_to=datetime.date(2026, 7, 31),
+    )
+    StoreFact.objects.create(
+        kind="special", label="Always: loyalty double points", value="Double points on Tuesdays.",
+    )
+    resp = client_staff.get(reverse("dash-specials-hours"))
+    body = resp.content.decode()
+    assert "July: 30% off flower" in body, "an expired deal is still editable"
+    assert "Jul 1, 2026" in body and "Jul 31, 2026" in body, "the window is visible"
+    assert "not running" in body, "and it is flagged as no longer spoken"
+    assert "always" in body, "an undated row runs indefinitely"
+
+
+@pytest.mark.django_db
+def test_store_fact_form_saves_the_window_and_rejects_a_backwards_one():
+    """The owner posts next month's deals by giving the row a window; the form is the only place
+    they have to touch."""
+    import datetime
+
+    from dashboard.forms import StoreFactForm
+    from kb.models import StoreFact
+
+    base = {
+        "store": "yakima", "kind": "special", "label": "October: 25% off carts",
+        "value": "25% off vape cartridges.", "source_url": "", "confirmed": True,
+        "weight": 105, "is_active": True,
+    }
+    form = StoreFactForm(data={**base, "valid_from": "2026-10-01", "valid_to": "2026-10-31"})
+    assert form.is_valid(), form.errors
+    row = form.save()
+    assert row.valid_from == datetime.date(2026, 10, 1)
+    assert row.valid_to == datetime.date(2026, 10, 31)
+    assert StoreFact.objects.get(pk=row.pk).is_current(datetime.date(2026, 10, 15))
+    assert not row.is_current(datetime.date(2026, 9, 30)), "not yet valid"
+    assert not row.is_current(datetime.date(2026, 11, 1)), "expired"
+
+    backwards = StoreFactForm(data={**base, "valid_from": "2026-10-31", "valid_to": "2026-10-01"})
+    assert not backwards.is_valid()
+
+    undated = StoreFactForm(data={**base, "label": "Address", "kind": "address",
+                                  "valid_from": "", "valid_to": ""})
+    assert undated.is_valid(), undated.errors
+    assert undated.save().is_current(), "a row with no window always applies"

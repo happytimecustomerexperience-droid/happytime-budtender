@@ -13,16 +13,19 @@ provisional=True (verbatim house copy blocked by the Vercel wall — re-run seed
 
 from __future__ import annotations
 
+import datetime
 import json
 from pathlib import Path
 
 from kb import models as m
 from kb.taxonomy_source import CONCENTRATE_SUBTYPE_VALUES  # parity-anchored to budtender
+from voice.constants import (
+    ASSISTANT_MODEL as VAPI_MODEL,  # ADR-024 — single source is voice/constants.py
+)
+from voice.constants import ASSISTANT_PROVIDER as MODEL_PROVIDER
 
 VOICE_ID = "a3520a8f-226a-428d-9fcd-b0a4711a6829"  # Cartesia sonic-3 voice (default; switchable to 11labs in dashboard)
 VOICE_PROVIDER = "cartesia"  # default voice provider; dashboard can switch a role to "11labs"
-VAPI_MODEL = "gemini-2.5-flash"  # ADR-024 (owner override of ADR-010 gpt-4.1-mini → Gemini 2.5 Flash)
-MODEL_PROVIDER = "google"  # Vapi provider string for Gemini
 
 
 # ── 1. FAQ Q&As (§8.1) ────────────────────────────────────────────────────────
@@ -116,14 +119,16 @@ FAQ_ROWS = [
     },
     {
         "key": "specials",
+        # 2026-09-01: the deal PROSE is gone from this row. It hardcoded one month's percentages
+        # and its own end date, so it kept reciting July's deals in September — and because it is
+        # also mirrored into the Vapi files, the phone agent recited them too. The numbers now
+        # live only in the dated ``StoreFact(kind="special")`` rows, which ``faq_lookup`` reads
+        # for whatever is actually running today; this row is the evergreen pointer that stays
+        # true in every month.
         "question": "What are the current deals? / Any specials? / What's on sale?",
-        "answer": "We have big July deals running all month at every Happy Time location. "
-        "Flower is 30% off — eighths, quarters, and halves. "
-        "Concentrates are 30% off, vape carts and disposables are 25% off, "
-        "and pre-rolls including infused are 20% off. "
-        "Edibles, drinks, and wellness products are 20% off at Yakima and Mount Vernon, "
-        "and 30% off at Pullman. All deals run July 1 through July 31. "
-        "Tell me which store you're shopping at and I can give you the exact list.",
+        "answer": "Our deals change month to month. Tell me which store you're shopping at and "
+        "I'll tell you what's running right now, or ask a budtender in store and they'll walk "
+        "you through the current offers.",
         "topic": "specials",
         "paraphrases": [
             "any deals",
@@ -370,23 +375,31 @@ STORE_FACT_ROWS = [
 # happytimeweed data/deals.json (July 1–31; synced 2026-07-14). Yakima and Mount
 # Vernon share percentages; Pullman runs 30% on edibles/drinks/wellness.
 # Natural key for update_or_create is (store, kind, label) — see seed_store_facts().
+#
+# 2026-09-01: the run dates moved OUT of the spoken value and into the row's own
+# ``valid_from``/``valid_to`` (``SPECIAL_WINDOW`` below). Two reasons, both defects this fixes:
+# a date baked into prose cannot be checked, so these deals were still being read out in
+# September; and the value is what a caller HEARS, so the month name was being spoken months
+# after it stopped being true. The label keeps "July:" — that is what the owner reads in the
+# dashboard list — and the label is never part of the spoken specials answer.
+SPECIAL_WINDOW = (datetime.date(2026, 7, 1), datetime.date(2026, 7, 31))
 _JULY_BASE = [
-    ("July: 30% off all flower", "30% off all flower — eighths, quarters, halves — July 1–31."),
-    ("July: 30% off concentrates", "30% off all concentrates — rosin, live resin, dabs, sauce — July 1–31."),
-    ("July: 25% off vape carts", "25% off vape cartridges — July 1–31."),
-    ("July: 25% off disposables", "25% off all-in-one disposable vapes — July 1–31."),
-    ("July: 20% off pre-rolls", "20% off flower pre-rolls — July 1–31."),
-    ("July: 20% off infused pre-rolls", "20% off infused pre-rolls — July 1–31."),
+    ("July: 30% off all flower", "30% off all flower — eighths, quarters, halves."),
+    ("July: 30% off concentrates", "30% off all concentrates — rosin, live resin, dabs, sauce."),
+    ("July: 25% off vape carts", "25% off vape cartridges."),
+    ("July: 25% off disposables", "25% off all-in-one disposable vapes."),
+    ("July: 20% off pre-rolls", "20% off flower pre-rolls."),
+    ("July: 20% off infused pre-rolls", "20% off infused pre-rolls."),
 ]
 _JULY_EDIBLES_20 = [
-    ("July: 20% off edibles", "20% off edibles — gummies, chocolates, and more — July 1–31."),
-    ("July: 20% off drinks", "20% off cannabis-infused drinks — July 1–31."),
-    ("July: 20% off wellness products", "20% off wellness products — tinctures, topicals, and CBD — July 1–31."),
+    ("July: 20% off edibles", "20% off edibles — gummies, chocolates, and more."),
+    ("July: 20% off drinks", "20% off cannabis-infused drinks."),
+    ("July: 20% off wellness products", "20% off wellness products — tinctures, topicals, and CBD."),
 ]
 _JULY_EDIBLES_30 = [
-    ("July: 30% off edibles", "30% off edibles — gummies, chocolates, and more — July 1–31."),
-    ("July: 30% off drinks", "30% off cannabis-infused drinks — July 1–31."),
-    ("July: 30% off wellness products", "30% off wellness products — tinctures, topicals, and CBD — July 1–31."),
+    ("July: 30% off edibles", "30% off edibles — gummies, chocolates, and more."),
+    ("July: 30% off drinks", "30% off cannabis-infused drinks."),
+    ("July: 30% off wellness products", "30% off wellness products — tinctures, topicals, and CBD."),
 ]
 SPECIAL_ROWS: list[tuple[str, str, str]] = (
     [("yakima", label, value) for label, value in _JULY_BASE + _JULY_EDIBLES_20]
@@ -449,6 +462,7 @@ def seed_store_facts() -> int:
     # Wipe all existing special rows so stale weekly deals (Flower Monday, etc.) don't
     # survive alongside the current monthly deals — then recreate from SPECIAL_ROWS.
     m.StoreFact.objects.filter(kind="special").delete()
+    valid_from, valid_to = SPECIAL_WINDOW
     for store, label, value in SPECIAL_ROWS:
         m.StoreFact.objects.create(
             store=store,
@@ -458,6 +472,8 @@ def seed_store_facts() -> int:
             confirmed=True,
             weight=105,
             is_active=True,
+            valid_from=valid_from,
+            valid_to=valid_to,
         )
         n += 1
     return n
