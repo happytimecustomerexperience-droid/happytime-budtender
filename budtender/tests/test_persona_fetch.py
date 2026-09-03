@@ -31,8 +31,7 @@ class Resp:
 
 class FetchPersonaTests(SimpleTestCase):
     def setUp(self):
-        gemini_chat._persona_cache["value"] = None
-        gemini_chat._persona_cache["fetched_at"] = None
+        gemini_chat.invalidate_persona()  # value, fetched_at AND the failure back-off
         gemini_chat._persona_warned_at = None
 
     def test_fresh_fetch_populates_cache_and_feeds_system_instruction(self):

@@ -149,8 +149,15 @@ def _voice_chat(messages, *, store: str = "") -> dict | None:
     return data
 
 
-_persona_cache: dict = {"value": None, "fetched_at": None}
+_persona_cache: dict = {"value": None, "fetched_at": None, "failed_at": None}
 _persona_warned_at: float | None = None
+
+
+def invalidate_persona() -> None:
+    """Clear the cached persona so the next fetch_persona() hits the voice service."""
+    _persona_cache["value"] = None
+    _persona_cache["fetched_at"] = None
+    _persona_cache["failed_at"] = None
 
 
 def fetch_persona(*, force: bool = False) -> dict | None:
@@ -167,6 +174,11 @@ def fetch_persona(*, force: bool = False) -> dict | None:
     cached = _persona_cache["value"]
     fetched_at = _persona_cache["fetched_at"]
     if not force and cached is not None and fetched_at is not None and now - fetched_at < ttl:
+        return cached
+    # Back off after a failure so an unreachable voice host costs one connect timeout per
+    # minute, not one per chat turn.
+    failed_at = _persona_cache["failed_at"]
+    if not force and failed_at is not None and now - failed_at < int(os.environ.get("HHT_PERSONA_RETRY", "60")):
         return cached
 
     base = os.environ.get("HHT_VOICE_BASE_URL", "").rstrip("/")
@@ -188,6 +200,7 @@ def fetch_persona(*, force: bool = False) -> dict | None:
             logger.info("persona: using shared AgentPrompt (updated %s)", data.get("updated_at"))
             return data
 
+    _persona_cache["failed_at"] = now
     if cached is not None:
         return cached
     if _persona_warned_at is None or now - _persona_warned_at >= ttl:

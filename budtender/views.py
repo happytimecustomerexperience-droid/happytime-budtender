@@ -22,7 +22,8 @@ from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
                      SuggestedProduct)
 from .pairing import pair_for
 from . import facets, live_stock
-from .gemini_chat import GeminiChatUnavailable, generate_chat_reply_with_source
+from .gemini_chat import (GeminiChatUnavailable, fetch_persona,
+                          generate_chat_reply_with_source, invalidate_persona)
 from .intents import classify_intent, conversation_breakdown, intent_breakdown
 from .ranking import MIN_STOCK, W_ANON, W_KNOWN, rank_products
 from .serializers import (customer_detail, customer_row, profile_summary,
@@ -1186,3 +1187,45 @@ class ProfileUpsertView(APIView):
         profile, _ = CustomerProfile.objects.get_or_create(phone=phone)
         recompute_affinity.delay(phone)
         return Response({"status": "ok", "profile_summary": profile_summary(profile)})
+
+
+class PersonaRefreshView(APIView):
+    """Force a fresh persona fetch from the voice service. Auth: ServiceTokenPermission.
+
+    Always 200. When the voice service is unreachable the fetch returns None and
+    this reports {"ok": true, "refreshed": false} rather than a 5xx — an owner
+    poking "refresh" should never see a crash for a service hiccup.
+    """
+
+    def post(self, request):
+        invalidate_persona()
+        try:
+            persona = fetch_persona(force=True)
+        except Exception:
+            persona = None
+        if not persona:
+            return Response({"ok": True, "refreshed": False})
+        return Response({"ok": True, "updated_at": timezone.now().isoformat()})
+
+
+class StoreFactsRefreshView(APIView):
+    """Force a fresh store-facts fetch from the voice service. Auth: ServiceTokenPermission.
+
+    Always 200; unreachable voice service reports {"ok": true, "refreshed": false}.
+    """
+
+    def post(self, request):
+        from core.store_facts import fetch_store_facts, invalidate as invalidate_store_facts
+
+        invalidate_store_facts()
+        try:
+            facts = fetch_store_facts(force=True)
+        except Exception:
+            facts = None
+        if not isinstance(facts, dict) or not isinstance(facts.get("stores"), dict):
+            return Response({"ok": True, "refreshed": False})
+        return Response({
+            "ok": True,
+            "stores": list(facts["stores"].keys()),
+            "updated_at": timezone.now().isoformat(),
+        })

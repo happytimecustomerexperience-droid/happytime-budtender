@@ -27,4 +27,6 @@ urlpatterns = [
     path("analytics/summary", views.AnalyticsSummaryView.as_view()),
     path("admin/ranking-weights", views.AdminRankingWeightsView.as_view()),
     path("feedback/", views.FeedbackView.as_view()),
+    path("persona/refresh", views.PersonaRefreshView.as_view()),
+    path("store-facts/refresh", views.StoreFactsRefreshView.as_view()),
 ]

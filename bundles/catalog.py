@@ -12,6 +12,7 @@ See CATEGORY_ALIASES for the bridge.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from urllib.parse import quote_plus
 
@@ -29,6 +30,12 @@ STORE_LABELS = {
 # (data/author.json + the location pages) rather than retyped — a shopper is being
 # told where to drive and who to call, so these must match the marketing site
 # exactly. Yakima is the default store; the other two are opt-in via the picker.
+#
+# The voice KB (edited at /dashboard/specials-hours/ in the voice service) is the
+# source of truth for hours/address/phone — store_info()/all_stores() below overlay
+# its live values on top of this dict at request time. This static dict is only the
+# offline fallback shown when the voice service is unreachable. `voice/manage.py
+# check_store_facts` fails CI if the two drift.
 STORES = {
     "yakima": {
         "street": "1315 N 1st St",
@@ -67,10 +74,53 @@ def store_label(location_slug: str) -> str:
     return STORE_LABELS.get(location_slug, location_slug.replace("-", " ").title())
 
 
+# A live address must split cleanly back into "street, City, WA ZIP" — the same
+# shape STORE_ADDRESS builds from the static dict — or we don't trust it and keep
+# the static street/city split.
+_ADDRESS_RE = re.compile(r"^(?P<street>[^,]+),\s*(?P<city>[^,]+,\s*[A-Z]{2}\s*\d{5})$")
+
+
+def _live_stores() -> dict:
+    """Live store facts from the voice KB, or {} if unreachable/unavailable.
+
+    Imported lazily so a failure here (or the voice-service round trip itself)
+    never breaks a plain import of this module — check_store_facts.py imports
+    bundles.catalog directly for the static STORES dict and must keep working
+    even when core.store_facts can't be loaded in that context.
+    """
+    try:
+        from core.store_facts import fetch_store_facts
+        facts = fetch_store_facts()
+    except Exception:
+        return {}
+    if not isinstance(facts, dict):
+        return {}
+    stores = facts.get("stores")
+    return stores if isinstance(stores, dict) else {}
+
+
 def store_info(location_slug: str) -> dict:
-    """Everything a pickup card needs: label, street, city, phone, hours, map link."""
+    """Everything a pickup card needs: label, street, city, phone, hours, map link.
+
+    Hours and phone are overlaid from the live voice KB when reachable; address is
+    only overlaid if it splits cleanly into the same "street, City, WA ZIP" shape
+    the static dict uses. Falls back entirely to the static dict on any miss.
+    """
     s = STORES.get(location_slug) or {}
     street, city = s.get("street", ""), s.get("city", "")
+    phone = s.get("phone", "")
+    hours = s.get("hours", "")
+
+    live = _live_stores().get(location_slug)
+    if isinstance(live, dict):
+        hours = live.get("hours") or hours
+        phone = live.get("phone") or phone
+        live_address = live.get("address")
+        if live_address:
+            m = _ADDRESS_RE.match(str(live_address).strip())
+            if m:
+                street, city = m.group("street").strip(), m.group("city").strip()
+
     full = ", ".join(p for p in (street, city) if p)
     return {
         "slug": location_slug,
@@ -78,8 +128,8 @@ def store_info(location_slug: str) -> dict:
         "street": street,
         "city": city,
         "address": full,
-        "phone": s.get("phone", ""),
-        "hours": s.get("hours", ""),
+        "phone": phone,
+        "hours": hours,
         # Query-based so it resolves without us pinning a place id that can rot.
         "map_url": (
             "https://www.google.com/maps/search/?api=1&query="

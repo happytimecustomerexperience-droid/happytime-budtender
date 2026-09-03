@@ -30,12 +30,14 @@ EXPECTED = {
     "pullman": ("5602 WA-270", "Pullman, WA 99163", "(509) 334-2788"),
 }
 
-# The site's footer, verbatim. Yakima and Pullman are the same seven days a week;
-# Mount Vernon is not, and it shipped here as "9 AM – 10 PM daily" — telling a
-# Friday shopper we shut an hour before we do.
+# Verified 2026-09-02 against happytimeweed.com data/store-locations.json AND the voice KB
+# (`voice/manage.py check_store_facts`): all three stores keep the same hours seven days a
+# week. The earlier "Fri–Sat to 11 PM" line for Mount Vernon existed only here — the one
+# channel telling shoppers we stayed open later than we do. The static dict is now only the
+# offline fallback; the live values come from the voice KB via core.store_facts.
 EXPECTED_HOURS = {
     "yakima": ("8 AM", "11:30 PM"),
-    "mount-vernon": ("Sun–Thu", "11 PM"),
+    "mount-vernon": ("9 AM", "10 PM"),
     "pullman": ("9 AM", "10 PM"),
 }
 
@@ -79,9 +81,11 @@ class StoreDataTests(TestCase):
             for needle in needles:
                 self.assertIn(needle, hours, f"{slug}: {hours!r}")
 
-    def test_mount_vernon_is_not_described_as_the_same_every_day(self):
-        # The specific regression: a flat "daily" line hides the Fri–Sat late close.
-        self.assertNotIn("daily", store_info("mount-vernon")["hours"].lower())
+    def test_mount_vernon_hours_agree_with_the_website_and_the_kb(self):
+        # The regression that used to live here pinned a Fri–Sat 11 PM close that neither the
+        # website nor the KB has. The storefront must never be the odd channel out.
+        self.assertIn("daily", store_info("mount-vernon")["hours"].lower())
+        self.assertNotIn("11 PM", store_info("mount-vernon")["hours"])
 
     def test_yakima_is_listed_first(self):
         self.assertEqual(all_stores()[0]["slug"], "yakima")
@@ -164,6 +168,8 @@ class PickupDetailTests(TestCase):
             self.assertIn(city, body, slug)
             self.assertIn(phone, body, slug)
             self.assertIn("Directions", body, slug)
+            for needle in EXPECTED_HOURS[slug]:
+                self.assertIn(needle, body, f"{slug}: hours not shown at checkout")
             self.client = Client()   # fresh shopper per store
 
     def test_the_confirmation_repeats_the_address_and_directions(self):
