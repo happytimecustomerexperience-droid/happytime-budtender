@@ -289,7 +289,10 @@ services:
         condition: service_healthy
     restart: unless-stopped
     command: >
-      sh -c "celery -A core worker --loglevel=info --concurrency=${VOICE_CELERY_CONCURRENCY:-2}"
+      sh -c "celery -A core worker --beat --schedule=/tmp/voice-celerybeat-schedule --loglevel=info --concurrency=${VOICE_CELERY_CONCURRENCY:-2}"
+    # --beat: the voice app schedules its own periodic work (nightly check_store_facts drift
+    # alert, core/celery.py beat_schedule). Embedded beat is correct while this service runs a
+    # single replica; split it into a voice-beat service before scaling voice-worker.
 
   # NOTE: no `cloudflared` service — ingress is the host-mode traefik-a0hc that
   # already runs on this VPS (see voice-web labels). Cloudflare is not used.
