@@ -187,6 +187,9 @@ def test_squad_reasserts_required_transition_from_code(fake_vapi, full_squad):
 # ── P6: instant sync — a save auto-publishes to Vapi when HHT_AUTO_PUBLISH is on ─
 @pytest.mark.django_db
 def test_auto_publish_on_save_pushes_edit_to_vapi(fake_vapi, full_squad, settings):
+    """``AgentPrompt.save()`` itself triggers the publish via the ``post_save`` signal
+    (kb/signals.py) — the single call site, so calling ``.save()`` is enough; no separate
+    ``auto_publish_on_save`` call is needed (or correct — the hash would already be zero-drift)."""
     from dashboard import publish
 
     settings.HHT_AUTO_PUBLISH = True  # opt in (off by default under pytest)
@@ -194,12 +197,11 @@ def test_auto_publish_on_save_pushes_edit_to_vapi(fake_vapi, full_squad, setting
 
     p = full_squad.objects.get(role="budtender")
     p.body = p.body + " (edited mid-session)"
-    p.save()
-
     fake_vapi.patches = 0
+    p.save()
+    assert fake_vapi.patches == 1  # the edit reached Vapi instantly, via the save signal
     note = publish.auto_publish_on_save(p)
-    assert fake_vapi.patches == 1  # the edit reached Vapi instantly
-    assert "Vapi" in note
+    assert "no change" in note or "nodrift" in note  # re-publish is now zero-drift
 
 
 @pytest.mark.django_db

@@ -97,3 +97,50 @@ def persona(request):
             "updated_at": updated_at.isoformat(),
         }
     )
+
+
+# Per-store fact kinds vs. global (store="") fact kinds — matches the endpoint contract.
+_STORE_KINDS = {"hours", "address", "phone"}
+_GLOBAL_KINDS = {"payment", "age", "pickup"}
+
+
+@csrf_exempt
+@require_GET
+def store_facts(request):
+    """The root project's read of owner-edited store facts (persona/store-facts refresh chain,
+    kb/signals.py). Bearer-gated exactly like ``text_chat``/``persona``. Only ``confirmed`` rows
+    are ever surfaced (O-8 — an unconfirmed row is never spoken as fact, see
+    ``StoreFact.chunk_text``), and only rows inside their validity window
+    (``StoreFact.objects.current()``) — the same fail-closed gates the voice agent itself uses."""
+    if not _authorized(request):
+        return JsonResponse({"ok": False, "error": "unauthorized"}, status=401)
+
+    from django.db.models import Max
+
+    from kb.models import StoreFact
+
+    rows = StoreFact.objects.current().filter(is_active=True, confirmed=True)
+    latest = rows.aggregate(Max("updated_at"))["updated_at__max"]
+
+    stores: dict[str, dict[str, str]] = {}
+    global_facts: dict[str, str] = {}
+    specials: dict[str, list[str]] = {}
+    for row in rows:
+        if row.kind == "special":
+            if row.store:
+                specials.setdefault(row.store, []).append(row.value)
+            continue
+        if row.store and row.kind in _STORE_KINDS:
+            stores.setdefault(row.store, {})[row.kind] = row.value
+        elif not row.store and row.kind in _GLOBAL_KINDS:
+            global_facts[row.kind] = row.value
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "stores": stores,
+            "global": global_facts,
+            "specials": specials,
+            "updated_at": latest.isoformat() if latest else None,
+        }
+    )

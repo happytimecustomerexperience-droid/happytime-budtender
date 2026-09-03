@@ -383,6 +383,47 @@ class BudtenderClient:
         return out if isinstance(out, dict) else {}
 
 
+# ── root-notify nudge (P6 instant-refresh chain, kb/signals.py) ─────────────────
+def _notify(path: str) -> bool:
+    """Best-effort ``POST {base_url}/api/v1{path}`` telling root a KB row changed so its own
+    caches refresh instantly. NEVER raises into the caller's save — any failure is a logged
+    warning. Off when ``HHT_NOTIFY_BUDTENDER`` is false (same gating shape as ``HHT_AUTO_PUBLISH``
+    — off under pytest unless a test opts in) or the base url is unset."""
+    if not _setting("HHT_NOTIFY_BUDTENDER", False):
+        return False
+    base_url = _setting("HHT_BUDTENDER_BASE_URL")
+    if not base_url:
+        return False
+    token = _setting("HHT_BACKEND_TOKEN")
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        resp = requests.post(
+            f"{base_url.rstrip('/')}{_API_PREFIX}{path}", headers=headers, timeout=(2, 5)
+        )
+        if resp.status_code >= 300:
+            logger.warning("budtender notify %s -> HTTP %s", path, resp.status_code)
+            return False
+        return True
+    except (requests.Timeout, requests.ConnectionError) as exc:
+        logger.warning("budtender notify %s unreachable: %s", path, type(exc).__name__)
+        return False
+    except Exception:  # noqa: BLE001 — a notify failure must never break the save
+        logger.warning("budtender notify %s failed", path, exc_info=True)
+        return False
+
+
+def notify_persona_refresh() -> bool:
+    """Nudge root's ``POST /api/v1/persona/refresh`` after an ``AgentPrompt`` save."""
+    return _notify("/persona/refresh")
+
+
+def notify_store_facts_refresh() -> bool:
+    """Nudge root's ``POST /api/v1/store-facts/refresh`` after a ``StoreFact`` save/delete."""
+    return _notify("/store-facts/refresh")
+
+
 # ── owner ranking-weights lever (14-P4 item 1) ──────────────────────────────────
 def _ranking_config() -> dict | None:
     """Read the owner-tuned ``RankingWeights`` singleton → the per-request ``ranking_weights``

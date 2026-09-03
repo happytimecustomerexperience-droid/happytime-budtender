@@ -276,3 +276,35 @@ def dispatch(voice_call) -> dict[str, str]:
         delivery.save()
         results[sink.name] = delivery.status
     return results
+
+
+def send_staff_alert(subject: str, markdown_table: str) -> None:
+    """A one-off staff alert not tied to a ``VoiceCall`` (e.g. the nightly store-facts drift
+    check) — the same two live sinks (email to ``STAFF_ALERT_EMAIL``, n8n) ``EmailSink``/
+    ``N8nSink`` use, without the per-call ``AlertDelivery`` idempotency ledger (a nightly task is
+    already idempotent by construction — it only fires once a night and only on drift). Never
+    raises — each sink's failure is logged, not fatal."""
+    recipients = _recipients_for("")
+    if recipients:
+        try:
+            EmailMultiAlternatives(
+                subject=subject[:120],
+                body=markdown_table,
+                from_email=getattr(settings, "LEAD_EMAIL_FROM", "bot@happytimeweed.com"),
+                to=recipients,
+            ).send(fail_silently=False)
+        except Exception:  # noqa: BLE001 — an alert must never crash the beat worker
+            logger.warning("send_staff_alert: email failed", exc_info=True)
+
+    n8n_url = getattr(settings, "N8N_WEBHOOK_URL", "")
+    if n8n_url:
+        try:
+            data = json.dumps({"event": "store_facts_drift", "subject": subject, "table": markdown_table}).encode()
+            req = urllib.request.Request(
+                n8n_url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 (config-supplied URL)
+                if r.status >= 300:
+                    raise RuntimeError(f"n8n HTTP {r.status}")
+        except Exception:  # noqa: BLE001
+            logger.warning("send_staff_alert: n8n failed", exc_info=True)

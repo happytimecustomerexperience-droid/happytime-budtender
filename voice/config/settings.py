@@ -158,6 +158,11 @@ VAPI_SECRET_HEADER = os.environ.get("VAPI_SECRET_HEADER", "X-Vapi-Secret")
 HHT_BUDTENDER_BASE_URL = os.environ.get("HHT_BUDTENDER_BASE_URL", "")
 HHT_BACKEND_TOKEN = os.environ.get("HHT_BACKEND_TOKEN", "")
 HHT_BUDTENDER_TIMEOUT = int(os.environ.get("HHT_BUDTENDER_TIMEOUT", "8"))
+# ON by default → a StoreFact/AgentPrompt save nudges root's persona/store-facts refresh
+# endpoints so its caches update instantly (P6 instant-refresh chain). OFF under pytest so the
+# suite never makes a network call — a signal test opts in via settings.HHT_NOTIFY_BUDTENDER=True
+# with the notify helper mocked (same gating shape as HHT_AUTO_PUBLISH just below).
+HHT_NOTIFY_BUDTENDER = _env_bool("HHT_NOTIFY_BUDTENDER", "1") and ("pytest" not in _sys.modules)
 
 # ── Transfer / phone routing (03-CONVENTIONS.md §3.5) ─────────────────
 HHT_TRANSFER_NUMBER_YAKIMA = os.environ.get("HHT_TRANSFER_NUMBER_YAKIMA", "")

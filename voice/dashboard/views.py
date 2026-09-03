@@ -319,12 +319,10 @@ def agent_save(request, pk: int):
     p.max_output_tokens = _num("max_output_tokens", int, lo=1, hi=65536, default=None)
     p.is_active = request.POST.get("is_active") == "on"
 
-    publish_note = ""
     if not errors:
+        # AgentPrompt's post_save signal (kb/signals.py) auto-publishes to Vapi and nudges root's
+        # persona cache — the ONE place a save publishes, from any path (dashboard/admin/shell).
         p.save()
-        from . import publish as _publish
-
-        publish_note = _publish.auto_publish_on_save(p)
     resp = render(
         request,
         "dashboard/_agent_card.html",
@@ -333,10 +331,9 @@ def agent_save(request, pk: int):
     if errors:
         resp["HX-Trigger"] = _toast("error", "; ".join(errors))
     else:
-        # Auto-publish on by default (HHT_AUTO_PUBLISH) → the edit reaches Vapi instantly; the note
-        # reports the push. When off/unconfigured the row is still live server-side.
-        tail = publish_note or "live server-side; Publish to push to Vapi"
-        resp["HX-Trigger"] = _toast("success", f"{p.role} updated — {tail} ✓")
+        # Auto-publish on by default (HHT_AUTO_PUBLISH) → the edit reaches Vapi instantly via the
+        # post_save signal; when off/unconfigured the row is still live server-side.
+        resp["HX-Trigger"] = _toast("success", f"{p.role} updated — saved, auto-publish runs on save ✓")
     return resp
 
 

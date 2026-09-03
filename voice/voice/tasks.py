@@ -115,3 +115,62 @@ def run_post_call(voice_call_id: int) -> None:
     # Inline path (P2 behavior / sync fallback): call the task bodies directly (NOT via the queue).
     summarize_call(voice_call_id)
     dispatch_alerts(voice_call_id)
+
+
+# ── root-notify nudge (P6 instant-refresh chain; kb/signals.py) ──────────────────
+@shared_task(name="voice.notify_budtender", ignore_result=True)
+def notify_budtender(kind: str) -> bool:
+    """Run the actual (gated, fail-closed) POST — see ``voice.budtender_client._notify``."""
+    from voice import budtender_client
+
+    if kind == "persona":
+        return budtender_client.notify_persona_refresh()
+    return budtender_client.notify_store_facts_refresh()
+
+
+def dispatch_budtender_notify(kind: str) -> None:
+    """Queue the root-notify POST when Celery is enabled, else run it inline — same
+    queue-or-inline shape as ``run_post_call``. The notify itself is a no-op when
+    ``HHT_NOTIFY_BUDTENDER`` is off or unconfigured, so this is cheap to call unconditionally."""
+    if _use_celery():
+        try:
+            notify_budtender.delay(kind)
+            return
+        except Exception:  # noqa: BLE001 — broker down → inline, never drop the notification
+            logger.warning(
+                "celery enqueue failed for notify_budtender(%s); running inline", kind, exc_info=True
+            )
+    notify_budtender(kind)
+
+
+# ── nightly store-facts vs. public-site drift check (P6) ─────────────────────────
+@shared_task(name="voice.check_store_facts_nightly", ignore_result=True)
+def check_store_facts_nightly() -> dict:
+    """Compare ``kb.StoreFact`` against the public site's ``/api/refresh-constants`` and send one
+    staff alert (existing ``crm.sinks`` email/n8n path) on drift. Read-only; never raises — a
+    request failure just skips the comparison for this run (there is always a next night)."""
+    from kb.management.commands.check_store_facts import diff_against_site
+
+    try:
+        rows = diff_against_site()
+    except Exception:  # noqa: BLE001 — a fetch/compare failure must never crash the beat worker
+        logger.warning("check_store_facts_nightly: comparison failed", exc_info=True)
+        return {}
+    mismatches = [r for r in rows if r["status"] == "MISMATCH"]
+    if not mismatches:
+        return {"drift": False, "mismatches": 0}
+    from crm import sinks
+
+    sinks.send_staff_alert(
+        subject="[Happy Time voice] store-facts drift vs. public site",
+        markdown_table=_rows_to_markdown_table(rows),
+    )
+    return {"drift": True, "mismatches": len(mismatches)}
+
+
+def _rows_to_markdown_table(rows: list[dict]) -> str:
+    headers = ["store", "fact", "storefact", "site", "status"]
+    lines = ["| " + " | ".join(headers) + " |", "|" + "|".join(["---"] * len(headers)) + "|"]
+    for r in rows:
+        lines.append("| " + " | ".join(str(r[h]) for h in headers) + " |")
+    return "\n".join(lines)

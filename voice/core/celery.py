@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 
 from celery import Celery
+from celery.schedules import crontab
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
@@ -27,6 +28,16 @@ app.config_from_object("django.conf:settings", namespace="CELERY")
 # Explicit package list (more reliable than the bare autodiscover under a worker boot) — the only
 # task module today is ``voice.tasks``; add new ``<app>.tasks`` modules here.
 app.autodiscover_tasks(["voice"])
+
+# Beat schedule (requires a `celery -A core beat` process; a no-op unless one is running). Nightly
+# check that the public site (its own Supabase CMS, not ours) still agrees with the KB — alerts
+# staff on drift (P6; voice.tasks.check_store_facts_nightly).
+app.conf.beat_schedule = {
+    "check-store-facts-nightly": {
+        "task": "voice.check_store_facts_nightly",
+        "schedule": crontab(hour=3, minute=0),  # 3am Pacific — low-traffic window
+    },
+}
 
 
 @app.task(bind=True, ignore_result=True)

@@ -12,5 +12,6 @@ urlpatterns = [
     path("vapi", webhooks.vapi_webhook, name="vapi_webhook"),
     path("chat", api.text_chat, name="voice_text_chat"),
     path("persona", api.persona, name="voice_persona"),
+    path("store-facts", api.store_facts, name="voice_store_facts"),
     path("kb/search", api.kb_search, name="voice_kb_search"),
 ]

@@ -61,7 +61,7 @@ def test_agent_save_persists_voice_fields(client_staff, budtender_prompt):
     assert budtender_prompt.tool_names == ["suggest_products", "check_inventory", "pair_upsell"]
     assert budtender_prompt.transfer_number_key == "YAKIMA"
     assert budtender_prompt.temperature == 0.4
-    assert b"Publish to push to Vapi" in resp["HX-Trigger"].encode()
+    assert b"auto-publish runs on save" in resp["HX-Trigger"].encode()
 
 
 @pytest.mark.django_db
