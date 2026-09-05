@@ -98,7 +98,7 @@ def score(entry: golden.Entry, answer: Answer) -> Result:
 
     # length ──────────────────────────────────────────────────────────────────
     form = "spoken" if answer.channel in SPOKEN_CHANNELS else "written"
-    limit = int((entry.max_words or {}).get(form) or (60 if form == "spoken" else 110))
+    limit = int((entry.max_words or {}).get(form) or (80 if form == "spoken" else 110))
     words = len(answer.text.split())
     if words > limit:
         r.length = False

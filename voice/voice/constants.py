@@ -113,7 +113,13 @@ TOOL_SPECS = {
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {"type": "string"},
+                # Retrieval is tuned to how callers actually phrase things; a model-written
+                # abstraction ("ID requirements") misses rows the caller's own words hit.
+                "query": {
+                    "type": "string",
+                    "description": "The caller's question in their OWN words, verbatim — never a "
+                    "rephrased or shortened summary.",
+                },
                 "store": {"type": "string", "enum": ["yakima", "mount-vernon", "pullman"]},
                 # Constrains retrieval to the subject the caller actually asked about (enum-only —
                 # _sanitize_args drops any value outside it). "" = unconstrained, today's behaviour.

@@ -250,8 +250,24 @@ def faq_lookup(args: dict, ctx: dict) -> dict:
     topic = (args.get("topic") or "").strip()
     if topic not in _VALID_TOPICS:
         topic = ""  # an unrecognized topic is treated as unconstrained, never a filter-to-nothing
+    if not query and topic:
+        # The Vapi model sometimes sends only a topic ("return_policy", no query); that is still
+        # a well-formed ask for the topic's rows, so answer it rather than falling back.
+        query = {"return_policy": "return policy", "specials": "specials", "hours_location": "hours"}[topic]
     if not query:
         return {"answer": None, "grounded": False, "fallback": _FALLBACK, "store": store or ""}
+    # The text brain always scopes retrieval by subject (voice/chat.py::_faq_topic); the Vapi
+    # model usually omits ``topic`` (an unscoped "pullman phone number" landed on the
+    # online-ordering row) or mislabels it ("my ID is expired" tagged hours_location hid the
+    # accepted-ID row). The caller's words decide: derive the topic here, and drop a supplied
+    # topic the words don't support — one rule for both channels.
+    from voice.chat import _faq_topic, faq_topic_fits  # lazy: chat imports this package
+
+    derived = _faq_topic(query)
+    if derived in _VALID_TOPICS and derived:
+        topic = derived
+    elif topic and not faq_topic_fits(query, topic):
+        topic = ""
 
     # An injection-shaped message is not a question the KB answers. Short-circuit BEFORE retrieval
     # so nothing is grounded on it (see ``_is_injection_query``); the honest fallback is the whole

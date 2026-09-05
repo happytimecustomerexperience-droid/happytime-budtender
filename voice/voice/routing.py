@@ -52,7 +52,8 @@ _DISPUTE = re.compile(
 # ── 2) vendor lexicon — checked BEFORE retail (the export-#6 fix). Few-shot vocab mirrors the
 #      owner's real returns/auto-return/manifest workflows (01-ARCHITECTURE §1.4).
 _VENDOR = re.compile(
-    r"\b(vendor|wholesale|distributor|supplier|sales\s+rep|\brep\b|delivery|deliver\w*|"
+    r"\b(vendor|wholesale|distributor|distribution|supplier|sales\s+rep|\brep\b|delivery|deliver\w*|"
+    r"(?:is\s+)?(?:your|the)\s+buyer|our\s+(?:new\s+)?(?:product|line|brand)s?\b|"
     r"drop(ping)?[\s-]?off|drop\s+off|manifest|transfer\s+manifest|metrc|ccrs|wcia|"
     r"sample\s+drop|samples?|\bp\.?o\.?\b|purchase\s+order|invoice|accounts?\s+payable|"
     r"for\s+the\s+buyer|for\s+receiving|i'?m\s+the\s+driver|i'?m\s+here\s+with\s+an?\s+order|"

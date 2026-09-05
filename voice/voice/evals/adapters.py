@@ -143,10 +143,10 @@ def _declarations(tool_names: list[str]):
     return [types.Tool(function_declarations=decls)] if decls else []
 
 
-def _generate_with_retry(client, model_id, contents, cfg, attempts: int = 3):
+def _generate_with_retry(client, model_id, contents, cfg, attempts: int = 5):
     """Vertex returns 429 RESOURCE_EXHAUSTED under a burst of eval calls; back off and retry so a
     rate limit reads as latency, not as a wrong answer."""
-    delay = 8.0
+    delay = 15.0
     for attempt in range(attempts):
         try:
             return client.models.generate_content(model=model_id, contents=contents, config=cfg)
@@ -197,6 +197,7 @@ def ask_voice(question: str, *, store: str, max_rounds: int = 4) -> Answer:
         types.Content(role="user", parts=[types.Part(text=question)]),
     ]
     called: list[str] = []
+    tool_args: list[dict] = []  # what the model actually asked the tools — the first place to look
     started = time.monotonic()
     text = ""
     for _ in range(max_rounds):
@@ -214,6 +215,7 @@ def ask_voice(question: str, *, store: str, max_rounds: int = 4) -> Answer:
             args.setdefault("store", store)
             result = dispatch(fc.name, args, ctx)
             called.append(fc.name)
+            tool_args.append({"tool": fc.name, "args": args, "grounded": result.get("grounded")})
             responses.append(
                 types.Part(function_response=types.FunctionResponse(name=fc.name, response={"result": result}))
             )
@@ -221,7 +223,7 @@ def ask_voice(question: str, *, store: str, max_rounds: int = 4) -> Answer:
     ms = int((time.monotonic() - started) * 1000)
     return Answer(
         channel="voice", text=text, source="sim", tool_calls=called, latency_ms=ms,
-        meta={"role": role, "model": model_id},
+        meta={"role": role, "model": model_id, "tool_args": tool_args},
     )
 
 

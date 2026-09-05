@@ -4,6 +4,8 @@ and the pytest module so both see exactly the same numbers."""
 from __future__ import annotations
 
 import contextlib
+import os
+import time
 import uuid
 
 from voice.evals import adapters, golden, score
@@ -32,6 +34,8 @@ def ask(entry: golden.Entry, channel: str) -> Answer:
     if channel == "pos":
         return adapters.ask_pos(q, store=store)
     fn = adapters.ADAPTERS[channel]
+    if channel == "voice":
+        time.sleep(float(os.environ.get("EVAL_VOICE_PAUSE", "2")))  # stay under Vertex's burst quota
     try:
         return fn(q, store=store)
     except NotImplementedError as exc:

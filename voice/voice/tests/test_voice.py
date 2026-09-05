@@ -543,6 +543,22 @@ def test_faq_lookup_tool_spec_declares_topic_enum():
 
 
 @pytest.mark.django_db
+@pytest.mark.django_db
+def test_faq_lookup_drops_a_topic_the_words_do_not_support(settings):
+    """The Vapi model tagged "my ID is expired, is that okay" as hours_location; scoping retrieval
+    to hours hid the accepted-ID row and the caller got the fallback. The words decide the topic."""
+    from kb.seed import seed_all
+    from voice.tools import faq
+
+    seed_all()
+    out = faq.faq_lookup(
+        {"query": "my ID is expired is that okay", "store": "yakima", "topic": "hours_location"}, {}
+    )
+    assert out["grounded"] is True
+    assert "unexpired" in out["answer"]
+
+
+@pytest.mark.django_db
 def test_faq_lookup_topic_excludes_the_wrong_row(settings):
     """The historical bug, reproduced at the handler against the real seeded KB: unconstrained,
     "what are your hours today" is genuinely ambiguous between the hours row and the specials
@@ -555,8 +571,12 @@ def test_faq_lookup_topic_excludes_the_wrong_row(settings):
     seed.seed_all()
     settings.SEMANTIC_SEARCH_ENABLED = False
 
+    # Without an explicit topic the tool now derives one from the question (voice.chat._faq_topic),
+    # exactly as the text brain does — so the Vapi model, which usually omits ``topic``, retrieves
+    # the same row the website chat does instead of an unscoped best guess.
     unconstrained = faq.faq_lookup({"query": "what are your hours today", "store": "yakima"}, {})
-    assert unconstrained["grounded"] is False, "an ambiguous match must not ground confidently"
+    assert unconstrained["grounded"] is True
+    assert "8 AM" in unconstrained["answer"] and "July" not in unconstrained["answer"]
 
     out = faq.faq_lookup(
         {"query": "what are your hours today", "store": "yakima", "topic": "hours_location"}, {}

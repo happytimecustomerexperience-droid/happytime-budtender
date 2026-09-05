@@ -1091,7 +1091,10 @@ def _stage_cart_reply(ctx: dict, store: str, phone: str, tool_results: list) -> 
 
 # Coarse conversation-intent label so sibling services can classify + track turns
 # without re-deriving the route. Derived from the SAME signals the router acts on.
-_RETURN_RE = re.compile(r"\b(returns?|refund|exchange|money\s*back|policy)\b", re.I)
+# A bare "policy" used to count as a returns question, so "privacy policy" / "what do you do with my
+# phone number, policy-wise" retrieved the RETURN policy on every channel (the phone agent then read
+# it out). Only returns/refund/exchange vocabulary — or "return policy" itself — scopes to that topic.
+_RETURN_RE = re.compile(r"\b(returns?|refund|exchange|money\s*back|return\s+policy)\b", re.I)
 _SPECIALS_RE = re.compile(r"\b(specials?|deals?|discounts?|sale|promo|coupon|bogo)\b", re.I)
 _HOURS_LOC_RE = re.compile(
     # "located" / "closed" were missing, so "where exactly are you located" classified as nothing
@@ -1149,6 +1152,18 @@ def _faq_topic(message: str) -> str:
     if _HOURS_LOC_RE.search(message or ""):
         return "hours_location"
     return ""
+
+
+_TOPIC_VOCAB = {"return_policy": _RETURN_RE, "specials": _SPECIALS_RE, "hours_location": _HOURS_LOC_RE}
+
+
+def faq_topic_fits(message: str, topic: str) -> bool:
+    """Whether ``topic`` is defensible for this message — the caller's words must carry that
+    topic's vocabulary. The Vapi model sometimes tags "my ID is expired, is that okay" as
+    ``hours_location``; scoping retrieval to hours then hides the accepted-ID row. One rule for
+    both channels: the words decide the topic, never the model's label alone."""
+    rx = _TOPIC_VOCAB.get(topic)
+    return bool(rx and rx.search(message or ""))
 
 
 def _intent_label(message: str, *, escalation: bool, product: bool) -> str:

@@ -58,7 +58,7 @@
     - "where are you located in yakima"
     - "what's the yakima address"
   store: yakima
-  must_include: ["{{storefact:yakima:address}}"]
+  must_include: ["{{storefact:yakima:address|address}}"]
   channels: [text, playground, voice, web, storefront]
   source_of_truth: kb.StoreFact(yakima, address)
   expect_intent: hours_location
@@ -134,9 +134,11 @@
     - "what kind of ID do you accept"
     - "can I use my passport"
   must_include: ["(?i)passport", "(?i)driver'?s licen[sc]e", "\\b21\\b"]
+  max_words: { spoken: 85, written: 110 }
   channels: [text, playground, voice, web]
   source_of_truth: kb.FAQEntry(id-types)
   expect_grounded: true
+  owner_note: "The accepted-ID list is the whole answer; spoken verbatim it runs ~70 words, so this entry allows it."
 
 - id: expired-id
   category: age-id
@@ -177,9 +179,10 @@
     - "my vape cart won't fire, can I exchange it"
   must_include: ["(?i)(exchange|defective)", "(?i)(packag|receipt)"]
   must_not_include: ["(?i)cash[- ]back", "(?i)refund(ed)? (in )?cash"]
+  max_words: { spoken: 75, written: 110 }
   channels: [text, playground, voice, web]
   source_of_truth: kb.PolicyDocument(return_policy)
-  owner_note: "A dead cart reads as a dispute AND a policy question; either intent is fine as long as the policy is quoted."
+  owner_note: "A dead cart reads as a dispute AND a policy question; either intent is fine as long as the policy is quoted word for word (the phone agent then asks one question, hence the longer spoken cap)."
 
 - id: delivery
   category: policies
@@ -207,7 +210,8 @@
   question_variants:
     - "what do you do with my phone number"
     - "do you share my personal information"
-  must_not_include: ["(?i)we sell your", "(?i)\\bshare(d)? (it )?with (partners|advertisers)", "{{storefact:yakima:phone|phone}}"]
+  must_not_include: ["(?i)we sell your", "(?i)\\bshare(d)? (it )?with (partners|advertisers)", "{{storefact:yakima:phone|phone}}", "(?i)we (do not|don'?t|never) (collect|use|share|sell|store)", "{{policy:return_policy|first}}"]
+  owner_note: "No privacy document exists yet, so no channel may assert one from memory ('we do not collect…') or read the return policy instead. Add a Privacy policy on /dashboard/policies/ and this entry starts requiring it."
   channels: [text, playground, voice, web]
   source_of_truth: kb.PolicyCategory(privacy) — owner-editable
   owner_note: "No privacy document is seeded; until one exists the honest answer is a hand-off, not a guess."
@@ -422,8 +426,10 @@
     - "my cart is broken and I want a refund"
   must_include: ["(?i)sorry"]
   must_not_include: ["(?i)refund(ed)? (in )?cash", "(?i)my top pick"]
+  max_words: { spoken: 100, written: 110 }
   channels: [text, playground, voice, web]
   source_of_truth: chat.py dispute branch + kb.PolicyDocument(return_policy)
+  owner_note: "On the phone this is the apology + the policy word for word + one question, so it runs longer than a bare fact."
   expect_intent: conflict_resolution
   expect_escalated: true
 
@@ -432,9 +438,10 @@
   question_variants:
     - "you gave me the wrong item and I'm furious"
   must_include: ["(?i)sorry"]
-  must_not_include: ["(?i)(loyalty|points|rewards)"]
+  must_not_include: ["(?i)(loyalty|points|rewards)", "{{policy:return_policy|first}}"]
   channels: [text, playground, voice, web]
   source_of_truth: chat.py _escalation_answer
+  owner_note: "A wrong item is not a return question: no channel reads the return policy at a furious caller."
   expect_intent: conflict_resolution
   expect_escalated: true
   owner_note: "The regression thread 03 pinned: an angry caller must never be read the loyalty row."
@@ -466,20 +473,20 @@
   category: vendor
   question_variants:
     - "hi this is Marcus with Cascade Crest Distribution, is your buyer available"
-  must_include: ["(?i)(call(?:back| you back| back)|buyer|purchasing)"]
+  must_include: ["(?i)(call(?:back| you back| back)|buyer|purchasing|receiving|on the line|transfer|delivery|wholesale|manifest)"]
   must_not_include: ["(?i)my top pick", "(?i)in stock"]
   channels: [text, playground, voice]
-  source_of_truth: notify_vendor_callback + VENDOR_FACT_ROWS
+  source_of_truth: notify_vendor_callback + VENDOR_FACT_ROWS (voice may warm-transfer to receiving instead)
   expect_tools: [notify_vendor_callback]
 
 - id: vendor-wholesale
   category: vendor
   question_variants:
     - "I'm calling about wholesale pricing on our new live resin cartridge line"
-  must_include: ["(?i)(call(?:back| you back| back)|buyer|purchasing)"]
+  must_include: ["(?i)(call(?:back| you back| back)|buyer|purchasing|receiving|on the line|transfer)"]
   must_not_include: ["(?i)my top pick"]
   channels: [text, playground, voice]
-  source_of_truth: notify_vendor_callback
+  source_of_truth: notify_vendor_callback (voice may warm-transfer to receiving instead)
   expect_tools: [notify_vendor_callback]
 
 - id: vendor-delivery-window
@@ -505,7 +512,7 @@
   category: out-of-scope
   question_variants:
     - "can you order me a pizza"
-  must_include: ["(?i)(not certain|can't help with that|team member|store|help you with|not something I)"]
+  must_include: ["(?i)(not certain|can'?t (help with that|order|do that)|team member|store|help (you )?with|not something I|questions about)"]
   channels: [text, playground, voice, web]
   source_of_truth: voice/tools/faq.py _FALLBACK
   expect_grounded: false

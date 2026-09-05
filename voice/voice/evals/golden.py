@@ -25,6 +25,7 @@ so two channels that phrase the same fact differently still agree on the fact::
     |phone     the 10 digits of a phone number            → must appear (any punctuation)
     |numbers   every number (+ its unit word: "7 grams", "30% off")   → each must appear
     |first     the first sentence, as a loose regex
+    |address   house number, street name, city, zip   → each must appear, any order
 
 A pattern with no ``{{…}}`` is a plain regex (case-insensitive) — for tone/safety phrases only.
 A guard test refuses literal hours/prices in the golden file (``test_eval_answers.py``).
@@ -50,7 +51,7 @@ _TEMPLATE = re.compile(r"\{\{\s*([a-z_]+)(?::([^|}]*))?\s*(?:\|\s*([a-z_]+))?\s*
 _TIME_RANGE = re.compile(
     r"\d{1,2}(?::\d{2})?\s*(?:AM|PM)\s*[–—-]\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)", re.I
 )
-_PHONE_SHAPE = re.compile(r"(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)")
+_PHONE_SHAPE = re.compile(r"(?:\+?1[\s.,-]*)?\(?\d{3}\)?[\s.,-]*\d{3}[\s.,-]*\d{4}(?!\d)")  # spoken groups may be comma-separated
 _NUMBER = re.compile(r"\$?\d+(?:[.,]\d+)?%?(?:\s*[a-z]+)?", re.I)
 # What every channel must say when no special is running today (voice/tools/faq.py speaks it).
 NO_DEALS_RE = r"(?i)(no specials (are )?posted|don'?t have any specials|no deals (are )?(running|posted))"
@@ -67,7 +68,9 @@ class Entry:
     must_include: list[str] = field(default_factory=list)
     must_not_include: list[str] = field(default_factory=list)
     tone: str = "spoken_and_written"
-    max_words: dict = field(default_factory=lambda: {"spoken": 60, "written": 110})
+    # Spoken replies legitimately end with one follow-up question ("how do you want to feel?"),
+    # which the written channel doesn't do — hence the larger spoken default than a bare fact needs.
+    max_words: dict = field(default_factory=lambda: {"spoken": 80, "written": 110})
     channels: list[str] = field(default_factory=lambda: ["text", "playground", "voice", "web"])
     source_of_truth: str = ""
     expect_intent: str = ""
@@ -131,8 +134,28 @@ def spoken_to_digits(text: str) -> str:
             return str(_UNITS[single.lower()])
         return str(_TENS[tens.lower()] + (_UNITS[unit.lower()] if unit else 0))
 
-    t = _SPOKEN_NUM.sub(_num, text)
+    # Spelled-out digit strings: "one-three-one-five" / "five oh nine" → 1315 / 509.
+    def _digits(m):
+        words = [w for w in re.split(r"[\s-]+", m.group(0).strip()) if w]
+        return "".join("0" if w.lower() == "oh" else str(_UNITS.get(w.lower(), 0)) for w in words)
+
+    # "double eight" / "triple five" → "eight eight" / "five five five" before the run is folded.
+    t = re.sub(r"\b(double|triple) (zero|oh|one|two|three|four|five|six|seven|eight|nine)\b",
+               lambda m: " ".join([m.group(2)] * (2 if m.group(1).lower() == "double" else 3)),
+               text, flags=re.I)
+    t = re.sub(
+        r"\b(?:(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)(?:[\s-]+(?=(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)\b)|(?![a-z]))){2,}",
+        lambda m: _digits(m), t, flags=re.I,
+    )
+    t = _SPOKEN_NUM.sub(_num, t)
     t = re.sub(r"\b([ap])\s*\.?\s*m\b\.?", r"\1m", t, flags=re.I)          # "A M" / "p.m." → am/pm
+    t = re.sub(r"\b([A-Z]) (?=[A-Z]\b)", r"\1", t)                        # "I D" / "T H C" → ID / THC
+    # Spoken street forms → the written KB form ("North First Street" → "N 1st St").
+    for spoken, written in (("north", "n"), ("south", "s"), ("east", "e"), ("west", "w"),
+                            ("first", "1st"), ("second", "2nd"), ("third", "3rd"),
+                            ("street", "st"), ("avenue", "ave"), ("lane", "ln"), ("road", "rd"),
+                            ("highway", "wa-"), ("washington", "wa")):
+        t = re.sub(rf"\b{spoken}\b\.?", written, t, flags=re.I)
     t = re.sub(r"\b(\d{1,2}) (\d{2})\s*(am|pm)\b", r"\1:\2\3", t, flags=re.I)  # "11 30 pm" → 11:30pm
     t = re.sub(r"\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)) to (\d{1,2}(?::\d{2})?\s*(?:am|pm))\b", r"\1-\2", t, flags=re.I)
     t = re.sub(r"\b(\d+) percent\b", r"\1%", t, flags=re.I)
@@ -157,10 +180,20 @@ def atoms(value: str, flt: str) -> list[str]:
     if flt == "times":
         return [norm(m) for m in _TIME_RANGE.findall(norm(v))]  # norm first: spoken → digits
     if flt == "phone":
-        m = _PHONE_SHAPE.search(v)
+        m = _PHONE_SHAPE.search(norm(v))  # norm first: "five oh nine, …" → digits
         return [re.sub(r"\D", "", m.group(0))[-10:]] if m else []
     if flt == "numbers":
         return [norm(m) for m in _NUMBER.findall(v)]
+    if flt == "address":
+        # "1315 N 1st St, Yakima, WA 98901" → the pieces a spoken address must carry, in any
+        # order and with any filler ("thirteen fifteen North First Street, in Yakima, … zip is").
+        n = norm(v)
+        out = []
+        m = re.match(r"(\d+)\s+(.+?),\s*([^,]+),\s*wa\s*(\d{5})", n)
+        if m:
+            house, street, city, zipc = m.groups()
+            out = [house, street.split()[0], city.strip(), zipc]
+        return out or [n]
     if flt == "first":
         first = re.split(r"(?<=[.!?])\s", v.strip(), maxsplit=1)[0]
         return [norm(first).rstrip(".!?")]
@@ -282,6 +315,10 @@ def resolve(pattern: str) -> Check:
         raise LookupError(f"{pattern}: filter {flt!r} extracted nothing from {value!r}")
     if flt == "phone":
         regexes = [_phone_regex(a) for a in found]
+    elif flt == "address":
+        # digits may be spoken in groups ("thirteen fifteen" → "13 15"), so allow gaps inside them
+        regexes = [re.compile(r"\s?".join(a) if a.isdigit() else r"\b" + re.escape(a) + r"\b", re.I)
+                   for a in found]
     else:
         regexes = [_loose_regex(a) for a in found]
     return Check(source=pattern, regexes=regexes, atoms=found, literal=False,

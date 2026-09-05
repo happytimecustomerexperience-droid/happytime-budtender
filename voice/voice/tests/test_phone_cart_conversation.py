@@ -49,14 +49,21 @@ class ConversationBudtender:
 
 @pytest.mark.django_db
 def test_continuous_conversation_switches_product_specials_policy_cart_quote_release(monkeypatch):
-    FAQEntry.objects.create(
-        key="specials-yakima",
-        question="What specials are available today?",
-        answer="Monday flower special and cartridge deal are active today.",
-        paraphrases=["discounts", "deals", "specials"],
+    # Deal facts live only in dated StoreFact rows now (never FAQ prose), so the specials turn is
+    # seeded the way the owner posts a deal on /dashboard/specials-hours/: a row valid today.
+    import datetime as _dt
+
+    from kb.models import StoreFact
+
+    StoreFact.objects.create(
         store="yakima",
-        topic="specials",
-        source_url="https://happytimeweed.com/specials",
+        kind="special",
+        label="Monday flower special",
+        value="Monday flower special and cartridge deal are active today.",
+        confirmed=True,
+        is_active=True,
+        valid_from=_dt.date.today() - _dt.timedelta(days=1),
+        valid_to=_dt.date.today() + _dt.timedelta(days=1),
     )
     FAQEntry.objects.create(
         key="returns-yakima",
