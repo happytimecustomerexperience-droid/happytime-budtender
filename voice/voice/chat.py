@@ -652,7 +652,18 @@ _PROXY_PURCHASE_RE = re.compile(
     r"\b(?:pick|grab)\s+(?:it\s+|them\s+|that\s+)?up\s+on\s+(?:my|his|her|their)\s+behalf\b|"
     r"\bon\s+my\s+behalf\b|"
     r"\bcan'?t\s+come\s+in\b|"
-    r"\bbuy\s+(?:this|it|that|them)\s+for\s+my\b",
+    r"\bbuy\s+(?:this|it|that|them)\s+for\s+my\b|"
+    # A third party buying and HANDING IT OVER is the same diversion said the long way round:
+    # "can he just buy the edibles and bring them out to me", "my cousin will get it for me".
+    # None of the pick/grab-up shapes above reach these, so a proxy request phrased this way fell
+    # straight through to ordinary product routing.
+    r"\b(?:he|she|they|someone(?:\s+else)?|my\s+\w+)\s+(?:can\s+|could\s+|will\s+|would\s+|just\s+)*"
+    r"(?:buy|buys|get|gets|grab|grabs|purchase|purchases|pick\s+up)\b"
+    r"[^.?!]{0,40}?(?:\bfor\s+me\b|\b(?:brings?|gives?|hands?)\s+(?:it|them|that|those)?\s*(?:out\s+)?(?:to\s+)?me\b)|"
+    # ...and the handoff on its own: "what if he brings it out to me in the parking lot after" is
+    # the same diversion one step later in the plan, with the purchase already assumed.
+    r"\b(?:he|she|they|someone(?:\s+else)?|my\s+\w+)\s+(?:can\s+|could\s+|will\s+|would\s+|just\s+)*"
+    r"(?:brings?|gives?|hands?)\s+(?:it|them|that|those)\s+(?:out\s+)?to\s+me\b",
     re.I,
 )
 
@@ -664,7 +675,11 @@ _PROXY_PURCHASE_RE = re.compile(
 _UNDERAGE_RE = re.compile(
     # "who's"/"who is" matters: "my friend who's 19 said he could carry it for me" is the exact
     # shape a diversion attempt takes, and it has no "my X is" or "I'm" to anchor on.
-    r"\b(?:i'?m|i\s+am|he'?s|she'?s|they'?re|who'?s|who\s+is|my\s+\w+\s+is)\s+(?:1\d|20)\b|"
+    # The adverb people actually use — "I'm ONLY 17", "I'm JUST 19", "he's BARELY 20" — sat
+    # between the pronoun and the age and broke the match entirely, so the single most common
+    # phrasing of an under-21 admission was not detected at all.
+    r"\b(?:i'?m|i\s+am|he'?s|she'?s|they'?re|who'?s|who\s+is|my\s+\w+\s+is)\s+"
+    r"(?:(?:only|just|barely|merely|still|like|actually|honestly|already)\s+)?(?:1\d|20)\b|"
     r"\b(?:1\d|20)\s*(?:-|\s)?\s*(?:year|yr)s?\s*-?\s*old\b|"
     r"\bunder\s*(?:21|twenty[-\s]?one)\b|"
     r"\bunderage\b|"
@@ -678,6 +693,34 @@ def _is_proxy_purchase_question(message: str) -> bool:
     quotes no statute — it hands the call to a person, which is the only safe answer here."""
     text = message or ""
     return bool(_PROXY_PURCHASE_RE.search(text) or _UNDERAGE_RE.search(text))
+
+
+# Only a FIRST-PERSON admission sticks to the session. "my friend who's 19 could carry it for me"
+# is a per-message proxy/diversion trigger (handled above) but says nothing about the caller's own
+# age — sticking it would refuse to serve an adult for the rest of the call.
+_SELF_UNDERAGE_RE = re.compile(
+    r"\b(?:i'?m|i\s+am)\s+(?:(?:only|just|barely|merely|still|like|actually|honestly|already)\s+)?"
+    r"(?:1\d|20)\b(?:\s*(?:-|\s)?\s*(?:year|yr)s?\s*-?\s*old\b)?|"
+    r"\bi'?m\s+(?:under\s*(?:21|twenty[-\s]?one)|underage|not\s+21\s+yet)\b",
+    re.I,
+)
+
+
+def _session_declared_underage(history) -> bool:
+    """Whether THIS session has already said it is under 21 — read from the session's own durable
+    turns (``_load_trusted_history``), the same trusted server-side record ``_load_escalation_state``
+    reads the dispute flag from, never from anything the client sent. An under-21 admission is
+    licence-critical (WAC 314-55): it cannot expire after one turn, or the very next sentence
+    ("my cousin is 21, can he buy the edibles and bring them out to me") walks straight back onto
+    the shelf. Best-effort in the same fail-closed sense: no history, no flag."""
+    if not isinstance(history, list):
+        return False
+    for msg in history:
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        if _SELF_UNDERAGE_RE.search(str(msg.get("content") or "")):
+            return True
+    return False
 
 
 # Taking cannabis across a state line is a FEDERAL offence, and WA product may not leave WA.
@@ -1352,8 +1395,18 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     # an impaired-driving question, or an allergen ask must never fall through to the ordinary
     # category regex and become a product pitch.
     is_poison_emergency = _is_ingestion_emergency(message)
+    # An under-21 admission is a property of the SESSION, not of one message (see
+    # ``_session_declared_underage``), scoped to the turns it must actually stop: a SHOPPING ask
+    # (a category word, a proxy/handoff request, a hold). A general question — "is it safe to use
+    # while pregnant", "what are your hours" — keeps its ordinary grounded answer, which is
+    # exactly what ``UNDER_21`` promises ("I'm still happy to answer general questions").
+    under_21 = bool(_UNDERAGE_RE.search(message)) or (
+        _session_declared_underage(history)
+        and bool(message_category or _PROXY_PURCHASE_RE.search(message) or _STAGE_RE.search(message))
+    )
     safety_hit = (
         is_poison_emergency
+        or under_21
         or _is_safety_emergency(message)
         or _is_dosing_advice_question(message)
         or _is_drug_interaction_question(message)
@@ -1542,7 +1595,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             answer = _poison_emergency_answer(store, phone)
         elif is_cannot_answer_safely:
             answer = _cannot_answer_safely_answer(store, phone)
-        elif _is_proxy_purchase_question(message):
+        elif under_21 or _is_proxy_purchase_question(message):
             answer = _under_21_answer(store, phone)
         else:
             answer = _escalation_answer(store, phone)
