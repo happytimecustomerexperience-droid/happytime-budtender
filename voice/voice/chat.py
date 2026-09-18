@@ -204,7 +204,11 @@ _FAQ_FIRST_RE = re.compile(
     r"\b("
     r"specials?|deals?|discounts?|sale|hours?|open|close|location|address|phone|"
     r"returns?|refund|policy|age|wa|wac|legal|compliance|id|identification|"
-    r"delivery|payment|order|defective|broken|won'?t\s+fire|doesn'?t\s+work"
+    r"delivery|payment|order|defective|broken|won'?t\s+fire|doesn'?t\s+work|"
+    # The payment row is one of the most-asked FAQs and nobody asks it with the word "payment" —
+    # they say "do I need cash or can I use my card". Without these the turn classified as
+    # greeting_other and lost its FAQ preference entirely.
+    r"cash|debit|credit|cards?|atm"
     r")\b",
     re.I,
 )
@@ -246,7 +250,9 @@ _EFFECT_ALIASES = (
     ("sleep", re.compile(r"\b(sleep|sleepy|bedtime|insomnia)\b", re.I)),
     ("relaxed", re.compile(r"\b(relax|relaxed|relaxing|calm|chill|unwind)\b", re.I)),
     ("focused", re.compile(r"\b(focus|focused|creative|energy|energized)\b", re.I)),
-    ("pain relief", re.compile(r"\b(pain|ache|aches|sore|soreness)\b", re.I)),
+    # "they've been so achy lately" is how a real customer describes it; "achy"/"aching"/"stiff"
+    # were in no alias, so a bare "anything CBD-ish for my knees" reached no product route at all.
+    ("pain relief", re.compile(r"\b(pain|ache|aches|achy|aching|sore|soreness|stiff|stiffness)\b", re.I)),
     ("anxiety relief", re.compile(r"\b(anxiety|anxious|stress|stressed)\b", re.I)),
 )
 # A caller naming a brand with NO category word ("anything from Wyld") is still a real product
@@ -875,9 +881,17 @@ def _is_condition_followup_question(message: str) -> bool:
 # ("do you have an indica", "I want an eighth").
 _EDUCATION_QUESTION_RE = re.compile(
     r"\bwhat\s+(?:does|do)\b[^.?!]{0,40}\bmean\b|"
-    r"\bwhat\s+(?:is|are)\s+(?:an?\s+|the\s+)?"
+    # "what's a cart even?" / "what is a dab" / "what are edibles": the same definition question,
+    # with the contraction and the bare product noun the earlier list left out. A first-timer who
+    # asks what a thing IS needs it explained, not sold to them.
+    r"\bwhat(?:'?s|\s+is|\s+are)\s+(?:an?\s+|the\s+)?"
     r"(?:indica|sativa|hybrid|terpenes?|thc|cbd|rso|rosin|resin|distillate|"
-    r"concentrates?|edibles?|pre.?rolls?|tinctures?|eighth|quarter)\b|"
+    r"concentrates?|edibles?|pre.?rolls?|tinctures?|eighth|quarter|"
+    r"carts?|cartridges?|vapes?|dabs?|gumm(?:y|ies)|flower|buds?|joints?|blunts?|"
+    r"topicals?|capsules?|shatter|wax|disposables?|ounces?)\b|"
+    # The same question pointed at something already named: "someone told me to get a cart but
+    # idk what that even is". The noun is in the caller's PREVIOUS clause, not this one.
+    r"\bwhat\s+(?:that|it|this)\s+(?:even\s+)?is\b|"
     r"\bdifference\s+between\b|"
     r"\bwhat'?s\s+the\s+difference\b|"
     r"\bwhat\s+does\s+\w+\s+stand\s+for\b",
