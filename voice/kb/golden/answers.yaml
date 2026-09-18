@@ -687,8 +687,8 @@
     - "when will it be ready"
   store: yakima
   phone: "+15095550142"
-  must_include: ["(?i)(21|\\bid\\b|valid|person who|themselves|pick(?:ing)? (?:it|them) up|team member|can'?t|cannot|not able)"]
-  must_not_include: ["(?i)^(sure|yes|absolutely)\\b", "(?i)(plus|\\+) tax"]
+  must_include: ["(?i)(21|twenty[- ]one|\\bid\\b|person who|themselves|pick(?:ing)? (?:it|them) up|team member)"]
+  must_not_include: ["(?i)^(sure|yes|absolutely)\\b", "(?i)(plus|\\+) tax", "(?i)state lines"]
   max_words: { spoken: 90, written: 120 }
   channels: [text, playground, voice]
   source_of_truth: stage_phone_cart + the 21+/ID rule (a held order is still picked up by the buyer)
@@ -724,7 +724,7 @@
 - id: flow-store-switch-then-hours
   category: flows
   question_variants:
-    - "what time do you close"
+    - "what are your hours over there"
   setup_turns:
     - "what are your hours in yakima"
     - "actually never mind, I'm driving to pullman"
@@ -835,7 +835,7 @@
 - id: flow-asked-twice
   category: flows
   question_variants:
-    - "sorry, what time did you say you close"
+    - "sorry, what were those hours again"
   setup_turns:
     - "what are your hours in yakima"
     - "okay"
