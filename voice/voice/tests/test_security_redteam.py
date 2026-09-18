@@ -242,14 +242,29 @@ def test_control_legal_citations_are_not_over_redacted():
 
 # ── 4. Abuse / DoS ────────────────────────────────────────────────────────────
 
-def test_finding_voice_api_has_no_rate_limiting():
-    """Neither /api/voice/chat nor /api/voice/kb/search carries any throttle — the Bearer
-    token is the only control, so one leaked/compromised proxy token is an unmetered
-    LLM-spend and DB-growth faucet (contrast bundles/views.py, which uses @rate_limit)."""
-    from voice import api
+def test_fixed_voice_api_has_rate_limiting(client, settings):
+    """FIXED: /api/voice/chat and /api/voice/kb/search are now wrapped in a small
+    cache-backed limiter (per session_token+client IP, env-tunable HHT_VOICE_RATE_LIMIT),
+    429ing with Retry-After once the budget is exhausted. See voice/api.py::rate_limited."""
+    settings.HHT_BACKEND_TOKEN = "t0ken"
+    settings.HHT_VOICE_RATE_LIMIT = 3
 
-    src = inspect.getsource(api)
-    assert "rate_limit" not in src and "throttle" not in src.lower()  # FINDING
+    def _post(body):
+        return client.post(
+            "/api/voice/kb/search",
+            data=json.dumps(body),
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer t0ken",
+        )
+
+    body = {"query": "hours", "session_token": "attacker-token"}
+    for _ in range(3):
+        resp = _post(body)
+        assert resp.status_code in (200, 400)  # under budget: normal handling
+
+    limited = _post(body)
+    assert limited.status_code == 429
+    assert limited["Retry-After"]
 
 
 def test_finding_unbounded_turn_growth_per_attacker_chosen_session_token(settings):

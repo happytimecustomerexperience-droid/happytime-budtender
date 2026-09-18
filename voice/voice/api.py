@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import functools
 import hmac
 import json
 import logging
+import time
 
 from django.conf import settings
+from django.core.cache import cache
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -15,6 +18,54 @@ from voice.chat import answer_text_chat
 from voice.tools import dispatch
 
 logger = logging.getLogger(__name__)
+
+_RATE_LIMIT_WINDOW_SECONDS = 60
+
+
+def _client_ip(request) -> str:
+    xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    return (xff.split(",")[-1].strip() if xff else request.META.get("REMOTE_ADDR", "")) or "anon"
+
+
+def _rate_limit_key(request) -> str:
+    """Per (session_token, client IP) — the Bearer token is shared by the whole proxy, so
+    IP alone would throttle every legitimate caller together; session_token alone lets an
+    attacker rotate tokens to dodge the limit."""
+    try:
+        session_token = str(_body(request).get("session_token") or "")[:200]
+    except Exception:  # noqa: BLE001
+        session_token = ""
+    return f"{session_token}:{_client_ip(request)}"
+
+
+def rate_limited(scope: str):
+    """Small cache-backed fixed-window throttle (env-tunable via HHT_VOICE_RATE_LIMIT,
+    default 60/min). Neither /api/voice/chat nor /api/voice/kb/search carried any throttle —
+    the Bearer token is a single shared proxy secret, so a leaked/compromised proxy is an
+    unmetered LLM-spend and DB-growth faucet without this."""
+
+    def deco(view):
+        @functools.wraps(view)
+        def wrapped(request, *a, **kw):
+            limit = int(getattr(settings, "HHT_VOICE_RATE_LIMIT", 60) or 60)
+            bucket = int(time.time() // _RATE_LIMIT_WINDOW_SECONDS)
+            key = f"voice_rl:{scope}:{_rate_limit_key(request)}:{bucket}"
+            try:
+                count = cache.get_or_set(key, 0, timeout=_RATE_LIMIT_WINDOW_SECONDS)
+                count = cache.incr(key)
+            except ValueError:  # key expired between get_or_set and incr
+                cache.set(key, 1, timeout=_RATE_LIMIT_WINDOW_SECONDS)
+                count = 1
+            if count > limit:
+                resp = JsonResponse({"ok": False, "error": "rate_limited"}, status=429)
+                resp["Retry-After"] = str(_RATE_LIMIT_WINDOW_SECONDS)
+                return resp
+            return view(request, *a, **kw)
+
+        return wrapped
+
+    return deco
+
 
 _VALID_STORES = {"yakima", "mount-vernon", "pullman"}
 
@@ -43,6 +94,7 @@ def _safe_store(value) -> str:
 
 @csrf_exempt
 @require_POST
+@rate_limited("kb_search")
 def kb_search(request):
     """Grounded KB lookup for sibling services. Bearer-gated; no browser access."""
     if not _authorized(request):
@@ -60,6 +112,7 @@ def kb_search(request):
 
 @csrf_exempt
 @require_POST
+@rate_limited("chat")
 def text_chat(request):
     """Shared website-chat endpoint backed by the same grounded tool layer as Vapi."""
     if not _authorized(request):
