@@ -1466,7 +1466,8 @@ def _stage_cart_reply(ctx: dict, store: str, phone: str, tool_results: list) -> 
 # phrasing on the floor, and it classified as no topic at all.
 _RETURN_RE = re.compile(
     r"\b(returns?|refund|exchange|money\s*back|return\s+policy|"
-    r"bring\s+(?:it|them|this|that|these)\s+back|take\s+(?:it|them|this|that)\s+back)\b",
+    r"bring\s+(?:it|them|this|that|these)\s+back(?!\s+(?:home|with|across|over))|"
+    r"take\s+(?:it|them|this|that)\s+back(?!\s+(?:home|with|across|over)))\b",
     re.I,
 )
 _SPECIALS_RE = re.compile(r"\b(specials?|deals?|discounts?|sale|promo|coupon|bogo)\b", re.I)

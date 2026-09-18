@@ -1394,6 +1394,8 @@ def test_25_long_naturalistic_compliance_call(convo, fake_bt):
     t = _say(c, "got it, thanks so much, see you soon")
 
     assert len(c.turns) == 10
-    upserts = fake_bt.calls["phone_cart_upsert"]
-    assert all(u["sku"] == "FL-BBOG-35" for u in upserts)
+    # CHANGED 2026-09-17: this caller never gives a number, and a hold staged with an empty phone
+    # is one staff cannot call anybody about. The router still resolves the right SKU (asserted
+    # above) and asks for the number before writing the hold.
+    assert not fake_bt.calls.get("phone_cart_upsert"), "nothing staged without a number"
     _finish(title, c, deductions, 100 - sum(_DEDUCTIONS[code] for code, _ in deductions))
