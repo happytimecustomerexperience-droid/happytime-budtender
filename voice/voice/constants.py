@@ -159,6 +159,11 @@ TOOL_SPECS = {
                     ],
                 },
                 "subcategory": {"type": "string"},
+                # A caller who names a brand and no category ("you guys still carrying Phat
+                # Panda") is making a real product request; without a brand slot the name was
+                # simply dropped by _sanitize_args and the search ran blind. budtender ranks on
+                # brand itself.
+                "brand": {"type": "string"},
                 "size": {"type": "string"},
                 "price_tier": {"type": "string", "enum": ["value", "mid", "top"]},
                 "price_min": {"type": "number"},

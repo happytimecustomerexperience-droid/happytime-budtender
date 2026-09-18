@@ -121,7 +121,7 @@ def _slots_from_args(args: dict, store: str) -> dict:
     cat = args.get("category")
     if cat not in (None, ""):
         slots["category"] = _normalize_category(cat)
-    for key in ("subcategory", "size", "price_tier", "effect_desired"):
+    for key in ("subcategory", "brand", "size", "price_tier", "effect_desired"):
         val = args.get(key)
         if val not in (None, ""):
             slots[key] = val
@@ -231,7 +231,17 @@ def handle_suggest_products(args: dict, ctx: dict) -> dict:
     budtender returns no results (never fabricate — Numbers-Guard)."""
     args = args or {}
     ctx = ctx or {}
-    if not (args.get("category") or "").strip():
+    # A search needs SOMETHING to narrow on, but it does not have to be a category: "you guys
+    # still carrying Phat Panda" (a brand) and "anything under twenty bucks" (a ceiling) are real
+    # shopping asks with no category word in them, and hard-requiring one made them unanswerable —
+    # the caller got an honest miss for a question the shelf could have answered. A call with
+    # nothing to narrow on at all is still the tool error it always was.
+    narrowed = (
+        (args.get("category") or "").strip()
+        or (args.get("brand") or "").strip()
+        or isinstance(args.get("price_max"), (int, float))
+    )
+    if not narrowed:
         return {"error": "missing_category", "picks": [], "spoken_summary": _HONEST_EMPTY}
 
     store = _resolve_store(args, ctx)

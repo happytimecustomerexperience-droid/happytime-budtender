@@ -153,8 +153,12 @@ def _wants_human(message: str) -> bool:
 # fixing the collision). The infused-blunt/blunt ordering above is untouched by this change.
 _CATEGORY_RE = {
     "cartridge": re.compile(r"\b(carts?|cartridges?|vapes?|disposables?|510|pods?)\b", re.I),
-    "flower": re.compile(r"\b(flowers?|buds?|eighths?|ounces?)\b", re.I),
-    "edible": re.compile(r"\b(edibles?|gummy|gummies|chocolates?|drinks?|beverages?|mg)\b", re.I),
+    # "zaza"/"za" is ordinary slang for potent flower and matched no lexicon at all, so a very
+    # common shopping opener fell out of the product path entirely.
+    "flower": re.compile(r"\b(flowers?|buds?|eighths?|ounces?|zaza|za)\b", re.I),
+    # Typo-tolerant: "gummys"/"gummie"/"gummiez" are at least as common as the correct spelling
+    # and matched neither "gummy" nor "gummies", losing the category outright.
+    "edible": re.compile(r"\b(edibles?|gumm(?:ies|iez|ys|y|ie)|chocolates?|drinks?|beverages?|mg)\b", re.I),
     "concentrate": re.compile(r"\b(concentrates?|dabs?|wax|rosin|resin|hash)\b", re.I),
     "pre-roll": re.compile(r"\b(pre.?rolls?|joints?)\b", re.I),
     "topical": re.compile(r"\b(topicals?|lotions?|balms?|creams?|salves?)\b", re.I),
@@ -169,6 +173,7 @@ _STRAIN_ONLY_RE = re.compile(r"\b(sativa|indica|hybrid)\b", re.I)
 _PRODUCT_SLOT_KEYS = (
     "category",
     "subcategory",
+    "brand",
     "size",
     "price_tier",
     "effect_desired",
@@ -232,7 +237,19 @@ _DISPUTE_TOPIC_RE = re.compile(
     r"expired|expiration)\b",
     re.I,
 )
-_PRICE_MAX_RE = re.compile(r"\b(?:under|below|less than|no more than|up to|max(?:imum)?)\s*\$?\s*(\d+(?:\.\d{1,2})?)\b", re.I)
+# People say budgets out loud: "under twenty bucks", "less than thirty". Digits-only meant a
+# spelled-out ceiling never became a price_max and the caller was shown over-budget picks.
+_PRICE_WORDS = {
+    "ten": 10.0, "fifteen": 15.0, "twenty": 20.0, "twenty-five": 25.0, "twenty five": 25.0,
+    "thirty": 30.0, "thirty-five": 35.0, "thirty five": 35.0, "forty": 40.0, "forty-five": 45.0,
+    "forty five": 45.0, "fifty": 50.0, "sixty": 60.0, "seventy": 70.0, "eighty": 80.0,
+    "ninety": 90.0, "a hundred": 100.0, "one hundred": 100.0, "hundred": 100.0,
+}
+_PRICE_MAX_RE = re.compile(
+    r"\b(?:under|below|less than|no more than|up to|max(?:imum)?)\s*\$?\s*"
+    r"(\d+(?:\.\d{1,2})?|" + "|".join(sorted(_PRICE_WORDS, key=len, reverse=True)) + r")\b",
+    re.I,
+)
 _DOH_ONLY_RE = re.compile(r"\b(doh|medical|medically compliant|compliant)\b", re.I)
 _SUBCATEGORY_RE = re.compile(r"\b(indica|sativa|hybrid)\b", re.I)
 # budtender's ranker only knows these three (budtender/engine.py EFFECT_HINTS) and
@@ -261,7 +278,23 @@ _EFFECT_ALIASES = (
 # normal ranked search. Narrow by design ("anything/something from <Capitalized>") so it catches
 # the natural brand-ask phrasing without firing on unrelated "from <place>" mentions ("visiting
 # from Idaho", "Marcus from Cascade Crest" — a vendor call, which wins earlier anyway).
-_BRAND_MENTION_RE = re.compile(r"\b(?:anything|something)\s+from\s+[A-Z][\w'&-]*")
+#
+# 2026-09-17: widened to the way people actually name a brand — "you guys still carrying Phat
+# Panda", "got any Wyld", "do you have Jetty". Case-SENSITIVE by design: the capital letter is the
+# whole signal that the word is a brand and not a common noun, which is also why no lowercase
+# stopword list is needed.
+_BRAND_MENTION_RE = re.compile(
+    r"\b(?:anything|something)\s+from\s+(?P<from>[A-Z][\w'&-]*(?:\s+[A-Z][\w'&-]*)?)|"
+    r"\b(?:still\s+)?(?:carry|carrying|stock|stocking|have|got|get)\s+(?:any\s+|the\s+)?"
+    r"(?P<named>[A-Z][\w'&-]*(?:\s+[A-Z][\w'&-]*)?)"
+)
+
+
+def _brand_from_text(text: str) -> str:
+    match = _BRAND_MENTION_RE.search(text or "")
+    if not match:
+        return ""
+    return (match.group("from") or match.group("named") or "").strip()
 # "how much should I take for my anxiety" carries the same "anxiety" word _EFFECT_ALIASES uses for
 # a shopping ask ("something for anxiety relief"), but it is a condition-dosing SAFETY question
 # (test_thread_17_safety_and_compliance.py) that must never become an upsell attempt — budtenders
@@ -273,7 +306,9 @@ _SIZE_ALIASES = (
     ("1g", re.compile(r"\b(1\s*g|one\s*gram|full\s*gram)\b", re.I)),
     ("3.5g", re.compile(r"\b(3\.5\s*g|eighth|1/8\s*oz)\b", re.I)),
     ("7g", re.compile(r"\b(7\s*g|quarter)\b", re.I)),
-    ("14g", re.compile(r"\b(14\s*g|half\s*ounce|1/2\s*oz)\b", re.I)),
+    # "halves"/"a half" is how a flower shopper says half-ounce; only the spelled-out forms
+    # matched, so the size slot was lost.
+    ("14g", re.compile(r"\b(14\s*g|half\s*ounce|halves|a\s+half|1/2\s*oz)\b", re.I)),
     ("28g", re.compile(r"\b(28\s*g|ounce|1\s*oz)\b", re.I)),
     ("5mg", re.compile(r"\b(5\s*mg)\b", re.I)),
     ("10mg", re.compile(r"\b(10\s*mg)\b", re.I)),
@@ -395,10 +430,28 @@ def _history_text(history) -> str:
     return "\n".join(lines)
 
 
+# A category the caller is explicitly moving AWAY from ("actually never mind flower, what carts do
+# you have") must not win the sentence just because it is mentioned first.
+_NEGATED_SPAN_RE = re.compile(
+    r"\b(?:never\s*mind|nevermind|forget(?:\s+about)?|instead\s+of|rather\s+than)(?:\s+[A-Za-z']+){1,3}",
+    re.I,
+)
+
+
 def _category_from_text(text: str) -> str:
+    """The category the caller named FIRST, not the first one this dict happens to list. "10
+    pre-rolls and some gummies for a party" came back as edibles purely because "edible" is
+    checked before "pre-roll" — the caller's own word order is the only honest tie-breaker.
+    (Ties still fall to dict order, which is what keeps infused-blunt ahead of blunt: both start
+    matching at different offsets in "infused blunt", and infused-blunt starts earlier.)"""
+    text = _NEGATED_SPAN_RE.sub(" ", text or "")
+    best, best_start = "", None
     for category, pattern in _CATEGORY_RE.items():
-        if pattern.search(text):
-            return category
+        match = pattern.search(text or "")
+        if match and (best_start is None or match.start() < best_start):
+            best, best_start = category, match.start()
+    if best:
+        return best
     if _STRAIN_ONLY_RE.search(text or ""):
         return "flower"
     return ""
@@ -408,8 +461,11 @@ def _price_max_from_text(text: str):
     match = _PRICE_MAX_RE.search(text or "")
     if not match:
         return None
+    raw = match.group(1)
+    if raw.lower() in _PRICE_WORDS:
+        return _PRICE_WORDS[raw.lower()]
     try:
-        return float(match.group(1))
+        return float(raw)
     except ValueError:
         return None
 
@@ -500,7 +556,7 @@ def _ends_dispute(message: str, category: str, *, escalation_now: bool) -> bool:
 
 
 def _prefers_products(message: str, category: str, *, escalation: bool) -> bool:
-    return bool(category) and not escalation and not _FAQ_FIRST_RE.search(message or "")
+    return bool(category) and not escalation and not _faq_first(message)
 
 
 # Safety check: MUST run before category routing. _CATEGORY_RE matches ordinary product words
@@ -1260,7 +1316,13 @@ def _stage_cart_reply(ctx: dict, store: str, phone: str, tool_results: list) -> 
 # A bare "policy" used to count as a returns question, so "privacy policy" / "what do you do with my
 # phone number, policy-wise" retrieved the RETURN policy on every channel (the phone agent then read
 # it out). Only returns/refund/exchange vocabulary — or "return policy" itself — scopes to that topic.
-_RETURN_RE = re.compile(r"\b(returns?|refund|exchange|money\s*back|return\s+policy)\b", re.I)
+# "can I bring it back" is the return question without the word "return" in it — the commonest
+# phrasing on the floor, and it classified as no topic at all.
+_RETURN_RE = re.compile(
+    r"\b(returns?|refund|exchange|money\s*back|return\s+policy|"
+    r"bring\s+(?:it|them|this|that|these)\s+back|take\s+(?:it|them|this|that)\s+back)\b",
+    re.I,
+)
 _SPECIALS_RE = re.compile(r"\b(specials?|deals?|discounts?|sale|promo|coupon|bogo)\b", re.I)
 _HOURS_LOC_RE = re.compile(
     # "located" / "closed" were missing, so "where exactly are you located" classified as nothing
@@ -1282,11 +1344,22 @@ _REFINEMENT_RE = re.compile(
 )
 
 
+# "anything"/"something" means "any category" — it is the word that licenses widening a carried
+# category when the ceiling turns up nothing. "keep it under $30 though" carries no such word and
+# keeps its honest in-category miss.
+_BROAD_OBJECT_RE = re.compile(r"\b(?:anything|something|whatever)\b", re.I)
+
+
 def _is_refinement(message: str) -> bool:
     """A bare price word is NOT a refinement — "set those aside under the name Marcus" says
     "under" and means nothing about budget. A price ceiling only counts when it names a number,
     which is exactly what _PRICE_MAX_RE already requires."""
     if _REFINEMENT_RE.search(message or ""):
+        return True
+    # A bare SIZE is a refinement of the ask before it, the same way a price ceiling is — "what's
+    # the deal on halves" mid-flower-conversation means half-ounces of what we were just looking
+    # at, and with no category of its own it fell out of the product path entirely.
+    if _size_from_text(message):
         return True
     return _price_max_from_text(message) is not None
 
@@ -1332,7 +1405,23 @@ def _ask_clause(message: str) -> str:
     return text
 
 
+# "what's the deal on halves" is an idiom meaning "tell me about halves"; read literally, the word
+# "deal" scoped the whole turn to the specials row and swallowed a real size ask. Stripped before
+# the FAQ-preference vocabulary is consulted — and ONLY that phrasing, so "any deals on edibles"
+# is still a specials question.
+_DEAL_IDIOM_RE = re.compile(r"\bthe\s+deal\s+(?:on|with)\s+(?=\w)", re.I)
+
+
+def _faq_vocabulary(message: str) -> str:
+    return _DEAL_IDIOM_RE.sub(" ", message or "")
+
+
+def _faq_first(message: str) -> bool:
+    return bool(_FAQ_FIRST_RE.search(_faq_vocabulary(message)))
+
+
 def _faq_topic(message: str) -> str:
+    message = _faq_vocabulary(message)
     if _RETURN_RE.search(message or ""):
         return "return_policy"
     if _SPECIALS_RE.search(message or ""):
@@ -1365,7 +1454,7 @@ def _intent_label(message: str, *, escalation: bool, product: bool) -> str:
     topic = _faq_topic(message)
     if topic:
         return topic
-    if _FAQ_FIRST_RE.search(message or ""):
+    if _faq_first(message):
         return "general_faq"
     return "greeting_other"
 
@@ -1587,7 +1676,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         not category
         and _is_refinement(ask)
         and not _requires_sources(ask)
-        and not _FAQ_FIRST_RE.search(ask)
+        and not _faq_first(ask)
     ):
         category = _carried_category(history)
     if not category and not _requires_sources(ask):
@@ -1604,9 +1693,15 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     attempt_product_search = bool(
         not category
         and not escalation
-        and (_effect_from_text(ask) or _BRAND_MENTION_RE.search(ask or ""))
+        and (
+            _effect_from_text(ask)
+            or _brand_from_text(ask)
+            # A bare ceiling with no category is still a real ask ("anything under twenty bucks");
+            # suggest_products can narrow on the ceiling alone.
+            or _price_max_from_text(ask) is not None
+        )
         and not _requires_sources(ask)
-        and not _FAQ_FIRST_RE.search(ask)
+        and not _faq_first(ask)
         and not _DOSING_QUESTION_RE.search(ask or "")
         and not _is_condition_followup_question(ask)
     )
@@ -1818,6 +1913,10 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             effect = _effect_from_text(ask)
             if effect:
                 suggest_args["effect_desired"] = _EFFECT_TO_BUDTENDER.get(effect, effect)
+        if "brand" not in suggest_args:
+            brand = _brand_from_text(ask)
+            if brand:
+                suggest_args["brand"] = brand
         if "size" not in suggest_args:
             size = _size_from_text(ask)
             if size:
@@ -1837,8 +1936,23 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             suggest_args,
             ctx,
         )
-        tool_results.append({"tool": "suggest_products", "args": dict(suggest_args), "result": suggest})
         picks = _normalize_suggest_picks(suggest.get("picks"), category)
+        # A ceiling the CARRIED category cannot meet is not an honest miss: answering "anything
+        # under twenty bucks" with "nothing in stock" while three things on the shelf are under
+        # twenty is just the previous question's category still clamped on. Drop it and search the
+        # ceiling shelf-wide — only when the caller named no category on THIS turn, so an explicit
+        # "flower under $20" still gets the honest miss it actually asked for.
+        if (
+            not picks
+            and suggest_args.get("price_max") is not None
+            and category
+            and not _category_from_text(ask)
+            and _BROAD_OBJECT_RE.search(ask)
+        ):
+            suggest_args.pop("category", None)
+            suggest = dispatch("suggest_products", suggest_args, ctx)
+            picks = _normalize_suggest_picks(suggest.get("picks"), "")
+        tool_results.append({"tool": "suggest_products", "args": dict(suggest_args), "result": suggest})
         if picks:
             suggest = dict(suggest)
             suggest["picks"] = picks

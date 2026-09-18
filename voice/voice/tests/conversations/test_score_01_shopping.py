@@ -273,16 +273,19 @@ def test_03_brand_led_fixed_no_category_word(convo, fake_bt):
     _banner(title)
 
     # FIXED 2026-08-10: "anything from Wyld" names a real brand but no category word and no FAQ
-    # keyword. suggest_products has no brand slot and REQUIRES category (TOOL_SPECS), so this can
-    # never be a normal ranked search — but chat.py now recognizes the "anything/something from
-    # <Brand>" shape and calls suggest_products anyway (empty category), which honestly misses
-    # (handle_suggest_products' own missing-category guard) instead of letting the FAQ's semantic
-    # search speak an unrelated grounded row.
+    # keyword, so chat.py recognized the shape and called suggest_products with an empty category,
+    # which could only ever miss — the limitation this block pinned.
+    #
+    # FIXED AGAIN 2026-09-17: suggest_products now takes a ``brand`` slot and no longer hard-
+    # requires a category when it has a brand (or a price ceiling) to narrow on, so a brand-only
+    # ask actually returns the brand's products. The assertions below follow the behaviour, not
+    # the old limitation: this is the shelf answering a real question it used to refuse.
     t = say(c, scorer, 1, "hi, do you have anything from Wyld")
     assert "suggest_products" in t.tools, "fixed: a brand-only ask now tries the shelf"
     assert t.intent == "product_suggestion"
-    assert not t.grounded and t.picks == []
-    assert t.next_action == "ask_staff"
+    assert t.args("suggest_products")["brand"] == "Wyld"
+    assert [p["sku"] for p in t.picks] == ["ED-WYLD-10"]
+    assert t.next_action == "show_products"
 
     t = say(c, scorer, 2, "I mean the Wyld gummies specifically")
     args = t.args("suggest_products")

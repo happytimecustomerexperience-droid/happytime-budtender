@@ -97,6 +97,17 @@ class FakeBudtender:
         category = str(slots.get("category") or "").lower()
         if category:
             rows = [r for r in rows if r["category"] == category]
+        if slots.get("brand"):
+            # The real budtender ranks a named brand/strain itself; the fake honours the slot the
+            # same loose way (brand, product name or strain), so a router that forwards the name
+            # gets the named item and one that drops it does not.
+            needle = str(slots["brand"]).strip().lower()
+            rows = [
+                r for r in rows
+                if needle in str(r.get("brand") or "").lower()
+                or needle in str(r.get("name") or "").lower()
+                or needle in str(r.get("strain") or "").lower()
+            ]
         if slots.get("subcategory"):
             rows = [r for r in rows if r.get("subcategory") == str(slots["subcategory"]).lower()]
         if slots.get("size"):
