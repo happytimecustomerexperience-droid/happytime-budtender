@@ -523,12 +523,12 @@ def test_the_mixed_long_call_known_caller_intent_and_pii_floor_hold(convo, fake_
     assert args["price_max"] == 40.0
     assert fake_bt.calls["resume_by_phone"], "a known caller's phone resolves through recognition"
 
-    # 2) A policy question. GAP: "do I need my ID on me" doesn't hit any of _faq_topic's three
-    #    labelled buckets (return/specials/hours) or ``_FAQ_FIRST_RE``'s "id"/"identification"
-    #    words in this exact phrasing, so it lands as an ungrounded ``general_faq`` miss instead
-    #    of the ID-requirement answer the KB (per thread_09) actually has.
+    # 2) A policy question. FIXED 2026-09-17 (was a pinned GAP): "do I need my ID on me" used to
+    #    land as an ungrounded miss even though the KB holds the ID-requirement answer (thread_09
+    #    gets it from a different phrasing). Retrieval reaches the row now, so she hears the rule.
     t = _do("quick one — do I need my ID on me", "general_faq")
-    assert not t.grounded
+    assert t.grounded
+    assert "photo id" in t.answer.lower()
 
     # 3) Back to products, refinement.
     t = _do("okay and something cheaper than that")

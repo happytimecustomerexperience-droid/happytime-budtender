@@ -110,11 +110,12 @@ def test_same_questions_without_the_number_get_no_recognition(convo, fake_bt):
     assert t.intent != "product_suggestion", "with no profile there is no category to fall back on"
     assert t.tools == ["faq_lookup"]
     assert "search" not in fake_bt.calls, "an anonymous bare 'recommend' never reaches inventory"
-    # FINDING (see report): the same words that steered the known caller into inventory land the
-    # anonymous one on a grounded specials blurb labelled `greeting_other` — the label and the
-    # answer disagree. Asserted as it actually behaves.
-    assert (t.intent, t.next_action, t.grounded) == ("greeting_other", "answer", True)
-    assert "deals" in t.answer.lower()
+    # FIXED 2026-09-17: this used to land on a grounded specials blurb labelled `greeting_other`
+    # — a label and an answer that disagreed, and a confident answer to a question that was not
+    # asked. With no profile and no category there is genuinely nothing to recommend from, so the
+    # honest shape is the decline: ungrounded, hand to a person.
+    assert (t.intent, t.next_action, t.grounded) == ("greeting_other", "ask_staff", False)
+    assert "deals" not in t.answer.lower()
 
     t = c.say("okay, then show me a cartridge")
     assert t.intent == "product_suggestion", "an explicit category works without recognition"

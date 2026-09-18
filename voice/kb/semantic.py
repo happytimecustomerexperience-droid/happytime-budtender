@@ -222,7 +222,8 @@ _TOKEN_RE = re.compile(r"[a-z0-9]+")
 # just via a pure function word that had never slipped through before.
 _STOPWORDS = frozenset(
     "a an and are as at be but by can do does for from how i in is it me my no not of on or "
-    "our s the this that these those to up us we what when where which who why with you your".split()
+    "our s the this that these those to up us we what when where which who why will with you your"
+    .split()
 )
 
 
@@ -247,6 +248,10 @@ _GENERIC_CONTENT_WORDS = frozenset(
         "back", "order", "orders", "ordered", "ordering",
         "today", "now", "right", "open",
         "there", "them", "all", "much",
+        # "will this show up on a drug test at work" shared exactly "work" (and the modal "will",
+        # now a stopword) with the return-policy FAQ, cleared the coverage floor on 2 of 5 words,
+        # and a drug-test question was answered with the returns policy.
+        "work", "works", "working", "worked",
         "happy",
         "bring", "brings", "bringing",
         "have", "has", "having",
