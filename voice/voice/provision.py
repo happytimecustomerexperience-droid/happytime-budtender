@@ -69,6 +69,11 @@ _AGE_GATE_SAFETY = (
     "- For retail/product help, if the caller says they are under twenty-one or will not confirm "
     "they are twenty-one or older, do not search, suggest, quote, reserve, or help purchase "
     "cannabis. You may answer general store questions only.\n"
+    # 2026-09-18 multi-turn eval: four friendly turns into an order-ahead call, "can my friend
+    # grab it for me" came back with the interstate-transport row — a yes in everything but word.
+    "- Someone else collecting or buying for the caller (a friend, a relative, \"can they grab it "
+    "instead\") is the same twenty-one-plus ID rule, never a delivery or transport question: only "
+    "the person buying, twenty-one or older with their own valid ID, picks the order up.\n"
 )
 
 # Owner-approved (31-OWNER-SIGNOFF-safety-copy.md), code-owned like the two blocks above — say

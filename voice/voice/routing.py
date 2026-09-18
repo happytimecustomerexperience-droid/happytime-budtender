@@ -52,7 +52,12 @@ _DISPUTE = re.compile(
 # ── 2) vendor lexicon — checked BEFORE retail (the export-#6 fix). Few-shot vocab mirrors the
 #      owner's real returns/auto-return/manifest workflows (01-ARCHITECTURE §1.4).
 _VENDOR = re.compile(
-    r"\b(vendor|wholesale|distributor|distribution|supplier|sales\s+rep|\brep\b|delivery|deliver\w*|"
+    # A bare "delivery"/"deliver" is NOT a vendor signal — "do you deliver to Selah" is the
+    # commonest retail FAQ there is, and because vendor is checked BEFORE faq it answered a
+    # shopper with the receiving-team script. Same narrowing voice/chat.py's _VENDOR_RE made.
+    r"\b(vendor|wholesale|distributor|distribution|supplier|sales\s+rep|\brep\b|"
+    r"delivery\s+(?:driver|window|appointment|for\s+you)|dropping\s+off\s+a\s+delivery|"
+    r"here\s+with\s+a\s+delivery|delivering\s+(?:an?\s+)?(?:order|manifest|pallet)|"
     r"(?:is\s+)?(?:your|the)\s+buyer|our\s+(?:new\s+)?(?:product|line|brand)s?\b|"
     r"drop(ping)?[\s-]?off|drop\s+off|manifest|transfer\s+manifest|metrc|ccrs|wcia|"
     r"sample\s+drop|samples?|\bp\.?o\.?\b|purchase\s+order|invoice|accounts?\s+payable|"
