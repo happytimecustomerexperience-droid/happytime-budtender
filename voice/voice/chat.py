@@ -1293,8 +1293,31 @@ _STAGE_RE = re.compile(
 )
 
 
+# A vendor call is a SESSION, not one sentence: the vendor member's own script asks "who should I
+# say it's from?" after a failed transfer, and the answer to that question ("have the buyer call me
+# back, it's Priya at Cascade Crest") carries none of the lexicon above — it used to drop straight
+# to the FAQ fallback. Kept deliberately narrow: only a contact/callback shape, and only when the
+# turn names no product category, so a vendor who turns into a shopper is still answered as one.
+_VENDOR_CONTINUATION_RE = re.compile(
+    r"\b(call\s+(?:me|us|him|her|them)\s+back|call\s?back|reach\s+(?:me|us)|best\s+number|"
+    r"have\s+(?:the|your)\s+buyer|it'?s\s+\w+\s+(?:at|with|from)\s)",
+    re.I,
+)
+
+
 def _is_vendor_call(message: str) -> bool:
     return bool(_VENDOR_RE.search(message or ""))
+
+
+def _session_is_vendor_call(history) -> bool:
+    """Whether THIS session already identified itself as a vendor — read from the session's own
+    durable turns, the same trusted record ``_session_declared_underage`` uses."""
+    if not isinstance(history, list):
+        return False
+    return any(
+        isinstance(m, dict) and m.get("role") == "user" and _is_vendor_call(str(m.get("content") or ""))
+        for m in history
+    )
 
 
 def _is_staging_request(message: str) -> bool:
@@ -1972,7 +1995,12 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     # both lose to escalation/safety, and both win over the grounded-FAQ speak decision and the
     # product branch below, so a vendor pitch never slot-fills as retail and a staging request
     # never gets answered with irrelevant online-order hold copy.
-    if not escalation and _is_vendor_call(message):
+    vendor_turn = _is_vendor_call(message) or (
+        not message_category
+        and bool(_VENDOR_CONTINUATION_RE.search(message))
+        and _session_is_vendor_call(history)
+    )
+    if not escalation and vendor_turn:
         return _vendor_callback_reply(message, store, phone, ctx, tool_results)
 
     if not escalation and _is_staging_request(message):

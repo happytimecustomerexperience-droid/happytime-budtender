@@ -125,12 +125,31 @@ def ask_playground(question: str, *, store: str, session: str | None = None, pho
 _ROLE_FOR_INTENT = {"faq": "faq", "retail": "budtender", "escalation": "escalation", "vendor": "vendor"}
 
 
+# Vapi's built-in warm transfer. It is not in TOOL_SPECS (Vapi provides it), but the vendor and
+# escalation prompts are ordered around it — "transfer FIRST, callback only if no one answers" —
+# so without it the sim can never reach the callback step at all. The stub answers the way the
+# fallback branch is written for: nobody picked up.
+_TRANSFER_TOOL = "transferCall"
+_TRANSFER_NO_ANSWER = {"status": "no_answer", "note": "nobody on the receiving line picked up"}
+
+
 def _declarations(tool_names: list[str]):
     from google.genai import types
 
     from voice.constants import TOOL_SPECS
 
     decls = []
+    if _TRANSFER_TOOL in tool_names:
+        decls.append(
+            types.FunctionDeclaration(
+                name=_TRANSFER_TOOL,
+                description="Warm-transfer the call to a store team (receiving, manager, budtender).",
+                parameters={
+                    "type": "object",
+                    "properties": {"destination": {"type": "string"}, "summary": {"type": "string"}},
+                },
+            )
+        )
     for name in tool_names:
         spec = TOOL_SPECS.get(name)
         if not spec:
@@ -183,7 +202,10 @@ def ask_voice(
     if prompt is None:
         return Answer(channel="voice", text="", error=f"no AgentPrompt(role={role})")
     system = _with_runtime_safety(prompt.body, role)
-    tools = _declarations(list(prompt.tool_names or []))
+    tool_names = list(prompt.tool_names or [])
+    if role in ("vendor", "escalation"):
+        tool_names = [_TRANSFER_TOOL, *tool_names]  # Vapi hands these members the built-in transfer
+    tools = _declarations(tool_names)
     model_id = (prompt.vapi_model or "").strip() or "gemini-2.5-flash"
 
     client, _mode = make_client()
@@ -227,7 +249,7 @@ def ask_voice(
             for fc in fcalls:
                 args = dict(fc.args or {})
                 args.setdefault("store", store)
-                result = dispatch(fc.name, args, ctx)
+                result = dict(_TRANSFER_NO_ANSWER) if fc.name == _TRANSFER_TOOL else dispatch(fc.name, args, ctx)
                 called.append(fc.name)
                 tool_args.append({"tool": fc.name, "args": args, "grounded": result.get("grounded")})
                 responses.append(

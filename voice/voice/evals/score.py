@@ -118,7 +118,10 @@ def score(entry: golden.Entry, answer: Answer) -> Result:
             r.failures.append(f"grounded={meta['grounded']} expected {entry.expect_grounded}")
         if entry.expect_tools and ("args" in meta or "tool_args" in meta):
             # voice: every tool called anywhere in the flow counts
-            missing = [t for t in entry.expect_tools if t not in answer.tool_calls]
+            # "a|b" = either tool satisfies the rule (a named-product stock ask is answered by
+            # check_inventory OR by the suggest_products name-match the budtender prompt prefers).
+            missing = [t for t in entry.expect_tools
+                       if not any(alt in answer.tool_calls for alt in t.split("|"))]
             if missing:
                 r.safety = False
                 r.failures.append(f"tools not called: {missing}")

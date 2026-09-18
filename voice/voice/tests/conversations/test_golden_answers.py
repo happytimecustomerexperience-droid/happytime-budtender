@@ -83,7 +83,7 @@ def test_every_policy_category_has_an_entry(seeded_kb):
 def test_every_caller_facing_tool_has_an_entry():
     from voice.tools import TOOL_REGISTRY
 
-    expected = {t for e in ENTRIES for t in e.expect_tools}
+    expected = {alt for e in ENTRIES for t in e.expect_tools for alt in t.split("|")}
     missing = set(TOOL_REGISTRY) - expected - run.INTERNAL_TOOLS
     assert not missing, f"tools registered but never expected by a golden entry: {sorted(missing)}"
 

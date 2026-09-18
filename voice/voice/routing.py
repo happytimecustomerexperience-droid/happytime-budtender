@@ -73,8 +73,8 @@ _FAQ = re.compile(
 # ── 4) retail-buyer ask — looking for / recommend / a category/effect/budget.
 _RETAIL = re.compile(
     r"\b(looking\s+for|recommend|suggest|what'?s\s+good|something\s+for|help\s+me\s+(find|sleep|"
-    r"relax)|i\s+want\s+(a|an|some)|i\s+need\s+(a|an|some)|under\s+\$?\d+|flower|edible|gumm\w+|"
-    r"cart(ridge)?|vape|pre-?roll|concentrate|tincture|indica|sativa|hybrid|thc|cbd|to\s+(sleep|"
+    r"relax)|i\s+want\s+(a|an|some)|i\s+need\s+(a|an|some)|under\s+\$?\d+|flowers?|edibles?|gumm\w+|"
+    r"carts?|cartridges?|vapes?|pre-?rolls?|concentrates?|tinctures?|indica|sativa|hybrid|thc|cbd|to\s+(sleep|"
     r"relax|chill)|get\s+high|buy\s+(some|a))\b",
     re.IGNORECASE,
 )

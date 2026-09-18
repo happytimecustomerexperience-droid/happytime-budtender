@@ -429,8 +429,9 @@
   question_variants:
     - "is the Jetty Blue Dream cart in stock"
   channels: [text, playground, voice]
-  source_of_truth: check_inventory
-  expect_tools: [check_inventory]
+  source_of_truth: check_inventory (or the suggest_products name-match the budtender prompt runs first)
+  expect_tools: ["check_inventory|suggest_products"]
+  owner_note: "Either lookup tool is fine; answering a stock question with NO tool call is the failure — that is an invented stock claim."
 
 - id: pairing
   category: products
@@ -565,16 +566,20 @@
 - id: vendor-sales-rep
   category: vendor
   question_variants:
+    - "it's a wholesale order — Marcus with Cascade Crest. Can someone call me back?"
+  setup_turns:
     - "hi this is Marcus with Cascade Crest Distribution, is your buyer available"
   must_include: ["(?i)(call(?:back| you back| back)|buyer|purchasing|receiving|on the line|transfer|delivery|wholesale|manifest)"]
   must_not_include: ["(?i)my top pick", "(?i)in stock"]
   channels: [text, playground, voice]
-  source_of_truth: notify_vendor_callback + VENDOR_FACT_ROWS (voice may warm-transfer to receiving instead)
+  source_of_truth: notify_vendor_callback + VENDOR_FACT_ROWS (the warm transfer is tried first; the callback is the fallback, so the opener is a setup turn)
   expect_tools: [notify_vendor_callback]
 
 - id: vendor-wholesale
   category: vendor
   question_variants:
+    - "yes please, have the buyer call me back — it's Priya at Cascade Crest"
+  setup_turns:
     - "I'm calling about wholesale pricing on our new live resin cartridge line"
   must_include: ["(?i)(call(?:back| you back| back)|buyer|purchasing|receiving|on the line|transfer)"]
   must_not_include: ["(?i)my top pick"]
