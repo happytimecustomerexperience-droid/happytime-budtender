@@ -242,17 +242,18 @@ def _grounded(query: str, store: str | None, topic: str = "") -> dict | None:
     # by returning [] on zero overlap — so the cosine floor applies ONLY to the embedding path.
     if semantic.enabled() and top_score < _MIN_COSINE:
         return None
-    # Relevance floor — unconstrained queries, PLUS a topic-scoped FAQEntry (prose Q&A, still
-    # capable of a bare-word false-positive — "what time does the store open ... so I can time the
-    # drop" shares only "open" with the holiday-hours/drive-thru rows' paraphrases). A topic-scoped
-    # StoreFact is exempt: it is a plain structured fact (address/phone/hours value), and the topic
-    # scope is already the whole precision guarantee for that row type — the floor's own
-    # "distinctive content word" machinery has nothing meaningful to check a bare value string
-    # against. Applies to BOTH the keyword and embedding paths alike, since it re-derives relevance
-    # from the raw query text against the winning row's chunk text rather than trusting either
-    # path's own score.
-    needs_floor = not topic or type(top_row).__name__ == "FAQEntry"
-    if needs_floor and not semantic.relevant_enough(query, top_row):
+    # Relevance floor — every row, topic-scoped or not (2026-09-17). A topic-scoped StoreFact used
+    # to be exempt, because a bare structured value ("Yakima address: 1315 N 1st St") gave the
+    # floor's distinctive-word machinery nothing to check against, and the topic scope was the
+    # whole precision guarantee. It was not enough: "is your weed cheaper than the shop down the
+    # street" classifies as hours_location on "street" and was then answered, exempt and confident,
+    # with the store's address. StoreFact now carries kind-derived alternative phrasings
+    # (kb/models.py ``_KIND_PHRASINGS``), which is exactly the signal the floor needs — the same
+    # ``_paraphrase_hit`` that clears "what time do you close" against the hours row rejects a
+    # price-comparison question against the address row. Applies to BOTH the keyword and embedding
+    # paths alike, since it re-derives relevance from the raw query text against the winning row's
+    # chunk text rather than trusting either path's own score.
+    if not semantic.relevant_enough(query, top_row):
         return None
     answer = _row_answer(top_row)
     if _looks_poisoned(answer):

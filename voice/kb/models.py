@@ -222,6 +222,46 @@ class StoreFact(SourceSyncMixin, models.Model):
             )
         return f"{scope}{self.label}: {self.value}"
 
+    # RETRIEVAL PHRASINGS BY KIND (2026-09-17). ``chunk_text()`` is the row's VALUE — "Yakima
+    # hours: 8 AM-11:30 PM daily" — so it shares no word at all with the most ordinary way a
+    # caller asks for it ("what time do you close", "where are you at", "what's your number").
+    # Retrieval then returned NOTHING for the store's own hours row and the caller was handed to a
+    # human for the single most common question the store gets. FAQEntry/taxonomy rows solve this
+    # with curated alternative phrasings; a StoreFact's phrasings are fully determined by its
+    # ``kind``, so they are derived here rather than stored — no new column, no seed churn, and
+    # both the ranking boost and the relevance floor pick them up through the same
+    # ``row.paraphrases`` duck-type they already read on every other row type.
+    #
+    # ONLY the three hours_location kinds. The other kinds (limit, age, payment, pickup, ...)
+    # already have curated FAQEntry rows written for exactly those questions, and giving the bare
+    # StoreFact value a competing set of phrasings made it outrank them — "what's the legal limit"
+    # started answering with the age/ID fact instead of the WAC ounce/gram caps. Where an FAQEntry
+    # owns the question, the phrasings belong on the FAQEntry.
+    _KIND_PHRASINGS = {
+        "hours": [
+            "what time do you close", "what time do you open", "when do you close",
+            "when do you open", "how late are you open", "closing time", "opening time",
+            "are you open", "what are your hours", "hours today", "hours tonight",
+        ],
+        "address": [
+            "where are you located", "what is your address", "directions to the store",
+            # Deliberately NOT "what street are you on": "street" is a word ordinary non-address
+            # questions use ("is your weed cheaper than the shop down the street"), and it would
+            # be the single distinctive word that grounds one on the store's address.
+        ],
+        "phone": [
+            "what is your phone number", "how do I call the store", "store phone number",
+        ],
+    }
+
+    @property
+    def paraphrases(self) -> list[str]:
+        """Kind-derived alternative phrasings — see ``_KIND_PHRASINGS``. Retrieval-only; never
+        spoken. Empty for an out-of-window row, which contributes no text at all."""
+        if not self.is_current():
+            return []
+        return list(self._KIND_PHRASINGS.get(self.kind, ()))
+
     def spoken_text(self) -> str:
         """The customer-facing answer: the human label + value, with NO raw store-slug prefix
         (``chunk_text()``'s leading "yakima "/"mount-vernon " scope is retrieval-only and must

@@ -283,8 +283,6 @@ def _keyword_fallback(query: str, items: list[tuple[str, str]], row_by_id: dict,
     for chunk_id, text in items:
         c_tokens = set(_tokens(text, drop_stop=True))
         shared = q_tokens & c_tokens
-        if not shared:
-            continue
         distinctive_shared = _distinctive(shared)
         # A purely-generic overlap ("store", "call and back", "today") barely counts — enough to
         # keep the row in the running (never a flat zero) but never enough to beat a row with any
@@ -318,6 +316,14 @@ def _keyword_fallback(query: str, items: list[tuple[str, str]], row_by_id: dict,
         # paraphrases), which used to tie 2.001-all against unrelated rows that merely happen to
         # both contain "daily" and "regular" in their prose with no paraphrase behind either word.
         boost = len(matched_paraphrase_words) * 1.01
+        # A row whose RAW text shares nothing with the question is still a candidate when its own
+        # alternative phrasings answer it (2026-09-17). This used to `continue` on an empty raw
+        # overlap, before paraphrases were ever consulted — and a StoreFact's chunk text is its
+        # VALUE ("Yakima hours: 8 AM-11:30 PM daily"), which shares no word with "what time do you
+        # close". The single most common question a store gets retrieved literally nothing and was
+        # handed to a human. Rows that match on neither raw text nor a phrasing are still dropped.
+        if not shared and not matched_paraphrase_words:
+            continue
         # A taxonomy row whose TERM is the very word the caller named ("what does INDICA mean")
         # is what they asked about; every strain-type row repeats "indica/sativa/hybrid" in its
         # shared caveat, so raw overlap ties all three and the winner was whichever sorted first
