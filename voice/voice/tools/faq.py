@@ -203,6 +203,14 @@ def _row_url(row) -> str:
 
 def _row_answer(row) -> str:
     """The grounded answer text from a KB row — the spoken value lives in the row, not the LLM."""
+    from kb.models import StoreFact
+
+    # StoreFact.chunk_text() prefixes the raw store slug ("yakima ", "mount-vernon ") for
+    # retrieval only — speaking it verbatim leaked the internal store code + label combo to
+    # callers ("mount-vernon Mt Vernon address: ..."). spoken_text() is the same row, minus that
+    # slug (see kb/models.py::StoreFact.spoken_text).
+    if isinstance(row, StoreFact):
+        return row.spoken_text().strip()
     # FAQEntry has a curated ``answer``; everything else speaks its ``chunk_text``.
     answer = getattr(row, "answer", None)
     if answer:
@@ -234,10 +242,17 @@ def _grounded(query: str, store: str | None, topic: str = "") -> dict | None:
     # by returning [] on zero overlap — so the cosine floor applies ONLY to the embedding path.
     if semantic.enabled() and top_score < _MIN_COSINE:
         return None
-    # Relevance floor — unconstrained queries only (a topic already scopes the corpus). Applies to
-    # BOTH the keyword and embedding paths alike, since it re-derives relevance from the raw query
-    # text against the winning row's chunk text rather than trusting either path's own score.
-    if not topic and not semantic.relevant_enough(query, top_row):
+    # Relevance floor — unconstrained queries, PLUS a topic-scoped FAQEntry (prose Q&A, still
+    # capable of a bare-word false-positive — "what time does the store open ... so I can time the
+    # drop" shares only "open" with the holiday-hours/drive-thru rows' paraphrases). A topic-scoped
+    # StoreFact is exempt: it is a plain structured fact (address/phone/hours value), and the topic
+    # scope is already the whole precision guarantee for that row type — the floor's own
+    # "distinctive content word" machinery has nothing meaningful to check a bare value string
+    # against. Applies to BOTH the keyword and embedding paths alike, since it re-derives relevance
+    # from the raw query text against the winning row's chunk text rather than trusting either
+    # path's own score.
+    needs_floor = not topic or type(top_row).__name__ == "FAQEntry"
+    if needs_floor and not semantic.relevant_enough(query, top_row):
         return None
     answer = _row_answer(top_row)
     if _looks_poisoned(answer):
@@ -298,6 +313,11 @@ def faq_lookup(args: dict, ctx: dict) -> dict:
     # A privacy question with no privacy policy in the KB is a hand-off, never a store fact that
     # happens to share the caller's words (see ``_PRIVACY_QUERY``).
     if _PRIVACY_QUERY.search(query) and not _has_privacy_policy():
+        return {"answer": None, "grounded": False, "fallback": _FALLBACK, "store": store or ""}
+
+    # A request for another customer's purchase history/contact info is never the KB's to answer
+    # — see ``_RECORDS_QUERY``.
+    if _RECORDS_QUERY.search(query):
         return {"answer": None, "grounded": False, "fallback": _FALLBACK, "store": store or ""}
 
     # "What's on sale" is answered from the deal rows that are valid TODAY, not from whichever
