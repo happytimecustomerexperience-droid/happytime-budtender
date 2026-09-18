@@ -30,12 +30,26 @@ class GeminiChatUnavailable(RuntimeError):
     """Raised when Gemini is not configured or cannot be called safely."""
 
 
-_PROMPT_INJECTION = re.compile(
-    r"\b(ignore|disregard|override|reveal|print|show|leak)\b.{0,80}\b"
-    r"(instruction|prompt|system|developer|secret|tool|policy|rule)s?\b",
-    re.IGNORECASE | re.DOTALL,
+_INJECTION_VERB = re.compile(
+    r"\b(ignore|disregard|override|reveal|print|show|leak)\b", re.IGNORECASE
+)
+_INJECTION_NOUN = re.compile(
+    r"\b(instruction|prompt|system|developer|secret|tool|policy|rule)s?\b", re.IGNORECASE
 )
 _HISTORY_CHAR_BUDGET = 12000
+_HISTORY_REMOVED_PLACEHOLDER = "[message removed]"
+
+
+def _has_injection(text: str) -> bool:
+    """Verb-anywhere-AND-noun-anywhere check over the whole given window/text.
+
+    Deliberately not a fixed-character-radius proximity check: a fixed radius (e.g. 80
+    chars) is trivially evaded by padding the gap between the verb and the noun, or by
+    splitting the two halves across separate chat turns. Callers that need cross-turn
+    coverage pass in a multi-turn window (see `_history_text`).
+    """
+    text = text or ""
+    return bool(_INJECTION_VERB.search(text)) and bool(_INJECTION_NOUN.search(text))
 
 
 def _client():
@@ -56,12 +70,28 @@ def _client():
 
 
 def _history_text(messages) -> str:
-    lines = []
+    entries = []
     for m in messages:
         role = "assistant" if m.role == "assistant" else "customer"
         text = " ".join(str(m.content or "").split())[:1200]
         if text:
-            lines.append(f"{role}: {text}")
+            entries.append((role, text))
+
+    # Screen each turn individually, then screen a sliding 3-turn window so an
+    # injection split across two (or three) chat messages still gets caught even
+    # though neither turn alone contains both a verb and a noun.
+    flagged = [_has_injection(text) for _role, text in entries]
+    for i in range(len(entries)):
+        start = max(0, i - 2)
+        window_text = " ".join(entries[j][1] for j in range(start, i + 1))
+        if _has_injection(window_text):
+            for j in range(start, i + 1):
+                flagged[j] = True
+
+    lines = [
+        f"{role}: {_HISTORY_REMOVED_PLACEHOLDER if is_bad else text}"
+        for (role, text), is_bad in zip(entries, flagged)
+    ]
     omitted = "[Earlier transcript omitted because the thread exceeded the prompt budget.]"
     kept = []
     total = 0
@@ -240,7 +270,7 @@ def _grounding_text(result: dict | None) -> str:
 
 def _safe_grounding_value(value, *, limit: int) -> str:
     text = " ".join(str(value or "").split())[:limit]
-    if _PROMPT_INJECTION.search(text):
+    if _has_injection(text):
         return ""
     return text
 
