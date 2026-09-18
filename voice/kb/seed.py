@@ -98,7 +98,13 @@ FAQ_ROWS = [
         "question": "How long until my order is ready?",
         "answer": "Online orders are usually ready for pickup in about 15 minutes.",
         "topic": "pickup",
-        "paraphrases": ["when is my order ready", "how long for pickup", "wait time"],
+        # "ready to pick up" spelled as two words is how callers actually say it, and it shared
+        # no token with "pickup" — "when will it be ready to pick up" was answered with the VENDOR
+        # callback row, which says "if receiving can't pick up".
+        "paraphrases": [
+            "when is my order ready", "how long for pickup", "wait time",
+            "when will it be ready to pick up", "ready to pick up",
+        ],
     },
     {
         "key": "limits",
@@ -177,7 +183,13 @@ FAQ_ROWS = [
         "for pickup — there's no payment online, you pay in store with cash or debit when you pick "
         "up. Orders are usually ready in about 15 minutes, and we hold them to the end of the day.",
         "topic": "pickup",
-        "paraphrases": ["order ahead", "reserve online", "online order", "order for pickup", "how do I order"],
+        # This row is also the only one that says you CANNOT pay online — a caller who assumes
+        # they can ("can I just pay for it online now") has to land here, not on the
+        # tax-included row, which they share the verb "pay" with and which answers yes.
+        "paraphrases": [
+            "order ahead", "reserve online", "online order", "order for pickup", "how do I order",
+            "can I pay online", "pay for it online", "do I pay when I pick it up",
+        ],
     },
     {
         "key": "in-store",
