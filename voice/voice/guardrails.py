@@ -59,7 +59,13 @@ def scrub_leak(payload):
             if key in _FORBIDDEN_KEYS:
                 continue  # drop the forbidden key
             scrubbed = scrub_leak(val)
-            if scrubbed is _REDACTED:  # a nested string leak nukes the whole result
+            # FIX: compare by VALUE, not identity. A dict-branch nuke used to return
+            # ``dict(_REDACTED)`` — a copy — so a list one level up whose items were
+            # dicts checked ``is _REDACTED`` and never matched: the whole-result nuke
+            # silently degraded to a per-item stub through a list. Equality bubbles the
+            # nuke all the way up regardless of how many dict/list layers it passes
+            # through.
+            if scrubbed == _REDACTED:
                 return dict(_REDACTED)
             cleaned[key] = scrubbed
         return cleaned
@@ -67,12 +73,12 @@ def scrub_leak(payload):
         out = []
         for item in payload:
             scrubbed = scrub_leak(item)
-            if scrubbed is _REDACTED:
+            if scrubbed == _REDACTED:
                 return dict(_REDACTED)
             out.append(scrubbed)
         return out
     if isinstance(payload, str) and _has_forbidden_substr(payload):
-        return _REDACTED  # sentinel: bubble up to nuke the entire tool result
+        return dict(_REDACTED)  # sentinel: bubble up to nuke the entire tool result
     return payload
 
 
@@ -111,6 +117,24 @@ _ADDRESS_RE = re.compile(
 )
 
 
+# Email address — owner-editable KB rows already avoid these, but a caller reading one out
+# ("email me at jane.doe@example.com") must not land in a stored transcript/turn in cleartext.
+_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[A-Za-z0-9.-]+\b")
+
+# Spoken-digit phone number: a caller reading digits out loud one at a time ("five oh nine,
+# two two two, one two three four") never matches ``_PHONE_RE`` (no actual digit characters).
+# Require 7+ consecutive number-words separated by whitespace/commas/"and" — long enough that
+# normal speech ("one eighth", "two for one") can't accidentally trip it.
+_DIGIT_WORD = r"(?:oh|zero|one|two|three|four|five|six|seven|eight|nine)"
+_SPOKEN_PHONE_RE = re.compile(
+    rf"\b{_DIGIT_WORD}(?:[\s,]+(?:and\s+)?{_DIGIT_WORD}){{6,}}\b", re.IGNORECASE
+)
+
+# "my name is <Name>" — a caller self-identifying. Narrow on purpose (1-2 capitalized-looking
+# words right after the trigger phrase) so it doesn't eat the rest of the sentence.
+_NAME_RE = re.compile(r"\bmy name is\s+([A-Za-z'-]+(?:\s+[A-Za-z'-]+){0,1})", re.IGNORECASE)
+
+
 def redact_pii(payload):
     """Structure-preserving mask of phone-like digit runs, DOB-shaped dates, and street addresses
     in every string value. Defense-in-depth for stored tool-call args + transcripts fetched from
@@ -124,7 +148,11 @@ def redact_pii(payload):
     if isinstance(payload, str):
         masked = _ADDRESS_RE.sub("[redacted]", payload)
         masked = _DOB_RE.sub("[redacted]", masked)
-        return _PHONE_RE.sub("[redacted]", masked)
+        masked = _PHONE_RE.sub("[redacted]", masked)
+        masked = _EMAIL_RE.sub("[redacted]", masked)
+        masked = _SPOKEN_PHONE_RE.sub("[redacted]", masked)
+        masked = _NAME_RE.sub("my name is [redacted]", masked)
+        return masked
     return payload
 
 
