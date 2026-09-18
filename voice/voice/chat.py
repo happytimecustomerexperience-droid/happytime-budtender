@@ -265,7 +265,11 @@ _EFFECT_TO_BUDTENDER = {
 }
 _EFFECT_ALIASES = (
     ("sleep", re.compile(r"\b(sleep|sleepy|bedtime|insomnia)\b", re.I)),
-    ("relaxed", re.compile(r"\b(relax|relaxed|relaxing|calm|chill|unwind)\b", re.I)),
+    # "something good for just tonight" is an evening-relax ask — the time of day IS the effect a
+    # customer is naming, and without it the sentence carried no product signal at all and fell
+    # out of the shopping path entirely. "tonight" alone never beats an hours question: the
+    # hours/close/open words classify that first.
+    ("relaxed", re.compile(r"\b(relax|relaxed|relaxing|calm|chill|unwind|tonight|evening)\b", re.I)),
     ("focused", re.compile(r"\b(focus|focused|creative|energy|energized)\b", re.I)),
     # "they've been so achy lately" is how a real customer describes it; "achy"/"aching"/"stiff"
     # were in no alias, so a bare "anything CBD-ish for my knees" reached no product route at all.

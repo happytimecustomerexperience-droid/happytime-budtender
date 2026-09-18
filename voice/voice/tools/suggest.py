@@ -235,10 +235,13 @@ def handle_suggest_products(args: dict, ctx: dict) -> dict:
     # still carrying Phat Panda" (a brand) and "anything under twenty bucks" (a ceiling) are real
     # shopping asks with no category word in them, and hard-requiring one made them unanswerable —
     # the caller got an honest miss for a question the shelf could have answered. A call with
-    # nothing to narrow on at all is still the tool error it always was.
+    # nothing to narrow on at all is still the tool error it always was. An EFFECT is narrowing
+    # for the same reason a brand is: "can you recommend something good for just tonight" names
+    # what the caller wants the product to do, which is exactly what budtender ranks on.
     narrowed = (
         (args.get("category") or "").strip()
         or (args.get("brand") or "").strip()
+        or (args.get("effect_desired") or "").strip()
         or isinstance(args.get("price_max"), (int, float))
     )
     if not narrowed:

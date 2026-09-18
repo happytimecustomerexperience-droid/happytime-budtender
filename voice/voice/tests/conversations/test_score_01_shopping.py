@@ -1139,15 +1139,18 @@ def test_20_fixed_effect_only_no_category_word(convo, fake_bt):
 
     # FIXED 2026-08-10: "something to help me relax" carries a real effect signal but zero
     # category word and is not a recognised refinement. effect_desired IS a supported
-    # suggest_products slot, so chat.py now attempts a real search on effect alone (empty
-    # category) instead of letting retrieval's semantic search speak an unrelated grounded FAQ
-    # row (walk-in/ID policy). suggest_products' own missing-category guard gives an honest,
-    # non-invented miss.
+    # suggest_products slot, so chat.py attempts a real search on effect alone (empty category)
+    # instead of letting retrieval's semantic search speak an unrelated grounded FAQ row.
+    # UPDATED 2026-09-17: it now returns real picks. suggest_products' narrowing guard used to
+    # count only category/brand/price and threw the search away, so an effect-only ask reached the
+    # shelf and was still told nothing was found. An effect is what budtender ranks on — it
+    # narrows exactly as a brand does.
     t = say(c, scorer, 1, "hi, I just want something to help me relax")
     assert "suggest_products" in t.tools, "fixed: effect-only ask now tries the shelf"
     assert t.intent == "product_suggestion"
-    assert not t.grounded and t.picks == []
-    assert t.next_action == "ask_staff"
+    assert t.args("suggest_products").get("effect_desired") == "relaxed"
+    assert t.picks, "an effect is enough to narrow on"
+    assert t.next_action == "show_products"
 
     t = say(c, scorer, 2, "I mean flower, something relaxing")
     args = t.args("suggest_products")

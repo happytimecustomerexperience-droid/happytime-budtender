@@ -62,14 +62,16 @@ def test_an_effect_alone_now_tries_the_shelf(convo):
     """FIXED 2026-08-10: no category word used to mean no product route at all — "something
     relaxing for tonight" got answered from whatever the FAQ's semantic search ranked first
     (frequently unrelated) instead of the catalog. effect_desired is a real suggest_products slot,
-    so chat.py now attempts a search on effect alone (empty category); handle_suggest_products'
-    own missing-category guard gives an honest miss rather than an off-topic FAQ answer."""
+    so chat.py attempts a search on effect alone (empty category). UPDATED 2026-09-17: that search
+    now returns real picks — handle_suggest_products' narrowing guard counted only
+    category/brand/price, so the effect-only ask reached the shelf and was still handed an honest
+    miss. An effect is what budtender ranks on; it narrows exactly as a brand does."""
     c = convo(store="yakima")
     t = c.say("something relaxing for tonight")
     assert "suggest_products" in t.tools
     assert t.intent == "product_suggestion"
-    assert not t.grounded
-    assert t.picks == []
+    assert t.args("suggest_products").get("effect_desired") == "relaxed"
+    assert t.picks
 
 
 @pytest.mark.django_db

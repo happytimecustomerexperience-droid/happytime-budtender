@@ -53,6 +53,10 @@ FAQ_ROWS = [
             "what payment do you take", "what forms of payment do you accept",
             "what payment methods do you accept", "is there an ATM", "do you have an ATM on site",
             "do you take cash", "can I pay with cash",
+            # "how do I pay when I get there" shares only the verb "pay" with the bare "how do I
+            # pay" above — the same single word the tax-included row's "do I pay tax on top"
+            # shares — and lost the tie to it, so a payment question was answered about tax.
+            "how do I pay when I get there", "how do I pay in store", "how do I pay at pickup",
             # "can I pay with X" for the payment methods the store does NOT take — without a word
             # of its own, "can I pay with Venmo" shares only the generic verb "pay" with both this
             # row AND the tax-included row's "do I pay tax on top" paraphrase, a coincidental tie
