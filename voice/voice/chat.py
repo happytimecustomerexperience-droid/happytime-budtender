@@ -374,12 +374,38 @@ def _session_spoken_store(history) -> str:
     return ""
 
 
+# A caller who recites their number instead of typing it into a field ("it's five zero nine, five
+# five five, one two three four", "509 555 1234") had it silently dropped: _phone_hint only ever
+# read the payload. The word->digit folding mirrors voice/evals/golden.py::spoken_to_digits (the
+# eval package is deliberately not imported from the runtime brain).
+_DIGIT_WORDS = {
+    "zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+}
+_DIGIT_WORD_RE = re.compile(r"\b(" + "|".join(_DIGIT_WORDS) + r")\b", re.I)
+_PHONE_RUN_RE = re.compile(r"\d[\d\s.,()-]{8,}\d")
+
+
+def _phone_from_message(message: str) -> str:
+    text = _DIGIT_WORD_RE.sub(lambda m: _DIGIT_WORDS[m.group(1).lower()], message or "")
+    for match in _PHONE_RUN_RE.finditer(text):
+        digits = "".join(ch for ch in match.group(0) if ch.isdigit())
+        if len(digits) == 11 and digits.startswith("1"):
+            return f"+{digits}"
+        if len(digits) == 10:
+            return f"+1{digits}"
+    return ""
+
+
 def _phone_hint(data: dict) -> str:
     for value in (
         data.get("phone"),
         data.get("customer_phone"),
         (data.get("customer") or {}).get("phone") if isinstance(data.get("customer"), dict) else "",
         (data.get("session") or {}).get("phone") if isinstance(data.get("session"), dict) else "",
+        # ...and the number the caller only said out loud, last, so an explicit payload field
+        # still wins.
+        _phone_from_message(data.get("message")),
     ):
         digits = "".join(ch for ch in str(value or "") if ch.isdigit())
         if len(digits) == 11 and digits.startswith("1"):
@@ -2016,6 +2042,10 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             and category
             and not _category_from_text(ask)
             and _BROAD_OBJECT_RE.search(ask)
+            # ...and only when the ask is not itself a refinement of the current one: "is there
+            # anything even cheaper, like under $20" is still about the carts we were looking at,
+            # so an honest in-category miss is the right answer there.
+            and not _REFINEMENT_RE.search(ask)
         ):
             suggest_args.pop("category", None)
             suggest = dispatch("suggest_products", suggest_args, ctx)
