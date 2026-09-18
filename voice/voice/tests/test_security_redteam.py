@@ -304,8 +304,7 @@ def test_control_chat_message_length_is_capped():
 # straight back with no ``_looks_poisoned`` screen — unlike the FAQ retrieval path
 # (voice/tools/faq.py::_grounded) and the two endpoints fixed in this file, there is no
 # poison screen on trusted-history replay before it feeds ``_route_chat_turn``.
-@pytest.mark.xfail(strict=False, reason="chat.py is owned by another agent; not fixed here")
-def test_finding_injected_assistant_turn_replays_through_trusted_history(settings):
+def test_fixed_injected_assistant_turn_is_screened_out_of_trusted_history(settings):
     from voice.chat import answer_text_chat
     from voice.models import VoiceCall, VoiceTurn
     from voice.tools.faq import _looks_poisoned
@@ -321,8 +320,9 @@ def test_finding_injected_assistant_turn_replays_through_trusted_history(setting
         {"session_token": session_token, "message": "what carts do you have", "store": "yakima"}
     )
 
-    # EXPECTED (fixed) behavior: the poisoned historical turn is screened before it can
-    # influence this turn's answer / routing. Currently xfail — no such screen exists.
+    # FIXED 2026-09-17: _load_trusted_history screens every replayed turn with the same
+    # _looks_poisoned detector the retrieval path uses, so a poisoned historical turn can no
+    # longer influence this turn's answer or routing.
     from voice.chat import _load_trusted_history
 
     history = _load_trusted_history(session_token)

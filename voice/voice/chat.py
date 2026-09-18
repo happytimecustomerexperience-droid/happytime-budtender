@@ -428,7 +428,21 @@ def _load_trusted_history(session_token: str) -> list[dict]:
         call = VoiceCall.objects.filter(call_id=session_token).first()
         if not call:
             return []
-        return [{"role": turn.role, "content": turn.text} for turn in call.turns.order_by("seq")]
+        from voice.tools.faq import _looks_poisoned
+
+        replayed = []
+        for turn in call.turns.order_by("seq"):
+            text = turn.text or ""
+            # A stored turn is this module's own record, but the record itself is written from
+            # Vapi webhook messages — so an injection-shaped ASSISTANT turn seeded once keeps
+            # re-entering every later turn on that session_token. The retrieval path already
+            # screens KB content with the same detector; trusted-history replay now does too,
+            # and a flagged turn is replaced rather than dropped so the turn ORDER (and any
+            # carried category/store read off neighbouring turns) is unchanged.
+            if _looks_poisoned(text):
+                text = "[message removed]"
+            replayed.append({"role": turn.role, "content": text})
+        return replayed
     except Exception:  # noqa: BLE001 — DB unavailable degrades to no history, never to the client array
         return []
 
