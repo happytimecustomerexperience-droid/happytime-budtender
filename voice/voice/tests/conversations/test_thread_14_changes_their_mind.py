@@ -89,22 +89,22 @@ def test_dana_switches_flower_to_edibles_then_adds_something_small(convo, fake_b
     assert reheard["size"] == "3.5g"
     assert t.picks[0]["sku"] == first_sku
 
-    # 7) The same back-reference WITHOUT restating it: nothing carries, so the product route is gone.
+    # 7) The same back-reference WITHOUT restating it.
+    #
+    # FIXED 2026-09-17. This block pinned the gap in its own words ("a pronoun-only reference
+    # loses the product route entirely"): the caller asked what she had just been quoted and got
+    # an honest miss, because nothing in the turn named a product. A price back-reference is now
+    # a refinement of the pick before it (``_PRICE_BACKREF_RE``), so her own category carries and
+    # the same shelf answers her — which is what a budtender who was standing there would do.
+    # (The earlier half of the note still holds: before the relevance floor landed, this miss was
+    # dressed up as a confident grounded answer about an unrelated row.)
     t = c.say("and how much was the first one I asked about")
-    assert "suggest_products" not in t.tools, (
-        "FINDING: a pronoun-only reference loses the product route entirely"
+    assert "suggest_products" in t.tools, "the price back-reference re-reaches the shelf"
+    assert t.args("suggest_products")["category"] == "flower", (
+        "it refines the ask she was on — the indica eighth she restated one turn earlier"
     )
-    assert t.tools == ["faq_lookup"]
-    assert t.picks == []
-    assert t.intent == "greeting_other"
-    assert t.next_action != "show_products"
-    # FIXED 2026-09-01 (was: the miss was dressed up as a confident grounded answer about
-    # something else entirely — the "Is Happy Times the same as Happy Time?" row, which shares
-    # nothing with this question but a couple of incidental words). The relevance floor
-    # (kb/semantic.py::relevant_enough) now requires the shared words to be a real share of the
-    # question, so the pronoun-only back-reference gets an honest miss instead.
-    assert t.grounded is False
-    assert t.sources == []
+    assert t.picks
+    assert t.intent == "product_suggestion"
 
     assert len(c.turns) == 7
     assert "pair_for_sku" not in fake_bt.calls

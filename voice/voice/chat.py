@@ -1397,6 +1397,19 @@ _REFINEMENT_RE = re.compile(
 _BROAD_OBJECT_RE = re.compile(r"\b(?:anything|something|whatever)\b", re.I)
 
 
+# A pronoun-only back-reference to what was just quoted ("what did you say the price on that was
+# again", "how much was it", "the first one") named no product and no category, so the turn fell
+# out of the product route entirely and was answered with whatever the FAQ ranked first. It is a
+# refinement of the pick before it, so the caller's category carries and the same shelf answers.
+_PRICE_BACKREF_RE = re.compile(
+    r"\bwhat\s+(?:did\s+you\s+say|was)\b[^.?!]{0,30}\bprice\b|"
+    r"\bprice\s+(?:on|for)\s+(?:that|it|this|those|them)\b|"
+    r"\bhow\s+much\s+(?:was|is)\s+(?:it|that|this|those|they)\b|"
+    r"\bthe\s+(?:first|second|third|last)\s+one\b",
+    re.I,
+)
+
+
 def _is_refinement(message: str) -> bool:
     """A bare price word is NOT a refinement — "set those aside under the name Marcus" says
     "under" and means nothing about budget. A price ceiling only counts when it names a number,
@@ -1407,6 +1420,8 @@ def _is_refinement(message: str) -> bool:
     # the deal on halves" mid-flower-conversation means half-ounces of what we were just looking
     # at, and with no category of its own it fell out of the product path entirely.
     if _size_from_text(message):
+        return True
+    if _PRICE_BACKREF_RE.search(message or ""):
         return True
     return _price_max_from_text(message) is not None
 
