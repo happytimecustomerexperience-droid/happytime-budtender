@@ -1066,7 +1066,7 @@ def test_23_numbers_guard_meets_safety(convo):
     # hiding a real hit behind an irrelevant winner), so turns that scored an honest NO ANSWER
     # now score a correct, cited one. Every deduction that disappeared is a turn that got
     # better, not a check that got weaker.
-    assert score == 80, deductions
+    assert score == 90, deductions
 
 
 # ════════════════════════════════════════════════════════════════════════════════════════
