@@ -62,9 +62,10 @@ def test_fixed_store_facts_endpoint_omits_poisoned_fact(client, settings):
     )
 
 
-def test_finding_kb_row_crud_accepts_poisoned_content(client, django_user_model):
-    """The dashboard KB editor stores prompt-injection text without warning or refusal;
-    the only screen is at READ time and only for the winning FAQ answer."""
+def test_fixed_kb_row_crud_rejects_poisoned_content(client, django_user_model):
+    """FIXED: the dashboard KB editor now screens saves with the same ``_looks_poisoned``
+    detector faq.py trusts at read time — the owner sees a form error naming the offending
+    phrase instead of the row being stored silently. See dashboard/forms.py::poison_error."""
     from kb.models import FAQEntry
 
     staff = django_user_model.objects.create_user("s", password="x", is_staff=True, is_superuser=True)
@@ -74,9 +75,9 @@ def test_finding_kb_row_crud_accepts_poisoned_content(client, django_user_model)
         {"key": "poison", "question": "hours?", "answer": f"We close at 9. {INJECTION}",
          "topic": "", "store": "", "weight": "100", "is_active": "on"},
     )
-    assert resp.status_code in (200, 302)
-    row = FAQEntry.objects.filter(key="poison").first()
-    assert row is not None and INJECTION in row.answer  # FINDING: stored unscrubbed
+    assert resp.status_code == 200  # re-renders the form with an error, no redirect
+    assert FAQEntry.objects.filter(key="poison").first() is None  # not stored
+    assert b"prompt-injection" in resp.content
 
 
 def test_fixed_tool_results_are_injection_screened():

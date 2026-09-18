@@ -256,12 +256,20 @@ def agent_save(request, pk: int):
     hard-coded safety baseline stays in ``voice/guardrails.py`` (this only tunes prompt + knobs)."""
     from kb.models import AgentPrompt
 
+    from .forms import poison_error
+
     p = get_object_or_404(AgentPrompt, pk=pk)
     errors: list[str] = []
 
     for f in ("body", "model_provider", "vapi_model", "voice_provider", "voice_id", "first_message"):
         if f in request.POST:
             setattr(p, f, request.POST[f].strip())
+
+    for f in ("body", "first_message"):
+        if f in request.POST:
+            err = poison_error(getattr(p, f))
+            if err:
+                errors.append(f"{f}: {err}")
 
     # voice_settings: optional JSON object of provider knobs (ElevenLabs stability/similarityBoost/…).
     if "voice_settings" in request.POST:

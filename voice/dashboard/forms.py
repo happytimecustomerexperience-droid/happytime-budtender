@@ -23,6 +23,28 @@ from kb.models import (
     StoreFact,
     WeightTypeTaxonomy,
 )
+from voice.tools.faq import _looks_poisoned
+
+# Hint words used ONLY to build a human-readable error message naming the offending phrase —
+# the actual security decision is `_looks_poisoned` (shared with the read-time KB screen in
+# voice/tools/faq.py). Owner-editable KB content that reads like an attempt to hijack the
+# assistant's instructions is rejected at SAVE time instead of silently stored and screened
+# only later, at read time.
+_INJECTION_HINT_WORDS = ("ignore", "disregard", "override", "reveal", "print", "show", "leak")
+
+
+def poison_error(value: str) -> str | None:
+    """Return a form-error string naming the offending phrase, or ``None`` if ``value`` does
+    not look like a prompt-injection attempt."""
+    if not _looks_poisoned(value):
+        return None
+    low = (value or "").lower()
+    hit = next((w for w in _INJECTION_HINT_WORDS if w in low), "")
+    if hit:
+        idx = low.index(hit)
+        snippet = value[max(0, idx - 20) : idx + 60].strip()
+        return f'This text looks like a prompt-injection attempt (flagged near: "{snippet}"). Please rephrase.'
+    return "This text looks like a prompt-injection attempt. Please rephrase."
 
 # The topic choices a PolicyCategory can opt into (kb/semantic.py topic-scoping). Blank ("") is
 # the default: unconstrained, findable by any question. Mirrors voice.chat._faq_topic's values —
@@ -60,11 +82,32 @@ class FAQEntryForm(forms.ModelForm):
             "is_active",
         ]
 
+    def clean_answer(self):
+        value = self.cleaned_data.get("answer", "")
+        error = poison_error(value)
+        if error:
+            raise forms.ValidationError(error)
+        return value
+
+    def clean_question(self):
+        value = self.cleaned_data.get("question", "")
+        error = poison_error(value)
+        if error:
+            raise forms.ValidationError(error)
+        return value
+
 
 class PolicyForm(forms.ModelForm):
     class Meta:
         model = PolicyDocument
         fields = ["category", "title", "body", "citation", "source_url", "weight", "is_active"]
+
+    def clean_body(self):
+        value = self.cleaned_data.get("body", "")
+        error = poison_error(value)
+        if error:
+            raise forms.ValidationError(error)
+        return value
 
 
 class PolicyCategoryForm(forms.ModelForm):
@@ -108,6 +151,13 @@ class StoreFactForm(forms.ModelForm):
             "valid_to": "Optional. The agent stops speaking this row after this date.",
         }
 
+    def clean_value(self):
+        value = self.cleaned_data.get("value", "")
+        error = poison_error(value)
+        if error:
+            raise forms.ValidationError(error)
+        return value
+
     def clean(self):
         cleaned = super().clean()
         start, end = cleaned.get("valid_from"), cleaned.get("valid_to")
@@ -129,6 +179,13 @@ class EducationDocForm(forms.ModelForm):
             "weight",
             "is_active",
         ]
+
+    def clean_body(self):
+        value = self.cleaned_data.get("body", "")
+        error = poison_error(value)
+        if error:
+            raise forms.ValidationError(error)
+        return value
 
 
 class BlogDocForm(forms.ModelForm):
