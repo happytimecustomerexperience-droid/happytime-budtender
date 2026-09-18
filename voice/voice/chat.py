@@ -1322,6 +1322,37 @@ def _vendor_callback_reply(message: str, store: str, phone: str, ctx: dict, tool
     }
 
 
+# Two things a caller asks for that NO tool in the registry can do.
+#
+# 1) Order status. There is no order-lookup tool at all (search / faq / stage-cart / escalate is
+#    the whole surface), so "is my order ready" was answered from the generic online-order FAQ row
+#    — a ~15-minute ETA recited as if it confirmed THIS caller's order. The honest answer is a
+#    person who can actually look.
+_ORDER_STATUS_RE = re.compile(
+    r"\b(?:is|are)\s+my\s+order\b|"
+    r"\bmy\s+order\b[^.?!]{0,20}\bready\b|"
+    r"\border\s+status\b",
+    re.I,
+)
+#
+# 2) Back-in-stock alerts. There is no waitlist/notify tool either, and retrieval answered the
+#    request with the VENDOR RECEIVING store fact purely on the overlap with "call me back" —
+#    telling a retail customer about wholesale receiving hours, cited as fact. A promise the bot
+#    cannot keep is worse than a hand-off; staff can actually take the number.
+_RESTOCK_RE = re.compile(
+    r"\b(?:text|call|notify|email)\s+me\b[^.?!]{0,40}\b(?:back\s+in\s+stock|restock)|"
+    r"\b(?:back\s+in\s+stock|restock(?:ed)?)\b[^.?!]{0,40}\b(?:text|call|notify|let\s+me\s+know)",
+    re.I,
+)
+
+
+def _is_order_status_question(message: str) -> bool:
+    return bool(_ORDER_STATUS_RE.search(message or ""))
+
+
+def _is_restock_request(message: str) -> bool:
+    return bool(_RESTOCK_RE.search(message or ""))
+
 def _stage_cart_reply(ctx: dict, store: str, phone: str, tool_results: list) -> dict:
     """Route a detected staging/hold request to ``stage_phone_cart``. Conservative by design: the
     SKU comes ONLY from ``_last_suggested_sku`` (the caller's own most recently suggested pick,
@@ -1901,6 +1932,64 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
 
     if not escalation and _is_staging_request(message):
         return _stage_cart_reply(ctx, store, phone, tool_results)
+
+    # No tool can look an order up (see ``_ORDER_STATUS_RE``) — hand it to someone who can,
+    # rather than reciting the generic online-order ETA as if it were this caller's order.
+    if not escalation and _is_order_status_question(message):
+        # NEW COPY — REQUIRES OWNER APPROVAL.
+        answer = (
+            "I can't look up an order's status from here. A team member can check it for you — "
+            + _staff_followup_hint(store, phone)
+        )
+        return {
+            "ok": True,
+            "intent": "general_faq",
+            "answer": answer,
+            "grounded": False,
+            "sources": [],
+            "tool_results": tool_results,
+            "escalation_required": False,
+            "escalation_flag": False,
+            "safe_next_action": "ask_staff",
+            "safe_suggested_next_action": _suggested_next_action("ask_staff"),
+            "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+            "store": store,
+        }
+
+    # No waitlist tool exists either (see ``_RESTOCK_RE``): file it with staff when there is a
+    # number to reach the caller on, otherwise ask for one. Never promise a text or a call.
+    if not escalation and _is_restock_request(message):
+        if phone:
+            staff_args = {"store": store, "issue_type": "restock_request", "summary": message}
+            staff_result = dispatch("notify_staff_issue", staff_args, ctx)
+            tool_results = tool_results + [
+                {"tool": "notify_staff_issue", "args": dict(staff_args), "result": staff_result}
+            ]
+            # NEW COPY — REQUIRES OWNER APPROVAL.
+            answer = (
+                "I can't set a back-in-stock alert myself, so I've passed this to the store team "
+                "with your details and a person can follow up."
+            )
+        else:
+            # NEW COPY — REQUIRES OWNER APPROVAL.
+            answer = (
+                "I can't set a back-in-stock alert myself. If you share the best number, I'll "
+                "pass it to the store team so a person can follow up."
+            )
+        return {
+            "ok": True,
+            "intent": "general_faq",
+            "answer": answer,
+            "grounded": False,
+            "sources": [],
+            "tool_results": tool_results,
+            "escalation_required": False,
+            "escalation_flag": False,
+            "safe_next_action": "ask_staff",
+            "safe_suggested_next_action": _suggested_next_action("ask_staff"),
+            "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+            "store": store,
+        }
 
     # The text channel had no equivalent of the Vapi escalation member's ``notify_staff_issue``
     # call at all (grep: the tool was registered and reachable from the phone squad, and this

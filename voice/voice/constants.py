@@ -310,6 +310,9 @@ TOOL_SPECS = {
                         "dispute",
                         "complaint",
                         "repeated_request",
+                        # A caller asking to be told when something is back in stock: no waitlist
+                        # tool exists, so the request is filed for a person to action.
+                        "restock_request",
                         "other",
                     ],
                 },

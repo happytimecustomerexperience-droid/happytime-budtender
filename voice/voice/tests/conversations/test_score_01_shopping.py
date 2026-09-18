@@ -255,7 +255,12 @@ def test_02_effect_led_sleep_flower_ends_staged(convo, fake_bt):
     assert "stage_phone_cart" in t.tools
     assert t.intent == "phone_cart_staged"
     assert t.args("stage_phone_cart")["sku"] == "FL-SD-28"
-    assert "Sour Diesel" in t.answer
+    # CHANGED 2026-09-17: this caller has no phone anywhere on the session, and a hold staged with
+    # an empty phone is one staff cannot call anybody about. The router resolves the right SKU (the
+    # assertion above still holds) and asks for the number before writing the hold, instead of
+    # confirming a set-aside nobody can be reached about.
+    assert "phone number" in t.answer.lower()
+    assert not fake_bt.calls.get("phone_cart_upsert"), "nothing staged without a number"
 
     say(c, scorer, 8, "perfect, thank you")
 
