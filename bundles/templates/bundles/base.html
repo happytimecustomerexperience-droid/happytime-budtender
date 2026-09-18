@@ -50,32 +50,8 @@
     <p class="fineprint">Washington State law requires age verification.</p>
   </div>
 </div>
-<script>
-(function () {
-  var SESSION = 'happytime-age-session', PERSIST = 'happytime-age-verified';
-  function verified() {
-    try {
-      if (localStorage.getItem(PERSIST) === 'true') return true;
-      var raw = sessionStorage.getItem(SESSION);
-      if (!raw) return false;
-      var s = JSON.parse(raw);
-      return !!(s && (s.verified || s.isVerified));
-    } catch (e) { return false; }
-  }
-  if (verified()) return;
-  var gate = document.getElementById('htco-age');
-  gate.hidden = false;
-  document.documentElement.style.overflow = 'hidden';
-  document.getElementById('htco-age-yes').addEventListener('click', function () {
-    try {
-      sessionStorage.setItem(SESSION, JSON.stringify({ verified: true, ts: Date.now() }));
-      localStorage.setItem(PERSIST, 'true');
-    } catch (e) { /* still let them through this pageview */ }
-    gate.hidden = true;
-    document.documentElement.style.overflow = '';
-  });
-})();
-</script>
+{# The age gate is an external file on purpose: the edge CSP is script-src 'self', which blocks inline scripts. #}
+<script src="{% static 'bundles/agegate.js' %}"></script>
 
 <header class="sitebar">
   <div class="sitebar-in">

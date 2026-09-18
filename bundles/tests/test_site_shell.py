@@ -210,26 +210,37 @@ class AgeGateTests(TestCase):
         for path in ("/custom-order/menu?loc=yakima", "/custom-order/checkout?loc=yakima"):
             self.assertIn('id="htco-age"', self._body(path), f"{path}: no age gate")
 
+    # The gate script is an EXTERNAL file (static/bundles/agegate.js): the edge CSP is
+    # script-src 'self', which blocks inline scripts, so an inline gate would sit closed for
+    # every shopper in production. These tests read the file the page ships.
+    @staticmethod
+    def _gate_js() -> str:
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parents[1] / "static" / "bundles" / "agegate.js").read_text(
+            encoding="utf-8"
+        )
+
     def test_it_reuses_the_site_storage_keys_so_nobody_verifies_twice(self):
         # If these drift from AgeVerification.tsx, a shopper who already answered on
         # the marketing site gets asked again the moment they open the storefront.
-        body = self._body()
-        self.assertIn("happytime-age-session", body)
-        self.assertIn("happytime-age-verified", body)
+        js = self._gate_js()
+        self.assertIn("happytime-age-session", js)
+        self.assertIn("happytime-age-verified", js)
 
-    def test_the_gate_script_is_inline_and_not_deferred(self):
+    def test_the_gate_script_follows_its_markup_and_is_not_deferred(self):
         # A deferred gate paints the storefront first and then covers it — the
         # products are visible to an unverified visitor for that frame.
         body = self._body()
         gate_at = body.index('id="htco-age"')
-        script_at = body.index("happytime-age-session")
+        script_at = body.index("bundles/agegate.js")
         self.assertLess(script_at - gate_at, 2000,
                         "the gate script should sit immediately after its markup")
-        self.assertNotIn('src="/static/bundles/bundle.js" defer></script>\n<div id="htco-age"',
-                         body)
+        tag = body[body.rfind("<script", 0, script_at):body.index(">", script_at) + 1]
+        self.assertNotIn("defer", tag)
+        self.assertNotIn("async", tag)
 
     def test_it_fails_closed_when_storage_is_unavailable(self):
         # Private mode / blocked storage throws on getItem; the catch must return
         # false (show the gate) rather than true (let everyone through).
-        body = self._body()
-        self.assertIn("catch (e) { return false; }", body)
+        self.assertIn("catch (e) { return false; }", self._gate_js())
