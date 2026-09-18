@@ -125,7 +125,10 @@ TOOL_SPECS = {
                 # _sanitize_args drops any value outside it). "" = unconstrained, today's behaviour.
                 "topic": {
                     "type": "string",
-                    "enum": ["hours_location", "specials", "return_policy", ""],
+                    # No "" member: Vertex rejects an empty enum value ("enum[3]: cannot be
+                    # empty") and the whole tool declaration with it. Omitting ``topic`` is
+                    # how "unconstrained" is expressed; faq_lookup derives it from the words.
+                    "enum": ["hours_location", "specials", "return_policy"],
                 },
             },
             "required": ["query"],

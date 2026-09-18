@@ -51,7 +51,7 @@ class Result:
 def score(entry: golden.Entry, answer: Answer) -> Result:
     r = Result(entry_id=entry.id, channel=answer.channel, answer=answer)
     if answer.error:
-        r.failures.append(f"error: {answer.error[:120]}")
+        r.failures.append(f"error: {answer.error[:600]}")
         r.facts = r.tone = r.length = r.safety = False
         return r
     text = golden.norm(answer.text)

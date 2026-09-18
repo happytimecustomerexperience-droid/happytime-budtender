@@ -539,7 +539,10 @@ def test_faq_lookup_tool_spec_declares_topic_enum():
     from voice.constants import TOOL_SPECS
 
     props = TOOL_SPECS["faq_lookup"]["parameters"]["properties"]
-    assert set(props["topic"]["enum"]) == {"hours_location", "specials", "return_policy", ""}
+    # No "" member: Vertex rejects an empty enum value and the whole declaration with it
+    # ("enum[3]: cannot be empty"); "unconstrained" is expressed by omitting ``topic``.
+    assert set(props["topic"]["enum"]) == {"hours_location", "specials", "return_policy"}
+    assert "topic" not in TOOL_SPECS["faq_lookup"]["parameters"].get("required", [])
 
 
 @pytest.mark.django_db

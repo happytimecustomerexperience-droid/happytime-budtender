@@ -86,5 +86,7 @@ def _dump(entries, results) -> str:
         for r in by_entry.get(e.id, []):
             text = " ".join(r.answer.text.split()).replace("|", "\\|")[:300]
             fails = "; ".join(r.failures).replace("|", "\\|")[:200]
-            lines.append(f"| {e.id} | {r.channel} | {'✓' if r.passed else '✗'} | {text} | {fails} |")
+            # ASCII on purpose: a redirected stdout on Windows is cp1252 and a check glyph
+            # raised UnicodeEncodeError after the whole (paid) live run had finished.
+            lines.append(f"| {e.id} | {r.channel} | {'OK' if r.passed else 'FAIL'} | {text} | {fails} |")
     return "\n".join(lines) + "\n\n"

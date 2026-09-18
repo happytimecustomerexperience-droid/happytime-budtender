@@ -38,7 +38,7 @@
   source_of_truth: kb.StoreFact(mount-vernon, hours)
   expect_intent: hours_location
   expect_grounded: true
-  owner_note: "Mount Vernon is the store whose Fri–Sat hours differ; every channel must say the same thing."
+  owner_note: "Mount Vernon once had a stray Fri–Sat-to-11 line on the storefront only; the website and KB both say 9–10 daily. Every channel must say the same thing."
 
 - id: hours-pullman
   category: store-facts
@@ -115,7 +115,7 @@
   question_variants:
     - "do you have a drive-thru"
     - "how late is the drive-thru open"
-  must_include: ["(?i)no drive-thru"]
+  must_include: ["(?i)(no|do(n'?t| not) have a|without a) drive[- ]?thr(u|ough)"]
   channels: [text, playground, voice, web]
   source_of_truth: kb.FAQEntry(drive-thru)
   expect_grounded: true

@@ -195,8 +195,10 @@ def atoms(value: str, flt: str) -> list[str]:
             out = [house, street.split()[0], city.strip(), zipc]
         return out or [n]
     if flt == "first":
-        first = re.split(r"(?<=[.!?])\s", v.strip(), maxsplit=1)[0]
-        return [norm(first).rstrip(".!?")]
+        # A semicolon ends the "first sentence" too: a spoken channel splits "A; B" into two
+        # sentences and rephrases B, and only A is the fact this filter is meant to pin.
+        first = re.split(r"(?<=[.!?;])\s", v.strip(), maxsplit=1)[0]
+        return [norm(first).rstrip(".!?;")]
     return [norm(v)]
 
 
