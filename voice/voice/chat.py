@@ -1509,6 +1509,26 @@ _RAMBLE_WORDS = 40
 _CLAUSE_SPLIT_RE = re.compile(r"[.?!;\n]|,|\s—\s|\s--\s")
 
 
+# One message, two questions ("what time do you close and do you have gummies"). Retrieval dilutes
+# on the compound sentence so the FAQ half is not confidently grounded, and the product branch has
+# no concept of the other half either — so whichever half won was answered and the other was
+# silently dropped, with no acknowledgement. Split it and run both.
+_COMPOUND_SPLIT_RE = re.compile(
+    r"\s+and\s+(?=(?:do|does|are|is|can|could|what|when|how|where|any)\b)", re.I
+)
+
+
+def _compound_halves(message: str) -> tuple[str, str]:
+    """(faq_half, product_half) when ONE message carries both an FAQ topic and a product ask."""
+    parts = [p.strip() for p in _COMPOUND_SPLIT_RE.split(message or "") if p.strip()]
+    if len(parts) < 2:
+        return "", ""
+    faq_half = next((p for p in parts if _faq_topic(p)), "")
+    product_half = next((p for p in parts if _category_from_text(p)), "")
+    if faq_half and product_half and faq_half != product_half:
+        return faq_half, product_half
+    return "", ""
+
 def _ask_clause(message: str) -> str:
     """The clause that carries the caller's actual ask, for a message long enough to have wandered.
     Short messages (the overwhelming majority) are returned unchanged, so nothing else moves."""
@@ -1787,6 +1807,11 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     # Routing (product-vs-FAQ, slots, intent) reads the caller's ASK; every safety check above
     # keeps reading the whole message. For anything short of a ramble the two are identical.
     ask = _ask_clause(message)
+    # A compound ask is routed as its product half, with the FAQ half retrieved separately and
+    # both answers joined below — see ``_compound_halves``.
+    faq_half, product_half = _compound_halves(ask)
+    if faq_half:
+        ask = product_half
     category = str(slots.get("category") or _category_from_text(ask)).strip()
     category = _normalize_category(category)
     # A refinement belongs to the ask before it. Carry the category so "keep it under 40 though"
@@ -1837,8 +1862,8 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     prefer_products = _prefers_products(ask, category, escalation=escalation) or attempt_product_search
     # The router already classifies the subject; retrieval was never told, so "what time do you
     # close today" came back with the July specials row. Pass it so retrieval can be constrained.
-    faq_args = {"query": ask, "store": store}
-    faq_topic = _faq_topic(ask)
+    faq_args = {"query": faq_half or ask, "store": store}
+    faq_topic = _faq_topic(faq_half or ask)
     if faq_topic:
         faq_args["topic"] = faq_topic
     faq = dispatch("faq_lookup", faq_args, ctx)
@@ -2083,10 +2108,13 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             suggest = dict(suggest)
             suggest["picks"] = picks
             policy_context = _requires_sources(message) and not (faq.get("grounded") and faq.get("sources"))
+            compound_answer = suggest.get("spoken_summary") or "I found a few in-stock options."
+            if faq_half and faq.get("grounded") and str(faq.get("answer") or "").strip():
+                compound_answer = f"{faq['answer']} {compound_answer}"
             return {
                 "ok": True,
                 "intent": "product_suggestion",
-                "answer": suggest.get("spoken_summary") or "I found a few in-stock options.",
+                "answer": compound_answer,
                 "grounded": not policy_context,
                 "sources": [{"kind": "tool", "title": "Live budtender inventory"}],
                 "tool_results": tool_results,
