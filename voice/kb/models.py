@@ -209,6 +209,10 @@ class StoreFact(SourceSyncMixin, models.Model):
         # Fail closed: an out-of-window row contributes NO text, so any retrieval path that
         # forgets to filter (``StoreFactQuerySet.current``) still cannot speak a stale deal.
         # ``kb.semantic._build_corpus`` drops empty chunks.
+        #
+        # The leading ``scope`` (the raw store slug — "yakima", "mount-vernon") exists ONLY to
+        # give the retrieval/embedding corpus a store-name token to match on; it is never meant to
+        # be spoken. ``spoken_text()`` below is the customer-facing form and omits it.
         if not self.is_current():
             return ""
         scope = f"{self.store} " if self.store else ""
@@ -217,6 +221,17 @@ class StoreFact(SourceSyncMixin, models.Model):
                 f"{scope}{self.label}: not confirmed — ask the caller to call the store to confirm."
             )
         return f"{scope}{self.label}: {self.value}"
+
+    def spoken_text(self) -> str:
+        """The customer-facing answer: the human label + value, with NO raw store-slug prefix
+        (``chunk_text()``'s leading "yakima "/"mount-vernon " scope is retrieval-only and must
+        never be read aloud — a caller asking for the address does not want to hear "mount-vernon
+        Mt Vernon address: ..."). Everything else about the row's wording is unchanged."""
+        if not self.is_current():
+            return ""
+        if not self.confirmed:
+            return f"{self.label}: not confirmed — ask the caller to call the store to confirm."
+        return f"{self.label}: {self.value}"
 
     def __str__(self):
         return f"{self.store or 'global'}/{self.kind}/{self.label}"

@@ -70,9 +70,12 @@ def test_mount_vernon_call_then_the_pullman_call(convo, fake_bt):
     assert MV_ADDRESS in t3.answer
     assert YAKIMA_ADDRESS not in t3.answer and PULLMAN_ADDRESS not in t3.answer
     assert _titles(t3)[0] == "Mt Vernon address", "the store's own row must rank first"
-    # GAP: the answer is the raw KB chunk, so it opens with the internal slug the SPEAKING_RULES
-    # forbid ("never an internal store code").
-    assert t3.answer.startswith("mount-vernon Mt Vernon address:")
+    # FIXED: the spoken answer used to open with the raw internal store slug the SPEAKING_RULES
+    # forbid ("mount-vernon Mt Vernon address: ..." — never an internal store code). faq.py now
+    # speaks StoreFact.spoken_text() (label + value only), never chunk_text()'s retrieval-only
+    # slug scope.
+    assert t3.answer.startswith("Mt Vernon address:")
+    assert "mount-vernon " not in t3.answer
 
     # 4 ── the phone number, still on the Mount Vernon rows.
     t4 = mv.say(SCRIPT[3])
@@ -215,15 +218,23 @@ def test_a_store_we_dont_have_is_dropped_not_passed_through(convo, fake_bt):
     t2 = c.say(SCRIPT[2])
     assert t2.args("faq_lookup")["store"] == ""
     # GAP: with no store to scope by, all three address rows compete and the agent speaks whichever
-    # wins the tiebreak, verbatim, as if it were Dana's store — Pullman's, right after it cited
-    # Mount Vernon's hours row. No hedge, no "which of our three locations?".
+    # wins the tiebreak, verbatim, as if it were Dana's store, right after it cited Mount Vernon's
+    # hours row. No hedge, no "which of our three locations?". CHANGED (2026-09-17): the tiebreak
+    # among exactly-tied candidates used to be whichever row's DB primary key sorted highest — not
+    # stable across test runs/processes (kb/semantic.py::_keyword_fallback). It now breaks ties on
+    # each row's own natural key (FAQEntry.key/StoreFact.label) so the same query always grounds on
+    # the same row; that natural-key ordering happens to put "Yakima address" ahead of "Pullman
+    # address", not a behavior change in kind, just a different (now deterministic) arbitrary pick.
     assert set(_titles(t2)) == {"Mt Vernon address", "Yakima address", "Pullman address"}
-    assert t2.answer.startswith("pullman Pullman address:")
-    assert PULLMAN_ADDRESS in t2.answer
+    # FIXED: no longer opens with the raw "yakima " slug — faq.py speaks StoreFact.spoken_text()
+    # (label + value), never chunk_text()'s retrieval-only scope prefix.
+    assert t2.answer.startswith("Yakima address:")
+    assert YAKIMA_ADDRESS in t2.answer
 
     t3 = c.say(SCRIPT[3])
     assert t3.args("faq_lookup")["store"] == ""
-    assert PULLMAN_PHONE in t3.answer
+    # Same natural-key tiebreak as the address turn above — "Yakima phone" wins deterministically.
+    assert YAKIMA_PHONE in t3.answer
 
     t4 = c.say(SCRIPT[5])
     assert t4.intent == "product_suggestion"
