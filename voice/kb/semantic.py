@@ -331,8 +331,20 @@ def _keyword_fallback(query: str, items: list[tuple[str, str]], row_by_id: dict,
         term = str(getattr(row, "term", "") or "").strip().lower()
         if term and term in q_tokens:
             boost += 2.0
+        # COVERAGE (2026-09-17). Overlap counts how many of the caller's words the row matched;
+        # it says nothing about how much of the QUESTION that is. "and how long before I feel it"
+        # matched the order-pickup row on one word ("long", which its own "how long for pickup"
+        # paraphrase then doubled) and the edible peak/re-dose row on two ("before", "feel") — a
+        # 2.011 vs 2.001 win for the row that answers a third of the question over the row that
+        # answers two thirds, and the caller was told when their online order would be ready. How
+        # much of what was ASKED a row speaks to is the tiebreak between two otherwise-level rows,
+        # so it is weighted below one whole extra matched word and can never outrank real overlap.
+        matched = distinctive_shared | matched_paraphrase_words
+        coverage = len(matched) / len(_distinctive(q_tokens)) if _distinctive(q_tokens) else 0.0
         tiebreak = (getattr(row, "weight", 100) or 100) / 100.0
-        scored.append((overlap + boost + tiebreak * 0.001, _stable_sort_key(row), chunk_id))
+        scored.append(
+            (overlap + boost + coverage * 0.5 + tiebreak * 0.001, _stable_sort_key(row), chunk_id)
+        )
     # 2026-09-17 — sorting ties on ``chunk_id`` (``f"{prefix}{row.pk}"``) made an exact-score tie's
     # winner depend on primary-key order, which is NOT stable across test runs/processes (each
     # test's ``seed_all()`` re-creates rows in a fresh transaction, and the next autoincrement

@@ -253,7 +253,15 @@ def _grounded(query: str, store: str | None, topic: str = "") -> dict | None:
     # price-comparison question against the address row. Applies to BOTH the keyword and embedding
     # paths alike, since it re-derives relevance from the raw query text against the winning row's
     # chunk text rather than trusting either path's own score.
-    if not semantic.relevant_enough(query, top_row):
+    # The floor is a per-ROW judgement, so a top row that fails it does not mean the corpus has no
+    # answer — the row below it may be a real hit. 2026-09-17: "ok forget medical then, what's the
+    # regular daily limit" ranks an unrelated site FAQ first (it shares "daily" and "regular", two
+    # thirds of the question) over the WA purchase-limits row, which the floor then correctly
+    # rejects; declining there threw away the cited ounce/gram caps sitting right behind it. Walk
+    # the ranked rows and speak the first one that clears the floor. This never lowers the bar —
+    # every row spoken still has to pass the same floor the top row was held to.
+    top_row = next((row for row, _ in ranked if semantic.relevant_enough(query, row)), None)
+    if top_row is None:
         return None
     answer = _row_answer(top_row)
     if _looks_poisoned(answer):
