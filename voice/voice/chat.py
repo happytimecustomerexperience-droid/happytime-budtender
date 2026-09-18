@@ -799,7 +799,14 @@ _DOSING_ADVICE_RE = re.compile(
     r"\bhow\s+(?:much|many)\b[^.?!]{0,30}\bfor\s+my\s+(?:\d+[\s-]?(?:year|yr)s?[\s-]?old|"
     r"kid|child|toddler|baby|son|daughter)\b|"
     r"\b(?:good|typical)\s+starting\s+(?:dose|amount)\b|"
-    r"\btoo\s+much\s+for\s+(?:me|someone\s+my\s+size)\b",
+    r"\btoo\s+much\s+for\s+(?:me|someone\s+my\s+size)\b|"
+    # Dosing CONFIRMATION, the tail of every dosing exploit: once the agent has declined to name
+    # an amount, the caller names one themselves and asks for a yes ("so it's fine to take 5mg
+    # like you just said?"). Answering IS giving the advice — and worse, the mg read as a product
+    # size, so the turn routed to the shelf and recommended a 5 mg edible: a product pick standing
+    # in for the yes. Anchored on a stated amount, so "is it ok to take my order home" is untouched.
+    r"\b(?:fine|ok|okay|safe|alright|all\s+right)\b[^.?!]{0,20}\bto\s+(?:take|have|eat|do)\b"
+    r"[^.?!]{0,20}\b(?:\d+\s*(?:mg|milligrams?)|that\s+much|this\s+much|the\s+whole\s+\w+)\b",
     re.I,
 )
 
