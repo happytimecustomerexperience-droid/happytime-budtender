@@ -327,6 +327,53 @@ def _safe_store(value) -> str:
     return store if store in {"yakima", "mount-vernon", "pullman"} else ""
 
 
+# A caller who says which store they mean ("actually I'm going to swing by the Pullman store",
+# "no wait, I meant Mount Vernon") was invisible to the router: ``store`` was only ever read from
+# the request payload, so a widget that does not parse a store name out of the message body kept
+# answering with the previous store's hours, address and shelf for the rest of the conversation.
+# Deliberately a SWITCH shape, not a bare mention — a delivery driver asking "or should I head to
+# Yakima instead" is talking about a destination, not re-pointing the conversation.
+_STORE_NAMES = (
+    ("mount-vernon", r"mount\s+vernon|mt\.?\s*vernon"),
+    ("pullman", r"pullman"),
+    ("yakima", r"yakima"),
+)
+_STORE_SWITCH_RE = tuple(
+    (
+        slug,
+        re.compile(
+            r"\b(?:" + names + r")\s+(?:one|store|shop|location)\b|"
+            r"\b(?:meant|going\s+to|swing(?:ing)?\s+by|stop(?:ping)?\s+by|at)\s+(?:the\s+)?(?:" + names + r")\b",
+            re.I,
+        ),
+    )
+    for slug, names in _STORE_NAMES
+)
+
+
+def _store_from_text(message: str) -> str:
+    for slug, pattern in _STORE_SWITCH_RE:
+        if pattern.search(message or ""):
+            return slug
+    return ""
+
+
+def _session_spoken_store(history) -> str:
+    """The store this session most recently NAMED, read back from its own durable turns — the
+    same trusted server-side record ``_session_declared_underage`` uses. The caller's own words
+    outrank a client ``store`` field that never changed; a session where nobody ever said a store
+    name has none, so the payload keeps deciding exactly as before."""
+    if not isinstance(history, list):
+        return ""
+    for msg in reversed(history):
+        if not isinstance(msg, dict) or msg.get("role") != "user":
+            continue
+        spoken = _store_from_text(str(msg.get("content") or ""))
+        if spoken:
+            return spoken
+    return ""
+
+
 def _phone_hint(data: dict) -> str:
     for value in (
         data.get("phone"),
@@ -1599,7 +1646,13 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
 
     message = _clean_message(data.get("message"))
     slots = data.get("slots") if isinstance(data.get("slots"), dict) else {}
-    store = _safe_store(data.get("store") or data.get("location") or slots.get("store"))
+    # The caller's own words about which store they mean win over the payload field, and stick to
+    # the session (see ``_session_spoken_store``); with nothing spoken, the payload decides.
+    store = (
+        _store_from_text(message)
+        or _session_spoken_store(history)
+        or _safe_store(data.get("store") or data.get("location") or slots.get("store"))
+    )
     session_token = str(data.get("session_token") or data.get("session_id") or "")[:128]
     phone = _phone_hint(data)
 
