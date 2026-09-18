@@ -1495,6 +1495,16 @@ _PRICE_BACKREF_RE = re.compile(
 )
 
 
+# "how do you compare to Cannabis Corner down the street, their prices are cheaper" says
+# "cheaper", which read as a refinement of our own shelf and dragged the carried category back
+# onto a question about somebody else's store. The KB carries no competitor content, so the
+# honest answer is a miss — not a cited-looking product pitch.
+_COMPETITOR_RE = re.compile(
+    r"\bhow\s+(?:do|does)\s+(?:you|that)\s+compare\b|\bcompared\s+to\b|"
+    r"\bdown\s+the\b(?:\s*\w+)?\s*street\b|\bother\s+(?:shop|store|dispensary)\b",
+    re.I,
+)
+
 def _is_refinement(message: str) -> bool:
     """A bare price word is NOT a refinement — "set those aside under the name Marcus" says
     "under" and means nothing about budget. A price ceiling only counts when it names a number,
@@ -1853,6 +1863,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     if (
         not category
         and _is_refinement(ask)
+        and not _COMPETITOR_RE.search(ask)
         and not _requires_sources(ask)
         and not _faq_first(ask)
     ):
