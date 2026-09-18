@@ -182,6 +182,25 @@ CELERY_RESULT_BACKEND = os.environ.get(
 # broker-free; otherwise honors CELERY_TASK_ALWAYS_EAGER (default off in real deploys).
 CELERY_TASK_ALWAYS_EAGER = _env_bool("CELERY_TASK_ALWAYS_EAGER", "0") or ("pytest" in _sys.modules)
 CELERY_TASK_EAGER_PROPAGATES = True
+
+# ── Cache — SHARED across gunicorn workers ─────────────────────────────────────
+# The /api/voice/chat rate limiter and the webhook replay guard keep their counters in
+# Django's cache. With no CACHES setting Django uses LocMemCache, one private cache PER
+# PROCESS — so in production (5 workers × 4 threads) 70 rapid requests never reached the
+# 60/min limit and 5 replayed webhooks never hit the replay cache: the live verification on
+# 2026-09-18 got 200 on every one. Redis (already the Celery broker) is the shared store;
+# pytest keeps an in-memory cache so the suite stays broker-free.
+_CACHE_URL = os.environ.get("HHT_CACHE_URL", "") or (
+    "" if "pytest" in _sys.modules or not _env_bool("HHT_USE_CELERY", "0")
+    else CELERY_BROKER_URL.rsplit("/", 1)[0] + "/1"
+)
+CACHES = {
+    "default": (
+        {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": _CACHE_URL}
+        if _CACHE_URL
+        else {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}
+    )
+}
 CELERY_WORKER_CONCURRENCY = int(os.environ.get("CELERY_WORKER_CONCURRENCY", "2"))
 
 # ── Instant Vapi sync (P6) ────────────────────────────────────────────

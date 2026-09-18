@@ -17,6 +17,7 @@ dependencies = [
     "whitenoise>=6.8",
     "celery>=5.6.3",
     "redis>=5.2",
+    "pyyaml>=6.0",
     # Pinned floors for transitive deps flagged by pip-audit (not imported directly here, but
     # pulled in by the above) — kept as explicit constraints so `uv lock` can't silently settle
     # on a vulnerable version.

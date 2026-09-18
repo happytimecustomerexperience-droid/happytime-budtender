@@ -254,6 +254,11 @@ services:
       - traefik.http.routers.voice.tls=true
       - traefik.http.routers.voice.tls.certresolver=letsencrypt
       - traefik.http.services.voice.loadbalancer.server.port=8000
+      # CSP at the edge (HSTS/XFO/XCTO/Referrer-Policy already come from Django settings).
+      # Deliberately no script-src/style-src: the staff dashboard uses inline scripts and a
+      # strict policy would blank it; framing, plugins and base-tag hijacks are what this stops.
+      - traefik.http.routers.voice.middlewares=voice-security-headers
+      - traefik.http.middlewares.voice-security-headers.headers.contentSecurityPolicy=frame-ancestors 'none'; object-src 'none'; base-uri 'self'
     healthcheck:
       # Pure liveness — is gunicorn accepting connections? Intentionally NOT
       # /healthz, which returns 503 until the OPTIONAL Gemini/Vapi deps are
