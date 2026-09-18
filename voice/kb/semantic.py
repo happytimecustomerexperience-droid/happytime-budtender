@@ -213,15 +213,51 @@ _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 # Generic linguistic stopwords only (no domain terms) — dropped from the keyword fallback so a
 # distinctive token ("microdose", "eighth") outscores an incidental "what"/"do" overlap.
+#
+# 2026-09-17 — "this"/"that"/"these"/"those" were missing. The new identity row's paraphrases are
+# all "is THIS X" / "what THIS Y" phrasings, so the demonstrative alone shared with practically any
+# query that names a store ("is this the Pullman store...") accumulated a paraphrase-boost point
+# PER paraphrase (six of them, all containing "this") and drowned out a genuinely on-topic row —
+# the exact "one incidental word, many times" failure the generic-word floor exists to catch,
+# just via a pure function word that had never slipped through before.
 _STOPWORDS = frozenset(
     "a an and are as at be but by can do does for from how i in is it me my no not of on or "
-    "our s the to up us we what when where which who why with you your".split()
+    "our s the this that these those to up us we what when where which who why with you your".split()
 )
 
 
 def _tokens(text: str, *, drop_stop: bool = False) -> list[str]:
     toks = _TOKEN_RE.findall((text or "").lower())
     return [t for t in toks if t not in _STOPWORDS] if drop_stop else toks
+
+
+# GENERIC CONTENT WORDS (2026-09-17). Real words, not function words — ``_STOPWORDS`` already
+# drops those — but so common across dozens of UNRELATED rows that sharing just one or two of
+# them with the caller's words is not a sign the row is on-topic: "are you hiring" only ranked
+# the specials row because it also says "right now"; "is John working today ... at the Yakima
+# store" only ranked specials because it repeats "store"; "can you call me ... back in stock"
+# grounded on the vendor-receiving row purely because it promises to "call ... back". Every KB
+# row scoped to a store repeats that store's own slug too, so the slug words are just as generic
+# for this purpose. These words still count toward straight substring/short-query matching
+# elsewhere; they are excluded ONLY from the "is this overlap distinctive" signal below.
+_GENERIC_CONTENT_WORDS = frozenset(
+    {
+        "store", "stores", "shop", "shops", "shopping",
+        "call", "calls", "called", "calling",
+        "back", "order", "orders", "ordered", "ordering",
+        "today", "now", "right", "open",
+        "there", "them", "all",
+        "happy",
+        "bring", "brings", "bringing",
+        "have", "has", "having",
+        "yakima", "pullman", "vernon", "mt", "mount",
+    }
+)
+
+
+def _distinctive(words: set[str]) -> set[str]:
+    """``words`` minus the generic high-frequency terms above — see ``_GENERIC_CONTENT_WORDS``."""
+    return words - _GENERIC_CONTENT_WORDS
 
 
 def _keyword_fallback(query: str, items: list[tuple[str, str]], row_by_id: dict, top_k: int):
@@ -235,26 +271,53 @@ def _keyword_fallback(query: str, items: list[tuple[str, str]], row_by_id: dict,
     The RAW score alone is not a relevance signal across rows of different subject matter — a
     single incidental shared word can still out-score a genuinely on-topic row (the "today's
     special" paraphrase problem). ``relevance_coverage`` below is the independent floor for that;
-    it re-derives coverage from the query text directly rather than trusting this score."""
+    it re-derives coverage from the query text directly rather than trusting this score. On top
+    of that floor, a GENERIC-only overlap (see ``_GENERIC_CONTENT_WORDS``) is also down-weighted
+    right here in the ranking score, not just at the floor — otherwise a row that only shares
+    "store"/"call"/"back"/"today" keeps outranking the genuinely on-topic row before the floor
+    ever gets a chance to reject it."""
     q_tokens = set(_tokens(query, drop_stop=True))
     if not q_tokens:
         return []
     scored: list[tuple[float, str]] = []
     for chunk_id, text in items:
         c_tokens = set(_tokens(text, drop_stop=True))
-        overlap = len(q_tokens & c_tokens)
-        if overlap == 0:
+        shared = q_tokens & c_tokens
+        if not shared:
             continue
+        distinctive_shared = _distinctive(shared)
+        # A purely-generic overlap ("store", "call and back", "today") barely counts — enough to
+        # keep the row in the running (never a flat zero) but never enough to beat a row with any
+        # real distinctive overlap or a paraphrase hit.
+        overlap = len(distinctive_shared) or 0.05 * len(shared)
         row = row_by_id[chunk_id]
-        boost = 0.0
         # Paraphrases (FAQEntry) / synonyms (taxonomy) are a STRONG recall signal: when the user
-        # names the exact term ("an eighth"), each matching alt phrasing decisively lifts the row
-        # over an incidental keyword collision in another chunk's prose.
+        # names the exact term ("an eighth"), a matching alt phrasing decisively lifts the row
+        # over an incidental keyword collision in another chunk's prose. Same generic-word
+        # exclusion applies: a paraphrase that only shares "today" ("today's special") must not
+        # get credit for matching "is John working today".
+        #
+        # 2026-09-17 — this used to add +1.0 PER matching paraphrase STRING, so a row whose
+        # paraphrases repeat the same one or two words many times ("open on thanksgiving" / "open
+        # on christmas" / "open on labor day" / ...) racked up a boost point per repetition of the
+        # SAME word ("open") — a holiday-hours row scored 8.0 against a plain "are you open
+        # tonight" ask purely from restating "open" seven times, well past the real per-store
+        # hours row. The signal is which DISTINCT words the caller's own words share with the
+        # row's alternative phrasings, not how many strings happen to repeat one of them — so the
+        # matched words across every paraphrase/synonym are pooled into one set first.
+        matched_paraphrase_words: set[str] = set()
         for extra in (getattr(row, "paraphrases", None) or []) + (
             getattr(row, "synonyms", None) or []
         ):
-            if q_tokens & set(_tokens(extra, drop_stop=True)):
-                boost += 1.0
+            matched_paraphrase_words |= _distinctive(q_tokens & set(_tokens(extra, drop_stop=True)))
+        # Weighted very slightly above 1.0/word: a paraphrase-CONFIRMED word is a stronger signal
+        # than a same-count coincidental raw-text overlap, and must win a tie against it outright
+        # rather than falling through to the arbitrary (if now at least stable) natural-key
+        # tiebreak — "ok forget medical then, what's the regular daily limit" shares only "limit"
+        # with the limits row's raw prose (boosted by its own "ounce limit"/"purchase limit"
+        # paraphrases), which used to tie 2.001-all against unrelated rows that merely happen to
+        # both contain "daily" and "regular" in their prose with no paraphrase behind either word.
+        boost = len(matched_paraphrase_words) * 1.01
         # A taxonomy row whose TERM is the very word the caller named ("what does INDICA mean")
         # is what they asked about; every strain-type row repeats "indica/sativa/hybrid" in its
         # shared caveat, so raw overlap ties all three and the winner was whichever sorted first
@@ -263,9 +326,26 @@ def _keyword_fallback(query: str, items: list[tuple[str, str]], row_by_id: dict,
         if term and term in q_tokens:
             boost += 2.0
         tiebreak = (getattr(row, "weight", 100) or 100) / 100.0
-        scored.append((overlap + boost + tiebreak * 0.001, chunk_id))
-    scored.sort(reverse=True)
-    return [(row_by_id[cid], score) for score, cid in scored[:top_k]]
+        scored.append((overlap + boost + tiebreak * 0.001, _stable_sort_key(row), chunk_id))
+    # 2026-09-17 — sorting ties on ``chunk_id`` (``f"{prefix}{row.pk}"``) made an exact-score tie's
+    # winner depend on primary-key order, which is NOT stable across test runs/processes (each
+    # test's ``seed_all()`` re-creates rows in a fresh transaction, and the next autoincrement
+    # value depends on how many rows earlier tests in the SAME process inserted before it rolled
+    # back) — the same query could ground on a different row test-run to test-run with no code
+    # change at all. Sorting on each row's own stable natural key (FAQEntry.key, a taxonomy term,
+    # a StoreFact label, ...) first makes the winner of a genuine tie fixed regardless of PK churn.
+    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    return [(row_by_id[cid], score) for score, _key, cid in scored[:top_k]]
+
+
+def _stable_sort_key(row) -> str:
+    """A natural, PK-independent identifier for tie-breaking equal-scored rows — never the
+    database primary key, which is not stable across test runs (see ``_keyword_fallback``)."""
+    for attr in ("key", "term", "label", "title", "slug"):
+        val = getattr(row, attr, None)
+        if val:
+            return str(val)
+    return type(row).__name__
 
 
 # A first naive floor ("reject any match with fewer than 2 overlapping content tokens") broke
@@ -315,9 +395,15 @@ _MIN_COVERAGE = 0.4
 
 def _paraphrase_hit(query_words: set[str], row) -> bool:
     """True when one of the row's own alternative phrasings (FAQEntry.paraphrases /
-    WeightTypeTaxonomy.synonyms) shares a content word with the question."""
+    WeightTypeTaxonomy.synonyms) shares a DISTINCTIVE content word with the question — a shared
+    word has to survive ``_GENERIC_CONTENT_WORDS`` to count, or "today's special" would rescue
+    "is John working today" on the word "today" alone, or the id-required row's "what do I
+    bring" would rescue "alright, I'll bring the box in" on the ordinary verb "bring" (2026-09-01's
+    own pinned example — "bring" is in ``_GENERIC_CONTENT_WORDS`` for exactly this reason). A
+    genuinely distinctive word ("limit", "cartridge") still rescues on a single paraphrase match,
+    same as before."""
     for extra in (getattr(row, "paraphrases", None) or []) + (getattr(row, "synonyms", None) or []):
-        if query_words & _content_words(extra):
+        if _distinctive(query_words & _content_words(extra)):
             return True
     return False
 
@@ -347,9 +433,23 @@ def relevant_enough(query: str, row) -> bool:
     term = str(getattr(row, "term", "") or "").strip().lower()
     if term and term in q:
         return True
-    if len(overlap) < 2:
+    # A curated paraphrase/synonym hit is a deliberate recall signal from the row's own author —
+    # it clears the floor regardless of how thin the raw chunk-text overlap is (2026-09-17: this
+    # now runs BEFORE the coverage-count gate below, not after — "ok forget medical then, what's
+    # the regular daily limit" shares only "limit" with the limits row's raw prose, but that one
+    # word is a distinctive hit against its own "ounce limit"/"purchase limit" paraphrases, and
+    # the question must still ground on it exactly as the un-muddied "what's the legal limit I
+    # can buy in one day?" already does).
+    if _paraphrase_hit(q, row):
+        return True
+    # GENERIC-only overlap (see ``_GENERIC_CONTENT_WORDS``) never counts toward the two-word
+    # floor: "store"/"call"/"back"/"today" etc. show up in nearly every row's prose, so sharing
+    # only those with the winning row is the same "one incidental word" case the floor exists to
+    # reject, just wearing a second word's clothing.
+    distinctive = _distinctive(overlap)
+    if len(distinctive) < 2:
         return False
-    return len(overlap) / len(q) >= _MIN_COVERAGE or _paraphrase_hit(q, row)
+    return len(distinctive) / len(q) >= _MIN_COVERAGE
 
 
 def rank_faq(

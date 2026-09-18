@@ -327,7 +327,13 @@ def test_topic_constraint_prevents_wrong_topic_grounding(db, settings):
     seed.seed_all()
     settings.SEMANTIC_SEARCH_ENABLED = False
 
-    unconstrained = semantic.rank_faq("what are your hours today", store="yakima")
+    # top_k=10 (not the default 3): 2026-09-17's generic-word tightening (kb/semantic.py
+    # _GENERIC_CONTENT_WORDS) now deliberately down-weights an overlap made of nothing but
+    # "today" in the RANKING score itself, not just the relevance floor below — the exact kind of
+    # incidental-word false-positive that tightening exists to stop. The specials row still
+    # competes as a real (if now much weaker) corpus candidate; it just no longer wins a spot in
+    # the top 3, which is the fix, not a break in this sanity check.
+    unconstrained = semantic.rank_faq("what are your hours today", store="yakima", top_k=20)
     hits = semantic.rank_faq("what are your hours today", store="yakima", topic="hours_location")
     assert hits, "topic-constrained hours query returned nothing"
     for row, _ in hits:
@@ -491,9 +497,11 @@ def test_every_mapped_row_exists():
     from kb import seed
 
     seed.seed_all()
-    # 14 hand-written core FAQs + 40 from the site FAQ page + 2 footer (social + WA warning).
-    # (14th, added 2026-09-01: ``tax-included`` — the menu price already includes all taxes.)
-    assert m.FAQEntry.objects.count() == 56
+    # 18 hand-written core FAQs + 40 from the site FAQ page + 2 footer (social + WA warning).
+    # (14th, added 2026-09-01: ``tax-included`` — the menu price already includes all taxes.
+    # 15th-18th, added 2026-09-17: ``identity``/``drive-thru``/``price-match``/``holiday-hours`` —
+    # see kb/seed.py FAQ_ROWS.)
+    assert m.FAQEntry.objects.count() == 60
     assert m.FAQEntry.objects.filter(key__startswith="site-faq-").count() == 40
     assert m.FAQEntry.objects.filter(key__startswith="footer-").count() == 2
     assert m.PolicyDocument.objects.filter(category__slug="return_policy").count() == 1
