@@ -98,6 +98,16 @@ services:
       - traefik.http.routers.budtender.tls=true
       - traefik.http.routers.budtender.tls.certresolver=letsencrypt
       - traefik.http.services.budtender.loadbalancer.server.port=8000
+      # Security headers at the edge (budtender-api.happytimeweed.com is a JSON API host
+      # plus the /custom-order storefront — no third-party embeds, no cross-origin framing).
+      - traefik.http.routers.budtender.middlewares=budtender-security-headers
+      - traefik.http.middlewares.budtender-security-headers.headers.stsSeconds=31536000
+      - traefik.http.middlewares.budtender-security-headers.headers.stsIncludeSubdomains=true
+      - traefik.http.middlewares.budtender-security-headers.headers.stsPreload=true
+      - traefik.http.middlewares.budtender-security-headers.headers.forceSTSHeader=true
+      - traefik.http.middlewares.budtender-security-headers.headers.frameDeny=true
+      - traefik.http.middlewares.budtender-security-headers.headers.referrerPolicy=strict-origin-when-cross-origin
+      - traefik.http.middlewares.budtender-security-headers.headers.contentSecurityPolicy=default-src 'self'; img-src 'self' https:; script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'
     depends_on:
       migrate:
         condition: service_completed_successfully
