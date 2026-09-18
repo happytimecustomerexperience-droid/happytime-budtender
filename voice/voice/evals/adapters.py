@@ -157,10 +157,18 @@ def _generate_with_retry(client, model_id, contents, cfg, attempts: int = 5):
             delay *= 2
 
 
-def ask_voice(question: str, *, store: str, max_rounds: int = 4) -> Answer:
+def ask_voice(
+    question: str, *, store: str, max_rounds: int = 4, setup_turns: list[str] | None = None
+) -> Answer:
     """Gemini runs the SAME system prompt Vapi is provisioned with (``AgentPrompt.body`` plus the
     immutable runtime safety block) and the SAME tool schemas; every function call is answered by
-    our real ``dispatch()``. The member is chosen the way the squad routes an opener."""
+    our real ``dispatch()``. The member is chosen the way the squad routes an opener.
+
+    ``setup_turns`` are the caller's earlier turns in the same call: each one is really run
+    (tools and all) and the model's reply is kept in ``contents``, so the final question is asked
+    with a history the model actually produced. LIMITATION: a real Vapi squad can transfer to a
+    different member mid-call; here the member routed from the caller's FIRST turn holds the
+    whole flow, so a mid-flow role change is not exercised."""
     from google.genai import types
 
     from core.services.gemini import make_client
@@ -169,7 +177,8 @@ def ask_voice(question: str, *, store: str, max_rounds: int = 4) -> Answer:
     from voice.provision import _with_runtime_safety
     from voice.tools import dispatch
 
-    role = _ROLE_FOR_INTENT.get(routing.classify_intent(question), "faq")
+    flow = list(setup_turns or []) + [question]
+    role = _ROLE_FOR_INTENT.get(routing.classify_intent(flow[0]), "faq")
     prompt = AgentPrompt.objects.filter(role=role, is_active=True).first()
     if prompt is None:
         return Answer(channel="voice", text="", error=f"no AgentPrompt(role={role})")
@@ -194,36 +203,42 @@ def ask_voice(question: str, *, store: str, max_rounds: int = 4) -> Answer:
         types.Content(role="model", parts=[types.Part(text=entry_greeting())]),
         types.Content(role="user", parts=[types.Part(text="hi, yes I'm over twenty-one")]),
         types.Content(role="model", parts=[types.Part(text="Great, thanks. What can I help you with?")]),
-        types.Content(role="user", parts=[types.Part(text=question)]),
     ]
     called: list[str] = []
     tool_args: list[dict] = []  # what the model actually asked the tools — the first place to look
+    turns: list[dict] = []      # the whole flow, so the report can show how the call went
     started = time.monotonic()
     text = ""
-    for _ in range(max_rounds):
-        resp = _generate_with_retry(client, model_id, contents, cfg)
-        cand = (resp.candidates or [None])[0]
-        parts = list(getattr(getattr(cand, "content", None), "parts", None) or [])
-        fcalls = [p.function_call for p in parts if getattr(p, "function_call", None)]
-        if not fcalls:
-            text = " ".join((p.text or "") for p in parts if getattr(p, "text", None)).strip()
-            break
-        contents.append(cand.content)
-        responses = []
-        for fc in fcalls:
-            args = dict(fc.args or {})
-            args.setdefault("store", store)
-            result = dispatch(fc.name, args, ctx)
-            called.append(fc.name)
-            tool_args.append({"tool": fc.name, "args": args, "grounded": result.get("grounded")})
-            responses.append(
-                types.Part(function_response=types.FunctionResponse(name=fc.name, response={"result": result}))
-            )
-        contents.append(types.Content(role="user", parts=responses))
+    for user_turn in flow:
+        contents.append(types.Content(role="user", parts=[types.Part(text=user_turn)]))
+        turns.append({"role": "user", "text": user_turn})
+        text = ""
+        for _ in range(max_rounds):
+            resp = _generate_with_retry(client, model_id, contents, cfg)
+            cand = (resp.candidates or [None])[0]
+            parts = list(getattr(getattr(cand, "content", None), "parts", None) or [])
+            fcalls = [p.function_call for p in parts if getattr(p, "function_call", None)]
+            if not fcalls:
+                text = " ".join((p.text or "") for p in parts if getattr(p, "text", None)).strip()
+                contents.append(types.Content(role="model", parts=[types.Part(text=text)]))
+                break
+            contents.append(cand.content)
+            responses = []
+            for fc in fcalls:
+                args = dict(fc.args or {})
+                args.setdefault("store", store)
+                result = dispatch(fc.name, args, ctx)
+                called.append(fc.name)
+                tool_args.append({"tool": fc.name, "args": args, "grounded": result.get("grounded")})
+                responses.append(
+                    types.Part(function_response=types.FunctionResponse(name=fc.name, response={"result": result}))
+                )
+            contents.append(types.Content(role="user", parts=responses))
+        turns.append({"role": "agent", "text": text})
     ms = int((time.monotonic() - started) * 1000)
     return Answer(
         channel="voice", text=text, source="sim", tool_calls=called, latency_ms=ms,
-        meta={"role": role, "model": model_id, "tool_args": tool_args},
+        meta={"role": role, "model": model_id, "tool_args": tool_args, "turns": turns},
     )
 
 

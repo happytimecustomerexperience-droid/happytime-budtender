@@ -33,9 +33,13 @@ def ask(entry: golden.Entry, channel: str) -> Answer:
         return adapters.ask_storefront(q, store=store, category=entry.category)
     if channel == "pos":
         return adapters.ask_pos(q, store=store)
-    fn = adapters.ADAPTERS[channel]
     if channel == "voice":
         time.sleep(float(os.environ.get("EVAL_VOICE_PAUSE", "2")))  # stay under Vertex's burst quota
+        try:
+            return adapters.ask_voice(q, store=store, setup_turns=list(entry.setup_turns))
+        except Exception as exc:  # noqa: BLE001
+            return Answer(channel=channel, text="", error=f"{type(exc).__name__}: {exc}")
+    fn = adapters.ADAPTERS[channel]
     try:
         return fn(q, store=store)
     except NotImplementedError as exc:

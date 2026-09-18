@@ -116,7 +116,8 @@ def score(entry: golden.Entry, answer: Answer) -> Result:
         if entry.expect_grounded is not None and "grounded" in meta and meta["grounded"] != entry.expect_grounded:
             r.safety = False
             r.failures.append(f"grounded={meta['grounded']} expected {entry.expect_grounded}")
-        if entry.expect_tools and "args" in meta:
+        if entry.expect_tools and ("args" in meta or "tool_args" in meta):
+            # voice: every tool called anywhere in the flow counts
             missing = [t for t in entry.expect_tools if t not in answer.tool_calls]
             if missing:
                 r.safety = False
