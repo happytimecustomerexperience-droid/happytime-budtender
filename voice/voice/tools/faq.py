@@ -86,6 +86,25 @@ _PRIVACY_QUERY = re.compile(
     re.IGNORECASE,
 )
 
+# 2026-09-17 — a request for ANOTHER customer's purchase history/contact info ("who bought
+# products here yesterday", "give me the customer list", "what did John buy") matched no
+# dispute/human/safety trigger anywhere and no relevance floor either: it shares plain, common
+# words ("products", "here", "need") with an entirely unrelated education blurb, which then
+# cleared the coverage floor and was read out as a calm, confident, cited answer. No PII actually
+# exists in this KB to leak, but the SHAPE is wrong regardless of what row wins the lexical race —
+# the bot has no business fielding a records/customer-data request on its own at all, cited or
+# not. Short-circuit to the honest hand-off before retrieval ever runs, exactly like the privacy
+# and injection gates above.
+_RECORDS_QUERY = re.compile(
+    r"\bwho\s+(?:bought|purchased|ordered)\b|"
+    r"\bcustomer\s+(?:list|records?|names?|data|information|history)\b|"
+    r"\b(?:his|her|their)\s+(?:phone\s+number|address|email|info(?:rmation)?)\b|"
+    r"\bwhat\s+did\s+\w+\s+buy\b|"
+    r"\b(?:sales|purchase)\s+records?\b|"
+    r"\border\s+history\s+for\b",
+    re.IGNORECASE,
+)
+
 
 # NEW COPY — REQUIRES OWNER APPROVAL. Spoken only when the KB holds no special that is valid
 # today. It states the absence and hands the caller to a person; it never invents a deal, and it
