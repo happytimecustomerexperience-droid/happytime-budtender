@@ -436,6 +436,10 @@ def vapi_webhook(request):
     ok, why = signing.verify_signature(request)
     if not ok:
         logger.warning("vapi webhook rejected: %s", why)  # never logs the secret
+        if why == "body too large":
+            return JsonResponse({"error": "payload too large"}, status=413)
+        if why == "replayed signature":
+            return JsonResponse({"error": "duplicate delivery"}, status=409)
         return JsonResponse({"error": "unauthorized"}, status=401)
 
     body = _parse_body(request)

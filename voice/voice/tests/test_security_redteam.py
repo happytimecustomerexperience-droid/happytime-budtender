@@ -123,26 +123,38 @@ def _signed(rf, body: bytes, secret: str):
     return req
 
 
-def test_finding_vapi_signature_has_no_replay_protection(rf, settings):
-    """No timestamp, no nonce, no seen-signature store: a captured signed webhook body
-    verifies an unlimited number of times. With at-least-once semantics the app relies on
-    per-handler idempotency, but an attacker can replay end-of-call-report / tool-calls freely."""
+def test_fixed_vapi_signature_has_replay_protection(rf, settings):
+    """FIXED: verify_signature now counts uses of a valid proof (the HMAC signature itself,
+    already body+secret-bound) in a bounded-TTL cache and rejects once it has been replayed
+    more than ``_REPLAY_MAX_USES`` times. The cap (rather than a strict one-shot) is
+    deliberate: Vapi's own at-least-once delivery legitimately resends the SAME signed body a
+    small number of times, and the app's handlers are separately idempotent on
+    call_id/tool_call_id for that case — a strict one-shot would reject a legitimate retry.
+    What this closes is the FINDING's "an attacker can replay ... freely" — replay is now
+    bounded, not unlimited. See voice/signing.py::_is_replay."""
     settings.VAPI_WEBHOOK_SECRET = "s3cret"
     body = json.dumps({"message": {"type": "status-update"}}).encode()
-    for _ in range(5):
+
+    from voice.signing import _REPLAY_MAX_USES
+
+    for _ in range(_REPLAY_MAX_USES):
         ok, _why = signing.verify_signature(_signed(rf, body, "s3cret"))
-        assert ok is True  # FINDING: same proof accepted forever
+        assert ok is True  # within the allowed retry budget
+
+    for _ in range(3):
+        ok, why = signing.verify_signature(_signed(rf, body, "s3cret"))
+        assert ok is False and why == "replayed signature"  # FIXED: no longer unlimited
 
 
-def test_finding_vapi_webhook_has_no_body_size_limit(rf, settings):
-    """verify_signature HMACs request.body with no length cap, so an unauthenticated
-    attacker forces the server to read and hash an arbitrarily large body before rejecting."""
+def test_fixed_vapi_webhook_has_body_size_limit(rf, settings):
+    """FIXED: verify_signature rejects a body over 256 KB via CONTENT_LENGTH BEFORE ever
+    reading/hashing request.body. See voice/signing.py::MAX_BODY_BYTES/_body_too_large."""
     settings.VAPI_WEBHOOK_SECRET = "s3cret"
     big = json.dumps({"message": {"type": "status-update", "transcript": "A" * 2_000_000}}).encode()
-    ok, _ = signing.verify_signature(_signed(rf, big, "s3cret"))
-    assert ok is True  # FINDING: 2 MB accepted; no MAX_BODY guard anywhere in the path
+    ok, why = signing.verify_signature(_signed(rf, big, "s3cret"))
+    assert (ok, why) == (False, "body too large")
     src = inspect.getsource(signing)
-    assert "len(request.body)" not in src and "CONTENT_LENGTH" not in src
+    assert "CONTENT_LENGTH" in src
 
 
 def test_control_signing_fails_closed(rf, settings):
