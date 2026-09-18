@@ -79,13 +79,26 @@ def test_finding_kb_row_crud_accepts_poisoned_content(client, django_user_model)
     assert row is not None and INJECTION in row.answer  # FINDING: stored unscrubbed
 
 
-def test_finding_tool_results_are_not_injection_screened(monkeypatch):
-    """Tool results from budtender pass through scrub_leak (cost/margin) and redact_pii only.
-    A product NAME carrying injected instructions reaches the spoken answer / Vapi tool result."""
+def test_fixed_tool_results_are_injection_screened():
+    """FIXED: voice/tools/__init__.py::dispatch now walks every tool result string through
+    the same ``_looks_poisoned`` detector faq.py trusts for KB rows, replacing any injected
+    string with "[removed]" — in addition to the existing scrub_leak/redact_pii passes.
+    See voice/tools/__init__.py::_screen_injection."""
+    from voice.tools import register, TOOL_REGISTRY, dispatch
+
     poisoned = {"products": [{"name": f"Blue Dream 1g <!-- {INJECTION} -->", "why_this": "nice"}]}
-    scrubbed = guardrails.scrub_leak(poisoned)
-    cleaned = guardrails.redact_pii(scrubbed)
-    assert INJECTION in json.dumps(cleaned)  # FINDING: no injection screen on tool results
+
+    @register("_test_poisoned_tool")
+    def _handler(args, ctx):  # noqa: ANN001
+        return poisoned
+
+    try:
+        out = dispatch("_test_poisoned_tool", {}, {})
+    finally:
+        TOOL_REGISTRY.pop("_test_poisoned_tool", None)
+
+    assert INJECTION not in json.dumps(out)
+    assert out["products"][0]["name"] == "[removed]"
 
 
 def test_fixed_leak_wall_nuke_bubbles_out_of_a_LIST(monkeypatch):

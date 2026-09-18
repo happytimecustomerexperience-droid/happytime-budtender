@@ -37,7 +37,25 @@ def dispatch(name: str, args: dict, ctx: dict) -> dict:
     except Exception:  # noqa: BLE001 - a handler error must not crash the webhook
         logger.exception("tool %s raised", name)
         return {"error": "tool_failed", "tool": name}
-    return guardrails.scrub_leak(result)
+    return _screen_injection(name, guardrails.scrub_leak(result))
+
+
+def _screen_injection(name: str, payload):
+    """Walk a (leak-scrubbed) tool result and replace any string that looks like a prompt
+    injection attempt with ``"[removed]"``. Tool results (product ``name``/``brand``/
+    ``why_this``/etc.) previously reached the spoken answer / Vapi tool result with only
+    leak-scrub + PII-mask applied — an injected string in upstream (budtender) data could
+    hijack the agent. Uses the same detector already trusted for KB rows."""
+    from voice.tools.faq import _looks_poisoned
+
+    if isinstance(payload, dict):
+        return {k: _screen_injection(name, v) for k, v in payload.items()}
+    if isinstance(payload, (list, tuple)):
+        return [_screen_injection(name, v) for v in payload]
+    if isinstance(payload, str) and _looks_poisoned(payload):
+        logger.warning("removed poisoned string from %s tool result", name)
+        return "[removed]"
+    return payload
 
 
 def _sanitize_args(name: str, args: dict) -> dict:
