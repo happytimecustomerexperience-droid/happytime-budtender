@@ -264,9 +264,19 @@ def _grounded(query: str, store: str | None, topic: str = "") -> dict | None:
     # rejects; declining there threw away the cited ounce/gram caps sitting right behind it. Walk
     # the ranked rows and speak the first one that clears the floor. This never lowers the bar —
     # every row spoken still has to pass the same floor the top row was held to.
-    top_row = next((row for row, _ in ranked if semantic.relevant_enough(query, row)), None)
-    if top_row is None:
-        return None
+    # ...and it applies only to UNCONSTRAINED retrieval. When ``topic`` is set, it was derived
+    # from the caller's own words (``voice.chat._faq_topic``) and the corpus was built from rows
+    # that carry that topic, so every candidate is on-subject by construction and the floor has
+    # nothing left to judge — it only costs recall. "and if the panda stuff turns out stale can I
+    # bring it back" is unmistakably a returns question, was scoped to the returns rows, and was
+    # then refused by the floor because it shares only ordinary verbs ("bring", "back") with the
+    # policy's prose.
+    if topic:
+        top_row = ranked[0][0]
+    else:
+        top_row = next((row for row, _ in ranked if semantic.relevant_enough(query, row)), None)
+        if top_row is None:
+            return None
     answer = _row_answer(top_row)
     if _looks_poisoned(answer):
         logger.warning("refusing suspicious KB row %s", getattr(top_row, "pk", ""))
