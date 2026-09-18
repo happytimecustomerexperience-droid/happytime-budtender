@@ -11,6 +11,7 @@
     <p class="sub">{% if p.strain_type %}{{ p.strain_type }}{% endif %}{% if p.thc %} · {{ p.thc|floatformat:1 }}% THC{% endif %}</p>
     <p class="amt">${{ p.price|floatformat:2 }}</p>
     <form class="addform" data-url="{% url 'bundle_cart_add' %}">
+      {% csrf_token %}
       <input type="hidden" name="loc" value="{{ store }}">
       <input type="hidden" name="product_id" value="{{ p.product_id }}">
       <input type="hidden" name="qty" value="1">

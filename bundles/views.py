@@ -22,7 +22,6 @@ from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from budtender.models import PhoneCartDraft
@@ -315,7 +314,6 @@ def cart_view(request):
     return _cart_response(request, store, draft)
 
 
-@csrf_exempt
 @require_POST
 @rate_limit("bundle-cart", limit=240, window=60)
 def cart_add(request):
@@ -329,7 +327,6 @@ def cart_add(request):
     return _cart_response(request, store, draft, error=message)
 
 
-@csrf_exempt
 @require_POST
 @rate_limit("bundle-cart", limit=240, window=60)
 def cart_update(request):
@@ -340,7 +337,6 @@ def cart_update(request):
     return _cart_response(request, store, draft)
 
 
-@csrf_exempt
 @require_POST
 @rate_limit("bundle-cart", limit=240, window=60)
 def cart_remove(request):

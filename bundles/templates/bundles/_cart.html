@@ -26,6 +26,7 @@
       <div class="cl-qty">
         {% if line.in_stock %}
         <form class="qtyform" data-url="{% url 'bundle_cart_update' %}">
+          {% csrf_token %}
           <input type="hidden" name="loc" value="{{ store }}">
           <input type="hidden" name="product_id" value="{{ line.product_id }}">
           <button type="button" class="qbtn" data-delta="-1" aria-label="Decrease">−</button>
@@ -35,6 +36,7 @@
         <span class="amt">${{ line.line_total|floatformat:2 }}</span>
         {% endif %}
         <form class="rmform" data-url="{% url 'bundle_cart_remove' %}">
+          {% csrf_token %}
           <input type="hidden" name="loc" value="{{ store }}">
           <input type="hidden" name="product_id" value="{{ line.product_id }}">
           <button type="button" class="linkbtn remove">Remove</button>

@@ -195,18 +195,18 @@ def test_control_pii_oracles_are_rate_limited():
     assert views.LOOKUP_PER_MINUTE <= 5 and views.LOOKUP_PER_HOUR <= 30
 
 
-def test_finding_cart_endpoints_are_csrf_exempt():
-    """cart_add / cart_update / cart_remove are @csrf_exempt with the cart bound only to the
-    htco cookie, so any origin can mutate a visitor's cart cross-site (no price or PII
-    impact, but a shopper can have items silently added before checkout)."""
+def test_fixed_cart_endpoints_are_not_csrf_exempt():
+    """cart_add / cart_update / cart_remove are no longer @csrf_exempt — the cart was bound
+    only to the htco cookie, so any origin could mutate a visitor's cart cross-site. The
+    templates that POST to these endpoints now send Django's csrf token like checkout
+    already did, and `csrf_exempt` is gone from the codebase entirely."""
     import inspect
 
     from bundles import views
 
-    for fn in (views.cart_add, views.cart_update, views.cart_remove):
-        assert "csrf_exempt" in inspect.getsource(fn)  # FINDING
-    # checkout, which creates the real order, is NOT exempt — control
-    assert "csrf_exempt" not in inspect.getsource(views.checkout)
+    for fn in (views.cart_add, views.cart_update, views.cart_remove, views.checkout):
+        assert "csrf_exempt" not in inspect.getsource(fn)
+    assert "csrf_exempt" not in inspect.getsource(views)
 
 
 # ── 4. Config ─────────────────────────────────────────────────────────────────
