@@ -920,6 +920,12 @@ _PROXY_PURCHASE_RE = re.compile(
     r"\b(?:pick|grab)\s+(?:it\s+|them\s+|that\s+)?up\s+for\s+(?:me|him|her|them)\b|"
     r"\b(?:pick|grab)\s+(?:it\s+|them\s+|that\s+)?up\s+on\s+(?:my|his|her|their)\s+behalf\b|"
     r"\bon\s+my\s+behalf\b|"
+    # ...and the same request with neither "up" nor "for me" in it: "if I can't make it, can my
+    # friend grab it INSTEAD". Nothing above reached that, so a third-party pickup fell through to
+    # ordinary product routing — and because "grab" is also a shopping verb, the turn came back
+    # with a cart recommendation, which reads as a yes.
+    r"\b(?:he|she|they|someone(?:\s+else)?|my\s+\w+)\s+(?:can\s+|could\s+|will\s+|would\s+|just\s+)*"
+    r"(?:picks?|grabs?|gets?|collects?)\s+(?:it|them|that|those)\s+(?:up\s+)?instead\b|"
     r"\bcan'?t\s+come\s+in\b|"
     r"\bbuy\s+(?:this|it|that|them)\s+for\s+my\b|"
     # A third party buying and HANDING IT OVER is the same diversion said the long way round:

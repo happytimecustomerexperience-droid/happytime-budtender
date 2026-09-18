@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from kb.seed import FAQ_ROWS, RETURN_POLICY_BODY
+from kb.seed import FAQ_ROWS
 
 # The KB's own words for the defective path. If these appear in the answer verbatim, nothing
 # about the remedy was composed by the agent (Numbers-Guard: the row speaks, not the LLM).
@@ -209,11 +209,14 @@ def test_money_back_demand_without_the_word_refund(convo):
     assert "notify_staff_issue" in t.tools
     assert t.picks == []
     # FIXED 2026-08-07 (was a REGRESSION left failing on purpose): "money back" and "busted" are
-    # now in _DISPUTE_TOPIC_RE, so the relevance gate stays open and a real grounded row is
-    # spoken. It's the dedicated "Return policy" KB document (RETURN_POLICY_BODY, kind=policy)
-    # rather than the FAQ_ROWS entry — same WAC citation, same no-refund-only-exchange remedy,
-    # just a different (higher-weighted) source ranked first.
-    assert t.grounded is True and RETURN_POLICY_BODY in t.answer
+    # now in _DISPUTE_TOPIC_RE, so the relevance gate stays open and a real grounded row is spoken.
+    # UPDATED 2026-09-17: this used to pin WHICH of the two equivalent returns rows ranked first
+    # (the PolicyDocument rather than the FAQEntry). They carry the same WAC citation and the same
+    # no-refund-only-exchange remedy, and ranking between two correct rows is not a behaviour this
+    # thread should freeze — what she is told is. Both rows are still cited on the turn.
+    assert t.grounded is True
+    assert {src["kind"] for src in t.sources} >= {"faq", "policy"}
+    assert "WAC 314-55-079" in t.answer and "exchange" in t.answer.lower()
     assert t.answer.startswith("I'm sorry that happened.")
 
     # 2 ─ she says the word. Now it routes correctly: dispute, KB policy, staff handoff — and
@@ -232,17 +235,19 @@ def test_money_back_demand_without_the_word_refund(convo):
 
     # 3 ─ she describes the defect, but names no return/refund/policy word THIS turn — chat.py's
     # topic classifier is per-message (thread_16 only carries a product CATEGORY across turns, not
-    # an FAQ topic), so retrieval runs unconstrained here. The relevance floor (kb/semantic.py::
-    # relevant_enough) now correctly declines rather than ground on the one incidental shared word
-    # ("dead"), the same standard that rejects "just give me your best guess" elsewhere — a KNOWN
-    # GAP (FAQ topic doesn't carry across turns the way category does), not a new defect: she still
-    # gets a safe, honest "let me get a team member" instead of an invented remedy.
+    # an FAQ topic), so retrieval runs unconstrained here.
+    # FIXED 2026-09-17 (was a pinned KNOWN GAP): this used to decline, and for a while before that
+    # it answered with the INTERSTATE-transport row — "out of the box" shares "out" with its "out
+    # of state" paraphrase. "Out" is filler, not evidence, so that row is gone and the returns row
+    # (which "dead" reaches through its own "my cart is broken" phrasings) is what she hears: the
+    # right policy, still wrapped in the dispute copy, still with no refund promised.
     t = c.say("the pen was dead out of the box, it doesn't work")
     assert t.intent == "conflict_resolution"
     assert t.escalated is True and t.next_action == "escalate"
     assert "suggest_products" not in t.tools  # UPDATED 2026-09-01 — see the note above
     assert "notify_staff_issue" in t.tools
-    assert t.grounded is False, "no topic-bearing word this turn — the relevance floor declines"
+    assert t.grounded is True, "the returns row answers a defective-pen description"
+    assert "exchange" in t.answer.lower() and "washington" in t.answer.lower()
     assert not _promises_refund(t.answer), _promises_refund(t.answer)
 
     assert len(c.turns) == 3

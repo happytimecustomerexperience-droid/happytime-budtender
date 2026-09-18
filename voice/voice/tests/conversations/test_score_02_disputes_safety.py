@@ -1152,7 +1152,12 @@ def test_25_grand_finale_shopping_safety_dispute_faq(convo):
     # hiding a real hit behind an irrelevant winner), so turns that scored an honest NO ANSWER
     # now score a correct, cited one. Every deduction that disappeared is a turn that got
     # better, not a check that got weaker.
-    assert score == 65, deductions
+    # 65 -> 55: this one moved DOWN, and that is also an improvement. Turn 3 — "he seems fine but
+    # I'm freaked out", said in the middle of a pet-poisoning panic — used to be answered with the
+    # tax-included row, confidently and cited ("every price already includes all taxes"). "Out" is
+    # filler, not evidence, so it declines honestly now and takes this file's NO ANSWER -10 for it.
+    # That is the same honesty-costs-points dynamic noted above, in the other direction.
+    assert score == 55, deductions
     assert c.turns[1].answer.startswith("This could be an emergency"), (
         "the dedicated poison-emergency copy, not the dispute apology, must open this reply"
     )

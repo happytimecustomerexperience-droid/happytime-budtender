@@ -222,7 +222,8 @@ _TOKEN_RE = re.compile(r"[a-z0-9]+")
 # just via a pure function word that had never slipped through before.
 _STOPWORDS = frozenset(
     "a an and are as at be but by can do does for from how i in is it me my no not of on or "
-    "our s the this that these those to up us we what when where which who why will with you your"
+    "our s the this that these those to up us was we were what when where which who why will with "
+    "you your"
     .split()
 )
 
@@ -252,6 +253,10 @@ _GENERIC_CONTENT_WORDS = frozenset(
         # now a stopword) with the return-policy FAQ, cleared the coverage floor on 2 of 5 words,
         # and a drug-test question was answered with the returns policy.
         "work", "works", "working", "worked",
+        # "out" is pure filler across unrelated subjects — "out of the box", "out of state", "out
+        # the door". "the pen was dead out of the box" shared it with the interstate row's "out of
+        # state" paraphrase and a defective-pen dispute was answered with the federal transport rule.
+        "out",
         "happy",
         "bring", "brings", "bringing",
         "have", "has", "having",
