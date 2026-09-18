@@ -79,13 +79,30 @@ def _conversation_lines(voice_call) -> list[str]:
             lines.append(f"{label}: {text or '(tool call)'}")
         return lines
     transcript = _safe_text(getattr(voice_call, "transcript", ""))
-    return [transcript] if transcript else ["(no transcript captured)"]
+    if transcript:
+        return [transcript]
+    # A text-channel escalation fires DURING the turn, before that turn is persisted as a
+    # VoiceTurn, so a first-message dispute has no turns yet. The tool's summary IS the caller's
+    # message; show it rather than an empty log (the 2026-09-18 alerts read "(no transcript
+    # captured)" three times).
+    summary = _safe_text(getattr(voice_call, "ai_summary", ""))
+    return [f"CALLER: {summary}"] if summary else ["(no transcript captured)"]
+
+
+def _is_chat(voice_call) -> bool:
+    """Website chat sessions are minted as ``s-…``; everything else is a phone call."""
+    return str(voice_call.call_id or "").startswith("s-")
+
+
+def _channel_label(voice_call) -> str:
+    return "website chat" if _is_chat(voice_call) else "voice"
 
 
 def _text_body(voice_call, transfer: str, reason_line: str) -> str:
     conversation = "\n".join(_conversation_lines(voice_call))
+    opener = "New website chat" if _is_chat(voice_call) else "New voice call"
     return (
-        f"New voice call - {voice_call.store or '-'}.\n"
+        f"{opener} - {voice_call.store or '-'}.\n"
         f"Outcome: {voice_call.outcome or '-'}{reason_line}\n"
         f"Caller (hashed): {(voice_call.caller_phone_hash or '-')[:12]}...\n"
         f"Duration: {voice_call.duration_s or '-'}s\n"
@@ -108,7 +125,7 @@ def _html_body(voice_call, transfer: str, reason_line: str, immediate: bool) -> 
     return f"""<!doctype html>
 <html>
   <body style="font-family:Arial,sans-serif;color:#1f2933;line-height:1.45">
-    <h2>Happy Time voice alert</h2>
+    <h2>Happy Time {escape(_channel_label(voice_call))} alert</h2>
     <p><strong>{escape(badge)}</strong> - {escape(voice_call.store or 'store')} - {escape(voice_call.outcome or 'call')}</p>
     <table cellpadding="6" cellspacing="0" style="border-collapse:collapse">
       <tr><td><strong>Reason</strong></td><td>{escape(reason_line.strip() or '-')}</td></tr>
@@ -246,6 +263,25 @@ class N8nSink(Sink):
 SINKS: list[Sink] = [DBSink(), EmailSink(), SlackSink(), N8nSink()]
 
 
+# Sessions that are never a real caller: the eval harness (``eval-``), the staff console
+# (``pg-``), the phone simulator (``sim-``), the conversation test harness (``convo-``) and the
+# live tool smoke (``text-smoke``). On 2026-09-18 an eval run emailed the store three URGENT
+# escalations with no transcript in them. A test must never page a human.
+_TEST_SESSION_PREFIXES = ("eval-", "pg-", "sim-", "convo-", "text-smoke")
+
+
+def _suppression_reason(voice_call) -> str:
+    """Why this call must not reach any outbound sink — "" when it is a real call."""
+    import os
+
+    call_id = str(getattr(voice_call, "call_id", "") or "")
+    if call_id.startswith(_TEST_SESSION_PREFIXES):
+        return "test session (eval/playground/simulator) — never alerts staff"
+    if os.environ.get("HHT_ALERT_SINKS", "").strip().lower() in ("off", "0", "false", "dry-run"):
+        return "HHT_ALERT_SINKS=off (dry run)"
+    return ""
+
+
 def dispatch(voice_call) -> dict[str, str]:
     """Fire every sink independently for one VoiceCall, idempotent per ``(voice_call, sink)``.
 
@@ -255,13 +291,19 @@ def dispatch(voice_call) -> dict[str, str]:
     from crm.models import AlertDelivery
 
     results: dict[str, str] = {}
+    suppressed = _suppression_reason(voice_call)
+    if suppressed:
+        logger.info("staff alert suppressed for %s: %s", voice_call.call_id, suppressed)
     for sink in SINKS:
         delivery, _ = AlertDelivery.objects.get_or_create(voice_call=voice_call, sink=sink.name)
         if delivery.status == "success":
             results[sink.name] = "success"  # idempotent: already delivered
             continue
         delivery.attempts += 1
-        if not sink.enabled(voice_call):
+        if suppressed:
+            delivery.status = "skipped"
+            delivery.last_error = suppressed
+        elif not sink.enabled(voice_call):
             delivery.status = "skipped"
             delivery.last_error = "disabled or not configured"
         else:

@@ -197,3 +197,40 @@ def test_non_immediate_outcome_no_urgent(settings):
     result = sinks.dispatch(vc)
     assert "URGENT" not in mail.outbox[0].subject
     assert result["slack"] == "skipped"  # off by default (O-9)
+
+
+# ── 2026-09-18: an eval run emailed the store three URGENT escalations with no transcript ──
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("call_id", ["eval-1a6c289bfe30", "pg-f24a826ec2ff", "sim-abc", "convo-1", "text-smoke"])
+def test_test_sessions_never_alert_staff(call_id):
+    """The eval harness, the staff console, the phone simulator and the smoke test all
+    exercise the real escalation tool; none of them may page a human."""
+    vc = _call(call_id=call_id)
+    results = sinks.dispatch(vc)
+    assert mail.outbox == []
+    assert results["email"] == "skipped"
+    delivery = AlertDelivery.objects.get(voice_call=vc, sink="email")
+    assert "test session" in delivery.last_error
+
+
+@pytest.mark.django_db
+def test_env_kill_switch_dry_runs_every_sink(monkeypatch):
+    monkeypatch.setenv("HHT_ALERT_SINKS", "off")
+    vc = _call(call_id="real-call-1")
+    results = sinks.dispatch(vc)
+    assert mail.outbox == []
+    assert all(v == "skipped" for v in results.values())
+
+
+@pytest.mark.django_db
+def test_text_chat_escalation_carries_the_message_when_no_turn_is_persisted_yet():
+    """A website-chat dispute fires mid-turn, before its VoiceTurn exists: the alert must show
+    the caller's words (the tool's summary) and say it was a chat, not '(no transcript captured)'."""
+    vc = _call(call_id="s-abc123", transcript="", ai_summary="the register overcharged me yesterday, someone needs to call me back")
+    sinks.dispatch(vc)
+    body = mail.outbox[0].body
+    assert "(no transcript captured)" not in body
+    assert "CALLER: the register overcharged me yesterday" in body
+    assert "New website chat" in body

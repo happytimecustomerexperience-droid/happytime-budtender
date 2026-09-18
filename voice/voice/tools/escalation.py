@@ -63,10 +63,15 @@ def notify_staff_issue(args: dict, ctx: dict) -> dict:
         logger.warning("notify_staff_issue with no call_id; best-effort, no durable record")
         return _envelope(store, alerted=False)
 
-    voice_call, _ = VoiceCall.objects.update_or_create(
-        call_id=call_id,
-        defaults={"store": store, "outcome": Outcome.ESCALATION, "reason": reason},
-    )
+    defaults = {"store": store, "outcome": Outcome.ESCALATION, "reason": reason}
+    # A text-channel escalation carries the caller's number in ctx (never in args); hash it the
+    # same way a phone call's number is hashed so the alert's "Caller hash" is not "-".
+    number = str(ctx.get("caller_number") or "").strip()
+    if number:
+        from crm.models import phone_hash
+
+        defaults["caller_phone_hash"] = phone_hash(number)
+    voice_call, _ = VoiceCall.objects.update_or_create(call_id=call_id, defaults=defaults)
     # Append the gathered details to the durable summary (don't clobber a prior one).
     detail = summary if not caller_name else f"{summary}  (caller: {caller_name})"
     if detail and detail not in (voice_call.ai_summary or ""):

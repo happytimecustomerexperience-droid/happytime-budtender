@@ -1,0 +1,1 @@
+- 2026-09-18: eval harness sent real staff-alert emails (eval-/pg- sessions). Sinks now refuse test-session call ids and honour HHT_ALERT_SINKS=off; text-channel alerts carry the summary + prior turns. Rule: every outbound sink is gated by session prefix and an env kill-switch, verified before the first live run.

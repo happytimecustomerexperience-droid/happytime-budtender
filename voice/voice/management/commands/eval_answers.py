@@ -32,6 +32,14 @@ class Command(BaseCommand):
         parser.add_argument("--seed", action="store_true", help="seed the KB first (kb.seed.seed_all)")
 
     def handle(self, *args, **opts):
+        import os
+
+        # An eval must never page a human or poke another system: outbound alert sinks off,
+        # no Vapi publish, no root-service nudges — whatever the DB rows do. Belt and braces
+        # with the call-id prefix guard in crm/sinks.py.
+        os.environ.setdefault("HHT_ALERT_SINKS", "off")
+        os.environ.setdefault("HHT_NOTIFY_BUDTENDER", "0")
+        os.environ.setdefault("HHT_AUTO_PUBLISH", "0")
         if opts["seed"]:
             from kb.seed import seed_all
 

@@ -183,7 +183,11 @@ def test_the_vendor_tool_now_gets_called_directly_by_the_text_brain(convo):
     row = VendorCallback.objects.get(vapi_call_id=c.session_token)
     assert row.reason == vendor_flow.REASON_WHOLESALE
     assert row.store == "yakima"
-    assert row.alerted is True
+    # The durable record is written; the EMAIL is deliberately NOT sent — this harness's
+    # ``convo-`` sessions are test sessions and crm/sinks.py refuses to page staff for them
+    # (an eval run emailed the store three empty URGENT alerts on 2026-09-18). The sink test
+    # file proves the real-call path delivers.
+    assert row.alerted is False
     assert VoiceCall.objects.get(call_id=c.session_token).outcome == Outcome.VENDOR_CALLBACK
 
     result = t.result("notify_vendor_callback")
