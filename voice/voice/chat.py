@@ -536,6 +536,30 @@ _ER_RE = re.compile(r"\bER\b")  # case-sensitive: a bare lowercase "er" is a fil
 # the category regex ("is it ok to drive after one gummy").
 _DRIVING_RE = re.compile(r"\b(drive|driving|behind\s+the\s+wheel)\b", re.I)
 _DRIVING_QUALIFIER_RE = re.compile(r"\b(safe|ok|okay)\b", re.I)
+# A DUI-adjacent legality question does not need a safe/ok qualifier to be one: "is it legal to
+# drive after an edible", "can I drive", "how long until I can drive" are the same question the
+# agent may not rule on, and all three sailed past the qualifier-only check above.
+_DRIVING_QUESTION_RE = re.compile(
+    r"\bis\s+it\s+legal\b[^.?!]{0,25}\bdrive\b|"
+    r"\bcan\s+i\s+(?:still\s+)?drive\b|"
+    r"\bhow\s+long\s+(?:until|before|til+)\s+i\s+can\s+drive\b|"
+    r"\b(?:safe|ok|okay)\s+to\s+drive\b",
+    re.I,
+)
+# Consuming on the premises / in public / in a hotel room is a legality question (RCW 69.50.445),
+# and the KB carries no row inviting it — but "can I smoke a JOINT in your parking lot" contains a
+# live _CATEGORY_RE pre-roll word, so it was hijacked into a pre-roll upsell. Same precedence rule
+# as every other safety guard: it runs BEFORE category routing and wins over it.
+_CONSUMPTION_VERB_RE = re.compile(
+    r"\b(smoke|smoking|vape|vaping|consume|consuming|light\s+up|toke|hit\s+this|hit\s+it)\b", re.I
+)
+_CONSUMPTION_PLACE_RE = re.compile(
+    r"\bparking\s+lot\b|\byour\s+lot\b|\bout\s+front\b|\bin\s+(?:my|the|his|her|your)\s+car\b|"
+    r"\bin\s+public\b|\bpublic\s+place\b|\bhotels?\b|\bmotels?\b|\bairbnb\b|\bin\s+the\s+park\b|"
+    r"\bsidewalk\b|\bon\s+the\s+street\b|\bpatio\b|\bpremises\b|\bon\s+site\b|\bin\s+the\s+store\b|"
+    r"\bright\s+here\b|\bhere\s+in\s+the\s+(?:store|shop|lot)\b",
+    re.I,
+)
 _ALLERGEN_KEYWORD_RE = re.compile(r"\b(allerg(?:ic|y|ies)|nuts?|peanuts?|gluten|dairy|soy)\b", re.I)
 _ALLERGEN_QUALIFIER_RE = re.compile(r"\b(ingredient|ingredients|contain|contains|have|has|free)\b", re.I)
 
@@ -566,8 +590,18 @@ def _is_impaired_driving_question(message: str) -> bool:
     WHOLE message, "okay so this is going to sound like a lot..." (the opener of a long ramble)
     plus "we ended up driving around for like three hours" (an aside 40 words later) satisfied
     both halves and escalated a harmless shopping turn as an impaired-driving question."""
+    if _DRIVING_QUESTION_RE.search(message or ""):
+        return True
     for clause in re.split(r"[.?!;\n]|,", message or ""):
         if _DRIVING_RE.search(clause) and _DRIVING_QUALIFIER_RE.search(clause):
+            return True
+    return False
+
+
+def _is_public_consumption_question(message: str) -> bool:
+    """Where the caller may legally consume — never a bare yes, never a product pitch."""
+    for clause in re.split(r"[.?!;\n]|,", message or ""):
+        if _CONSUMPTION_VERB_RE.search(clause) and _CONSUMPTION_PLACE_RE.search(clause):
             return True
     return False
 
@@ -582,6 +616,7 @@ def _is_safety_emergency(message: str) -> bool:
     return (
         _is_ingestion_emergency(message)
         or _is_impaired_driving_question(message)
+        or _is_public_consumption_question(message)
         or _is_allergen_question(message)
     )
 
@@ -1626,6 +1661,16 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         or _LEGAL_LIMIT_RE.search(message)
     ):
         speak_faq = False
+    # A legality question the agent may not rule on is never answered by speaking a row that
+    # merely SHARES vocabulary with it — "is it legal for me to drive after" carries the word
+    # "legal", which is _FAQ_FIRST_RE vocabulary, so the gate above would have let an unrelated
+    # cited row through under an "I'm sorry that happened" prefix. When the KB grows a real
+    # public-consumption row, the honest move is to scope retrieval to it (a topic), not to let
+    # the global-best row speak here.
+    if speak_faq and (
+        _is_public_consumption_question(message) or _is_impaired_driving_question(message)
+    ):
+        speak_faq = False
 
     if speak_faq:
         answer = str(faq["answer"])
@@ -1666,6 +1711,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         # already-owner-signed copy. No new wording.
         is_cannot_answer_safely = not is_poison_emergency and (
             _is_impaired_driving_question(message)
+            or _is_public_consumption_question(message)
             or _is_allergen_question(message)
             or _is_dosing_advice_question(message)
             or _is_drug_interaction_question(message)
