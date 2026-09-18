@@ -53,6 +53,11 @@ FAQ_ROWS = [
             "what payment do you take", "what forms of payment do you accept",
             "what payment methods do you accept", "is there an ATM", "do you have an ATM on site",
             "do you take cash", "can I pay with cash",
+            # "can I pay with X" for the payment methods the store does NOT take — without a word
+            # of its own, "can I pay with Venmo" shares only the generic verb "pay" with both this
+            # row AND the tax-included row's "do I pay tax on top" paraphrase, a coincidental tie
+            # this row must win outright, not by tiebreak luck.
+            "can I pay with venmo", "apple pay", "plain credit card",
         ],
     },
     {
@@ -79,7 +84,14 @@ FAQ_ROWS = [
         "answer": "No delivery — it's pickup only, which is Washington state law. You can "
         "order online and pick up in store.",
         "topic": "pickup",
-        "paraphrases": ["do you deliver", "is there delivery", "can you bring it to me"],
+        "paraphrases": [
+            "do you deliver", "is there delivery", "can you bring it to me",
+            # "do you deliver to <city>" (Selah / Ellensburg / Moscow Idaho / Kennewick, etc.) is
+            # the SAME no-delivery-anywhere policy, not a per-town service-radius question — the
+            # named city must never be treated as a distinct area to evaluate.
+            "deliver to my town", "deliver to another city", "delivery service area",
+            "do you deliver outside of town",
+        ],
     },
     {
         "key": "ready-time",
@@ -192,7 +204,78 @@ FAQ_ROWS = [
         "answer": "No — anything you buy has to stay in Washington state; under federal law cannabis "
         "can't cross state lines.",
         "topic": "limits",
-        "paraphrases": ["take it across state lines", "out of state", "bring it to another state"],
+        "paraphrases": [
+            "take it across state lines", "out of state", "bring it to another state",
+            "bring some of it back home with me", "get it to my friend out of state",
+            "take it on the plane", "ship it out of state", "mail it to another state",
+            "cross state lines", "take it home with me to another state",
+        ],
+    },
+    {
+        # NEW COPY (2026-09-17) — the site FAQ and hand-authored rows above have no identity row
+        # at all: nothing tells a confused/wrong-number caller who they actually reached. Static
+        # (never a KB "fact" to get wrong), so it needs no owner sign-off the way a policy claim
+        # would, but the wording itself is new and worth a glance.
+        "key": "identity",
+        "question": "What business is this? / Who did I call?",
+        "answer": "You've reached Happy Time Weed, a cannabis shop with stores in Yakima, Mount "
+        "Vernon, and Pullman.",
+        "topic": "general",
+        "paraphrases": [
+            "is this pizza hut", "what business is this", "who did i call", "what company is this",
+            "wrong number, who is this", "is this a dispensary", "what store is this",
+        ],
+    },
+    {
+        # NEW COPY (2026-09-17) — no row anywhere states there is no drive-thru; a caller asking
+        # about one used to get the plain hours row read back as if it answered the question.
+        "key": "drive-thru",
+        "question": "Do you have a drive-thru?",
+        "answer": "No drive-thru — walk in during store hours, or order ahead online and pick up "
+        "inside.",
+        # topic="hours" (not "pickup"): "how late is the drive-thru open" trips chat.py's
+        # hours_location classifier on the word "open", which then scopes retrieval to
+        # topic="hours" rows only — this row has to carry that tag to even be considered.
+        "topic": "hours",
+        # Deliberately narrow: every real ask ("how late is the drive-thru", "does the drive-thru
+        # close") already contains the word "drive-thru" itself, so a paraphrase built from other,
+        # more generic words ("...closing time") is never needed to catch it — and one that leaned
+        # on "time" alone falsely grounded "what time does the store open ... so I can time the
+        # drop" on this row (2026-09-17).
+        "paraphrases": ["drive-thru", "drive thru", "drive through"],
+    },
+    {
+        # NEW COPY (2026-09-17) — REQUIRES OWNER APPROVAL (a genuine business-policy claim, not a
+        # cited WA-law fact). No row anywhere addresses price matching; a haggling caller used to
+        # get whatever row happened to rank first.
+        "key": "price-match",
+        "question": "Do you price match?",
+        "answer": "We don't price-match other shops or online listings; our current deals are "
+        "the best price we offer.",
+        "topic": "general",
+        # Deliberately narrow (2026-09-17): "match a competitor's price"/"beat another shop's
+        # price"-style paraphrases collided with unrelated questions on the ordinary words
+        # "competitor"/"shop" once shared. "price match" alone is the caller's own real phrasing.
+        "paraphrases": ["price match", "price matching"],
+    },
+    {
+        # NEW COPY (2026-09-17). Global — no per-store hedge needed; the KB has zero holiday-hours
+        # rows, so a holiday question used to get the plain daily-hours row recited as if it
+        # confirmed that specific day. The answer deliberately never names a holiday itself (that
+        # would be inventing a holiday-specific claim right back) — see test_thread_21's
+        # ``test_holiday_hours_are_never_invented``.
+        "key": "holiday-hours",
+        "question": "Are your hours different on holidays?",
+        "answer": "Holiday hours can differ from our regular hours; check happytimeweed.com or "
+        "call the store before a holiday.",
+        # topic="hours": "are you open on Thanksgiving" trips the hours_location classifier on
+        # "open", same reasoning as the drive-thru row above.
+        "topic": "hours",
+        "paraphrases": [
+            "open on thanksgiving", "open on christmas", "open on labor day",
+            "open on the 4th of july", "open on fourth of july", "open on new year's",
+            "open on a holiday", "closed for the holiday", "holiday schedule",
+        ],
     },
 ]
 

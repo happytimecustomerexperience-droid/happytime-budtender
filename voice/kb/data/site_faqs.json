@@ -141,7 +141,12 @@
     "answer": "The best way to apply is to visit any of our locations - Yakima, Mount Vernon, or Pullman - in person and bring your resume. Alternatively, you can email your resume directly to the location where you're interested in working. All applicants must be at least 21 years old and able to pass a background check as required by Washington State law. Visit our about page to learn more about joining the Happy Time team and our company culture.",
     "topic": "general",
     "store": "",
-    "source_url": "https://happytimeweed.com/faq"
+    "source_url": "https://happytimeweed.com/faq",
+    "paraphrases": [
+      "are you hiring",
+      "job application"
+    ],
+    "weight": 150
   },
   {
     "key": "site-faq-19",
