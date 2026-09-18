@@ -36,9 +36,9 @@ class HundredConversationsTests(TestCase):
 
     # ── stored ────────────────────────────────────────────────────────────────
     def test_every_conversation_is_stored_with_its_messages(self):
-        self.assertEqual(ChatSession.objects.filter(session_token__startswith="test-").count(), len(self.scenarios))
+        self.assertEqual(ChatSession.objects.filter(session_token__startswith="s-test-").count(), len(self.scenarios))
         for sc in self.scenarios:
-            session = ChatSession.objects.get(session_token=f"test-{sc['id']}")
+            session = ChatSession.objects.get(session_token=f"s-test-{sc['id']}")
             user_msgs = ChatMessage.objects.filter(session=session, role="user").count()
             self.assertEqual(user_msgs, len(sc["turns"]), sc["id"])
 
@@ -48,7 +48,7 @@ class HundredConversationsTests(TestCase):
             self.assertIn(r["primary_intent"], INTENTS, r["id"])
 
     def test_every_turn_is_classified_in_the_taxonomy(self):
-        events = AnalyticsEvent.objects.filter(session_token__startswith="test-", event_type="chat_message")
+        events = AnalyticsEvent.objects.filter(session_token__startswith="s-test-", event_type="chat_message")
         user_events = [e for e in events if (e.props or {}).get("role") == "user"]
         total_turns = sum(len(sc["turns"]) for sc in self.scenarios)
         self.assertEqual(len(user_events), total_turns)
@@ -59,9 +59,9 @@ class HundredConversationsTests(TestCase):
     def test_analytics_breakdowns_reconcile(self):
         total_turns = sum(len(sc["turns"]) for sc in self.scenarios)
         turn_rows = intent_breakdown(
-            AnalyticsEvent.objects.filter(session_token__startswith="test-", event_type="chat_message"))
+            AnalyticsEvent.objects.filter(session_token__startswith="s-test-", event_type="chat_message"))
         self.assertEqual(sum(r["n"] for r in turn_rows), total_turns)
-        conv_rows = conversation_breakdown(ChatSession.objects.filter(session_token__startswith="test-"))
+        conv_rows = conversation_breakdown(ChatSession.objects.filter(session_token__startswith="s-test-"))
         self.assertEqual(sum(r["n"] for r in conv_rows), len(self.scenarios))
 
     def test_whole_taxonomy_is_exercised(self):
@@ -71,7 +71,7 @@ class HundredConversationsTests(TestCase):
     # ── no leak (regression): analytics props never carry business internals ────
     def test_analytics_props_have_no_business_internals(self):
         forbidden = {"margin", "cost", "bucket", "margin_pct", "price_z"}
-        for props in AnalyticsEvent.objects.filter(session_token__startswith="test-").values_list("props", flat=True):
+        for props in AnalyticsEvent.objects.filter(session_token__startswith="s-test-").values_list("props", flat=True):
             self.assertFalse(set(props or {}) & forbidden, props)
 
     # ── accuracy (thresholded, with visibility) ─────────────────────────────────

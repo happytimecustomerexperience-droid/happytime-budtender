@@ -105,27 +105,27 @@ def test_control_api_v1_fails_closed_when_token_unset(client, settings):
     assert resp.status_code in (401, 403)
 
 
-def test_finding_chat_session_token_is_caller_chosen_and_joinable(client, settings):
-    """ChatReplyView does get_or_create(session_token=<caller value>) with no ownership or
-    format check, so anyone who can reach the endpoint (the website proxy, or anyone holding
-    the service token) can attach to — and read the history of — any session token they can
-    guess or observe, and can mint unbounded ChatSession rows."""
-    from budtender.models import ChatMessage, ChatSession
+def test_fixed_chat_reply_rejects_caller_chosen_session_token(client, settings):
+    """ChatReplyView no longer does get_or_create(session_token=<caller value>) with no
+    format check. A caller-supplied token that does not already exist AND does not match
+    the server-minted shape ("s-" + urlsafe token) is never used to create/attach a
+    session — the server mints and returns a fresh high-entropy token instead, so an
+    attacker can no longer plant or join a session under a token of their own choosing."""
+    from budtender.models import ChatSession
 
     settings.HHT_BACKEND_TOKEN = "t0ken"
-    ChatSession.objects.create(session_token="victim-token", location_slug="yakima", channel="chat")
-    ChatMessage.objects.create(
-        session=ChatSession.objects.get(session_token="victim-token"),
-        role="user", content="my number is 509-222-1234",
-    )
 
     resp = client.post(
-        "/api/v1/chat/history", data=json.dumps({"session_token": "victim-token"}),
+        "/api/v1/chat/message",
+        data=json.dumps({"session_token": "victim-token", "message": "hi"}),
         content_type="application/json", HTTP_AUTHORIZATION="Bearer t0ken",
     )
     assert resp.status_code == 200
-    rows = resp.json()["sessions"]
-    assert rows and rows[0]["session_token"] == "victim-token"  # FINDING: no ownership check
+    minted = resp.json()["session_token"]
+    assert minted != "victim-token"
+    assert minted.startswith("s-")
+    assert not ChatSession.objects.filter(session_token="victim-token").exists()
+    assert ChatSession.objects.filter(session_token=minted).exists()
 
 
 def test_finding_chat_history_with_no_token_dumps_every_recent_session(client, settings):

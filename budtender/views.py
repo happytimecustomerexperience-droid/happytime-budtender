@@ -384,6 +384,9 @@ class SessionStartView(APIView):
         return Response({"session_token": token, "stage": "WELCOME"})
 
 
+_MINTED_SESSION_TOKEN = re.compile(r"^s-[A-Za-z0-9_-]+$")
+
+
 class ChatReplyView(APIView):
     """Persist one website chat turn and answer with bounded Gemini context.
 
@@ -400,13 +403,16 @@ class ChatReplyView(APIView):
         token = str(data.get("session_token") or data.get("session_id") or "").strip()
         location = _safe_location(data.get("location") or data.get("store"))
         channel = _safe_channel(data.get("channel"), default="chat")
-        if token:
-            session, _ = ChatSession.objects.get_or_create(
-                session_token=token,
-                defaults={"location_slug": location, "channel": channel},
-            )
-        else:
-            token = "s-" + secrets.token_urlsafe(24)
+        session = ChatSession.objects.filter(session_token=token).first() if token else None
+        if session is None:
+            # A token the caller supplied that we don't already know about is only
+            # honored if it has the server-minted shape ("s-" + urlsafe token) — this
+            # keeps deterministic test/dev tokens working — otherwise it is an
+            # arbitrary caller-chosen string, and accepting it would let anyone attach
+            # to (and later read/write) a session under a token of their choosing. In
+            # that case we mint a fresh, high-entropy token instead of using theirs.
+            if not (token and _MINTED_SESSION_TOKEN.match(token)):
+                token = "s-" + secrets.token_urlsafe(24)
             session = ChatSession.objects.create(session_token=token, location_slug=location, channel=channel)
 
         phone = _normalize_phone(data.get("phone", "")) if data.get("phone") else ""

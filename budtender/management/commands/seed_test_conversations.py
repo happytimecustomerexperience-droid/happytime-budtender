@@ -43,7 +43,7 @@ def intended_primary(intents) -> str:
     return primary
 
 
-def run_scenarios(scenarios: list[dict], *, token: str, prefix: str = "test-") -> list[dict]:
+def run_scenarios(scenarios: list[dict], *, token: str, prefix: str = "s-test-") -> list[dict]:
     """Replay each scenario through /api/v1/chat/message. Returns, per scenario:
     {id, intended_primary_intent, primary_intent, turns:[{user, intended_intent, intent}]}.
     `token` must equal settings.HHT_BACKEND_TOKEN."""
@@ -113,13 +113,13 @@ class Command(BaseCommand):
             for cid, user, want, got in misses:
                 self.stdout.write(f"  [{cid}] want={want} got={got}  {user!r}")
         self.stdout.write("\nBy conversation (primary_intent):")
-        for row in conversation_breakdown(ChatSession.objects.filter(session_token__startswith="test-")):
+        for row in conversation_breakdown(ChatSession.objects.filter(session_token__startswith="s-test-")):
             self.stdout.write(f"  {row['intent']:<22} {row['n']:>4}  {row['pct']:>3}%")
         self.stdout.write("\nBy turn:")
-        for row in intent_breakdown(AnalyticsEvent.objects.filter(session_token__startswith="test-", event_type="chat_message")):
+        for row in intent_breakdown(AnalyticsEvent.objects.filter(session_token__startswith="s-test-", event_type="chat_message")):
             self.stdout.write(f"  {row['intent']:<22} {row['n']:>4}  {row['pct']:>3}%")
 
         if opts["dry_run"]:
-            ChatSession.objects.filter(session_token__startswith="test-").delete()
-            AnalyticsEvent.objects.filter(session_token__startswith="test-").delete()
+            ChatSession.objects.filter(session_token__startswith="s-test-").delete()
+            AnalyticsEvent.objects.filter(session_token__startswith="s-test-").delete()
             self.stdout.write("\n(dry-run: test rows removed)")
