@@ -491,23 +491,35 @@ class ChatHistoryView(APIView):
         )
         if session_token:
             sessions = sessions.filter(session_token=session_token)[:1]
+            rows = []
+            for session in sessions:
+                messages = list(session.messages.all())
+                if not messages:
+                    continue
+                rows.append({
+                    "session_token": session.session_token,
+                    "channel": session.channel,
+                    "location_slug": session.location_slug,
+                    "stage": session.stage,
+                    "message_count": len(messages),
+                    "started_at": session.started_at.isoformat(),
+                    "last_active_at": session.last_active_at.isoformat(),
+                    "messages": [public_message(m) for m in messages[-message_limit:]],
+                })
         else:
-            sessions = sessions[:limit]
-        rows = []
-        for session in sessions:
-            messages = list(session.messages.all())
-            if not messages:
-                continue
-            rows.append({
-                "session_token": session.session_token,
-                "channel": session.channel,
-                "location_slug": session.location_slug,
-                "stage": session.stage,
-                "message_count": len(messages),
-                "started_at": session.started_at.isoformat(),
-                "last_active_at": session.last_active_at.isoformat(),
-                "messages": [public_message(m) for m in messages[-message_limit:]],
-            })
+            # No session_token means "browse recent sessions", not "read their content" —
+            # a bare service token must not be a bulk read of every website conversation.
+            # Metadata only; message bodies require the specific session's own token.
+            rows = [
+                {
+                    "session_token": session.session_token,
+                    "channel": session.channel,
+                    "location_slug": session.location_slug,
+                    "primary_intent": session.primary_intent,
+                    "last_active_at": session.last_active_at.isoformat(),
+                }
+                for session in sessions[:limit]
+            ]
         fallback_count = AnalyticsEvent.objects.filter(
             event_type="chat_message",
             props__role="assistant",

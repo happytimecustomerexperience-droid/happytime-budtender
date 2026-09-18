@@ -291,7 +291,9 @@ class ChatReplyTests(TestCase):
         r = self.client.post("/api/v1/chat/history", data={}, content_type="application/json")
         self.assertEqual(r.status_code, 403)
 
-    def test_chat_history_returns_recent_sessions_without_phone(self):
+    def test_chat_history_without_token_returns_metadata_only(self):
+        """No session_token means "browse recent sessions", not "read their content" — the
+        no-token response is metadata only (no message bodies, no phone)."""
         session = ChatSession.objects.create(
             session_token="s-history", location_slug="yakima", channel="chat", phone="+15095551234"
         )
@@ -309,9 +311,10 @@ class ChatReplyTests(TestCase):
         body = r.json()
         self.assertEqual(body["sessions"][0]["session_token"], "s-history")
         self.assertEqual(body["sessions"][0]["location_slug"], "yakima")
-        self.assertEqual(body["sessions"][0]["message_count"], 2)
-        self.assertEqual([m["role"] for m in body["sessions"][0]["messages"]], ["user", "assistant"])
+        self.assertNotIn("messages", body["sessions"][0])
         self.assertNotIn("phone", json.dumps(body).lower())
+        self.assertNotIn("hello", json.dumps(body).lower())
+        self.assertNotIn("hi there", json.dumps(body).lower())
 
     def test_chat_history_reports_fallback_count(self):
         session = ChatSession.objects.create(
@@ -345,7 +348,7 @@ class ChatReplyTests(TestCase):
 
         r = self.client.post(
             "/api/v1/chat/history",
-            data=json.dumps({"limit": "bad", "message_limit": 25}),
+            data=json.dumps({"session_token": "s-long", "limit": "bad", "message_limit": 25}),
             content_type="application/json",
             **self._auth(),
         )

@@ -128,9 +128,10 @@ def test_fixed_chat_reply_rejects_caller_chosen_session_token(client, settings):
     assert ChatSession.objects.filter(session_token=minted).exists()
 
 
-def test_finding_chat_history_with_no_token_dumps_every_recent_session(client, settings):
-    """Omitting session_token returns the newest N sessions WITH their messages — one
-    service token is a bulk read of every website conversation, not a scoped lookup."""
+def test_fixed_chat_history_with_no_token_returns_metadata_only(client, settings):
+    """Omitting session_token now returns the newest N sessions' METADATA only (token,
+    store, channel, primary_intent, last_active_at) — no message bodies — so one service
+    token is no longer a bulk read of every website conversation's content."""
     from budtender.models import ChatMessage, ChatSession
 
     settings.HHT_BACKEND_TOKEN = "t0ken"
@@ -141,7 +142,13 @@ def test_finding_chat_history_with_no_token_dumps_every_recent_session(client, s
     resp = client.post("/api/v1/chat/history", data="{}", content_type="application/json",
                        HTTP_AUTHORIZATION="Bearer t0ken")
     assert resp.status_code == 200
-    assert len(resp.json()["sessions"]) == 3  # FINDING: unscoped bulk dump
+    body = resp.json()
+    rows = body["sessions"]
+    assert len(rows) == 3
+    for row in rows:
+        assert "messages" not in row
+        assert {"session_token", "location_slug", "channel", "primary_intent", "last_active_at"} <= row.keys()
+    assert "secret" not in json.dumps(body)
 
 
 def test_control_health_is_the_only_public_api_route(client, settings):
