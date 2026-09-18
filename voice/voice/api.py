@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 
 from django.conf import settings
 from django.http import JsonResponse
@@ -12,6 +13,8 @@ from django.views.decorators.http import require_GET, require_POST
 
 from voice.chat import answer_text_chat
 from voice.tools import dispatch
+
+logger = logging.getLogger(__name__)
 
 _VALID_STORES = {"yakima", "mount-vernon", "pullman"}
 
@@ -79,6 +82,7 @@ def persona(request):
 
     from kb.models import AgentPrompt
     from voice.provision import _with_runtime_safety, entry_greeting
+    from voice.tools.faq import _looks_poisoned
 
     written = AgentPrompt.objects.filter(role="written", is_active=True).first()
     if not written:
@@ -89,10 +93,21 @@ def persona(request):
     if entry and entry.updated_at > updated_at:
         updated_at = entry.updated_at
 
+    # Screen the OWNER-EDITABLE body only — the code-owned "IMMUTABLE RUNTIME SAFETY" block
+    # appended by ``_with_runtime_safety`` legitimately discusses ignoring/revealing
+    # instructions (it's the refusal script) and would otherwise false-positive itself.
+    if _looks_poisoned(written.body):
+        # A prompt is not a security boundary, but it also must not ship poisoned instructions
+        # to another model's context. The root falls back to its own safety-only instruction.
+        logger.warning("refusing poisoned AgentPrompt row %s (role=written)", written.pk)
+        return JsonResponse({"ok": False, "reason": "prompt_poisoned"}, status=200)
+
+    body = _with_runtime_safety(written.body, "written")
+
     return JsonResponse(
         {
             "ok": True,
-            "written_system_instruction": _with_runtime_safety(written.body, "written"),
+            "written_system_instruction": body,
             "greeting": entry_greeting(),
             "updated_at": updated_at.isoformat(),
         }
@@ -118,6 +133,7 @@ def store_facts(request):
     from django.db.models import Max
 
     from kb.models import StoreFact
+    from voice.tools.faq import _looks_poisoned
 
     rows = StoreFact.objects.current().filter(is_active=True, confirmed=True)
     latest = rows.aggregate(Max("updated_at"))["updated_at__max"]
@@ -126,6 +142,14 @@ def store_facts(request):
     global_facts: dict[str, str] = {}
     specials: dict[str, list[str]] = {}
     for row in rows:
+        if _looks_poisoned(row.value):
+            # Owner-editable content shipped verbatim to another model's context — omit the
+            # row rather than serve it, and log which row so it can be reviewed/fixed.
+            logger.warning(
+                "omitting poisoned StoreFact row %s (store=%s, kind=%s)",
+                row.pk, row.store, row.kind,
+            )
+            continue
         if row.kind == "special":
             if row.store:
                 specials.setdefault(row.store, []).append(row.value)
