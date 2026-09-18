@@ -246,7 +246,7 @@ _GENERIC_CONTENT_WORDS = frozenset(
         "call", "calls", "called", "calling",
         "back", "order", "orders", "ordered", "ordering",
         "today", "now", "right", "open",
-        "there", "them", "all",
+        "there", "them", "all", "much",
         "happy",
         "bring", "brings", "bringing",
         "have", "has", "having",
@@ -337,13 +337,16 @@ def _keyword_fallback(query: str, items: list[tuple[str, str]], row_by_id: dict,
         # paraphrase then doubled) and the edible peak/re-dose row on two ("before", "feel") — a
         # 2.011 vs 2.001 win for the row that answers a third of the question over the row that
         # answers two thirds, and the caller was told when their online order would be ready. How
-        # much of what was ASKED a row speaks to is the tiebreak between two otherwise-level rows,
-        # so it is weighted below one whole extra matched word and can never outrank real overlap.
+        # much of what was ASKED a row speaks to is a TIEBREAK between two otherwise-level rows,
+        # and nothing more: at 0.05 it cannot outweigh a matched word (1.0) or even a
+        # paraphrase-confirmation (0.01 per word), it only settles which of two rows that matched
+        # the same amount speaks more to the question. Weighted any heavier it starts overturning
+        # real overlap — "what ID do I need to bring" went to the walk-in row over the ID row.
         matched = distinctive_shared | matched_paraphrase_words
         coverage = len(matched) / len(_distinctive(q_tokens)) if _distinctive(q_tokens) else 0.0
         tiebreak = (getattr(row, "weight", 100) or 100) / 100.0
         scored.append(
-            (overlap + boost + coverage * 0.5 + tiebreak * 0.001, _stable_sort_key(row), chunk_id)
+            (overlap + boost + coverage * 0.05 + tiebreak * 0.001, _stable_sort_key(row), chunk_id)
         )
     # 2026-09-17 — sorting ties on ``chunk_id`` (``f"{prefix}{row.pk}"``) made an exact-score tie's
     # winner depend on primary-key order, which is NOT stable across test runs/processes (each
