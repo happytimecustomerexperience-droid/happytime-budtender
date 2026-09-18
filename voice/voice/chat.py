@@ -77,7 +77,16 @@ _HUMAN_RE = re.compile(
     # (it is the row that talks about someone calling you back). A billing dispute is a dispute.
     r"over\s*charg(?:ed|e|ing)|double[\s-]?charg(?:ed|e)|charged\s+me\s+twice|"
     r"wrong\s+(?:amount|price)|billing\s+(?:error|issue|problem)|"
-    r"discriminat(?:ion|ed|ing)"
+    r"discriminat(?:ion|ed|ing)|"
+    # "you sold me an expired vape cart" is a defect complaint, and "expired" appeared in no
+    # dispute pattern at all. Deliberately NOT the bare word: "my ID is expired, is that okay" is
+    # an ordinary ID question the KB answers (test_thread_09), so the product/purchase context has
+    # to be part of the match.
+    r"(?:sold|sell|selling|gave)\s+(?:me\s+)?(?:an?\s+)?expired|"
+    r"expired\s+(?:vape|cart|cartridge|product|edible|gumm\w+|flower|item|weed|batch|package|"
+    r"chocolate|drink|pre.?roll|concentrate)|"
+    r"past\s+(?:its|the)\s+(?:expiration|exp|date)|"
+    r"(?:expiration\s+)?date\s+(?:on\s+\w+\s+)?(?:\w+\s+)?already\s+passed"
     r")\b",
     re.I,
 )
@@ -213,7 +222,10 @@ _DISPUTE_TOPIC_RE = re.compile(
     # "fail(ed/s)" added alongside defective/broken — GAP2 fix: "the gummy that FAILED" is the
     # same broken-product family and must be recognized as still describing the disputed item
     # (see ``_ends_dispute`` below), not treated as a bare product mention.
-    r"defective|broken|busted|warranty|replacements?|replace|damaged|fail(?:ed|s)?)\b",
+    r"defective|broken|busted|warranty|replacements?|replace|damaged|fail(?:ed|s)?|"
+    # "expired" belongs with defective/damaged here: a caller who was sold out-of-date product is
+    # asking the return-policy question, and the gate has to let that row be spoken.
+    r"expired|expiration)\b",
     re.I,
 )
 _PRICE_MAX_RE = re.compile(r"\b(?:under|below|less than|no more than|up to|max(?:imum)?)\s*\$?\s*(\d+(?:\.\d{1,2})?)\b", re.I)
@@ -701,6 +713,18 @@ _INTERACTION_VERB_RE = re.compile(
     r"\bmix(?:ing)?\s+(?:this|it)\s+with\b|\bi'?m\s+on\b",
     re.I,
 )
+
+
+# Pregnancy / breastfeeding is a medical-condition question, not a shopping slot. "I'm pregnant,
+# is CBD ok" and "what about just a topical while pregnant" both carry live product words, so
+# category routing answered a prenatal-safety question with a shelf pick.
+_PREGNANCY_RE = re.compile(
+    r"\bpregnan(?:t|cy)\b|\bbreast\s*feed(?:ing)?\b|\bnursing\b|\bexpecting\s+a\s+baby\b", re.I
+)
+
+
+def _is_pregnancy_question(message: str) -> bool:
+    return bool(_PREGNANCY_RE.search(message or ""))
 
 
 def _is_drug_interaction_question(message: str) -> bool:
@@ -1354,7 +1378,9 @@ def _staff_followup_hint(store: str, phone: str) -> str:
 # defect complaint is a defective_return, a bare "get me a person" is a repeated_request, and
 # everything else is the generic dispute (which is also the handler's own default).
 _DEFECT_RE = re.compile(
-    r"\b(defective|broken|busted|damaged|won'?t\s+fire|doesn'?t\s+work|dead\s+on\s+arrival)\b", re.I
+    r"\b(defective|broken|busted|damaged|won'?t\s+fire|doesn'?t\s+work|dead\s+on\s+arrival|"
+    r"expired\s+\w+|sold\s+me\s+(?:an?\s+)?expired)\b",
+    re.I,
 )
 
 
@@ -1521,6 +1547,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         or _is_safety_emergency(message)
         or _is_dosing_advice_question(message)
         or _is_drug_interaction_question(message)
+        or _is_pregnancy_question(message)
         or _is_adverse_event_report(message)
         or _is_proxy_purchase_question(message)
         # NOTE: interstate transport is deliberately NOT a safety escalation. Tried it; it made
@@ -1715,6 +1742,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             or _is_allergen_question(message)
             or _is_dosing_advice_question(message)
             or _is_drug_interaction_question(message)
+            or _is_pregnancy_question(message)
         )
         if is_poison_emergency:
             answer = _poison_emergency_answer(store, phone)
