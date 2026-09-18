@@ -1330,6 +1330,34 @@ def _stage_cart_reply(ctx: dict, store: str, phone: str, tool_results: list) -> 
     (``voice/tools/phone_cart.py`` injects it server-side from ``ctx['_caller_phone']``/
     ``ctx['caller_number']``) — that contract is untouched here."""
     sku = _last_suggested_sku(ctx.get("call_id") or ctx.get("session_token") or "")
+    if sku and not phone:
+        # ``stage_phone_cart`` injects the phone server-side from ctx, so dispatching with none on
+        # the session writes a hold nobody can be called about — staff get an item set aside for an
+        # anonymous person. Ask for the number first; the hold is staged as soon as there is one.
+        staged_args = {"action": "add_item", "store": store, "sku": sku, "quantity": 1}
+        tool_results = tool_results + [
+            {
+                "tool": "stage_phone_cart",
+                "args": staged_args,
+                "result": {"ok": False, "error": "phone_required", "staged": False},
+            }
+        ]
+        # NEW COPY — REQUIRES OWNER APPROVAL.
+        answer = "I can hold that for you — what's the best phone number to put it under?"
+        return {
+            "ok": True,
+            "intent": "phone_cart_staged",
+            "answer": answer,
+            "grounded": False,
+            "sources": [],
+            "tool_results": tool_results,
+            "escalation_required": False,
+            "escalation_flag": False,
+            "safe_next_action": "answer",
+            "safe_suggested_next_action": _suggested_next_action("answer"),
+            "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+            "store": store,
+        }
     if not sku:
         answer = (
             "I don't have a specific item pulled up yet to set aside — let's find one first, or I "
