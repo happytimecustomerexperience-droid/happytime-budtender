@@ -203,8 +203,12 @@ def _row_url(row) -> str:
 
 def _row_answer(row) -> str:
     """The grounded answer text from a KB row — the spoken value lives in the row, not the LLM."""
-    from kb.models import StoreFact
+    from kb.models import StoreFact, WeightTypeTaxonomy
 
+    # Same split for the taxonomy: its chunk_text leads with the internal axis code and lists
+    # the row's search synonyms — retrieval scaffolding, not something a caller should hear.
+    if isinstance(row, WeightTypeTaxonomy):
+        return row.spoken_text().strip()
     # StoreFact.chunk_text() prefixes the raw store slug ("yakima ", "mount-vernon ") for
     # retrieval only — speaking it verbatim leaked the internal store code + label combo to
     # callers ("mount-vernon Mt Vernon address: ..."). spoken_text() is the same row, minus that

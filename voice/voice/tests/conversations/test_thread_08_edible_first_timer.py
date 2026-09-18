@@ -99,13 +99,17 @@ def test_first_timer_asks_how_much_is_too_much(convo, fake_bt):
     assert _mg_figures(t5.answer) == set()
 
     # ── 6. The last worry of every first-timer. ─────────────────────────────────────
-    # FIXED (retrieval-precision follow-up): onset time used to be answered, confidently and
-    # "grounded", with the unrelated order-pickup ETA row (the dosing row that does answer it was
-    # retrieved but ranked below and never spoken). The relevance floor now declines instead of
-    # guessing — still honest, though ideally the dosing row would rank first instead (out of
-    # scope: that is a ranking-quality gap, not a false-confidence one).
+    # FIXED (2026-09-17): onset time used to be answered, confidently and "grounded", with the
+    # unrelated order-pickup ETA row — it matched on the single word "long", which its own "how
+    # long for pickup" paraphrase then counted twice, while the edible dosing row that actually
+    # speaks to the question matched two of the three words and lost. Ranking now weighs how much
+    # of the QUESTION a row answers, so the dosing row wins and is what she hears.
     t6 = c.say("and how long before I feel it")
-    assert t6.grounded is False
+    assert t6.grounded is True
+    assert "peak" in t6.answer.lower() and "re-dos" in t6.answer.lower()
+    assert "ready for pickup" not in t6.answer, "no longer her online order's ETA"
+    # The taxonomy row is SPOKEN, not dumped: no internal axis code, no synonym list.
+    assert not t6.answer.startswith("["), t6.answer
     assert _mg_figures(t6.answer) == set()
 
     assert len(c.turns) == 6

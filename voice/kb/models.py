@@ -373,6 +373,16 @@ class WeightTypeTaxonomy(models.Model):
         val = f" = {self.value}" if self.value else ""
         return f"[{self.axis}] {self.term}{val}{syn}. {self.notes}".strip()
 
+    def spoken_text(self) -> str:
+        """The customer-facing form. ``chunk_text()`` above is built for the matcher — it leads
+        with the internal axis code and lists the row's search synonyms ("[edible_dose] peak /
+        re-dose = peak ~ 3 h (also: ...)") — and faq.py spoke it verbatim whenever a taxonomy row
+        won, so a caller asking how long before they feel an edible was read a bracketed database
+        key. Same split as StoreFact.spoken_text: the term, its value, and the note."""
+        val = f": {self.value}" if self.value else ""
+        note = f" {self.notes}".rstrip() if self.notes else ""
+        return f"{self.term}{val}.{note}".strip()
+
     def __str__(self):
         return f"{self.axis}/{self.term}"
 
