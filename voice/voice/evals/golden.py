@@ -44,6 +44,9 @@ GOLDEN_PATH = Path(__file__).resolve().parents[2] / "kb" / "golden" / "answers.y
 CATEGORIES = (
     "store-facts", "pricing-tax", "age-id", "policies", "deals", "products",
     "safety", "escalation", "vendor", "out-of-scope", "adversarial",
+    # A whole phone call, not one turn: `setup_turns` are really replayed on every channel that
+    # keeps history (text / playground / voice), and the last question is scored.
+    "flows",
 )
 CHANNELS = ("text", "playground", "voice", "web", "web-fallback", "pos", "storefront", "sms")
 
