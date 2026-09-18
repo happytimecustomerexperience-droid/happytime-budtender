@@ -138,14 +138,18 @@ def test_rep_calls_pullman_back_and_the_callback_is_now_logged(convo):
     assert t.args("notify_vendor_callback")["reason"] == vendor_flow.REASON_MANIFEST
     assert vendor_flow.normalize_reason(t.said) == vendor_flow.REASON_MANIFEST
 
-    # UNCHANGED — no vendor language in this line at all, so it stays on the ordinary (still
-    # store-blind, still a separate pre-existing retrieval bug, out of scope here) hours path.
+    # No vendor language in this line at all, so it stays on the ordinary hours path — and that
+    # path now actually works. It used to retrieve NO hours row whatsoever (the Pullman hours
+    # StoreFact shares no word with "what time does the store open"), which this thread pinned as
+    # a known retrieval bug. StoreFact kind phrasings fixed it: the rep asking when the store opens
+    # is told when the store he called opens, from the store's own row.
     t = c.say("what time does the store open tomorrow so I can time the drop")
     assert t.intent == "hours_location", "the label says hours..."
-    assert not any("hours" in str(s.get("title", "")).lower() for s in t.sources), (
-        f"...but no hours row was retrieved: {[s.get('title') for s in t.sources]}"
+    assert t.grounded
+    assert [src.get("title") for src in t.sources][0] == "Pullman hours", (
+        f"...on the called store's own row: {[src.get('title') for src in t.sources]}"
     )
-    assert "9 AM" not in t.answer, f"so he never hears Pullman's opening time: {t.answer!r}"
+    assert "Yakima" not in t.answer and "Mt Vernon" not in t.answer
 
     # FIXED: this is the turn the original bug was named for — the KB used to just recite the
     # callback-window promise with nothing durable behind it. It now actually logs one.

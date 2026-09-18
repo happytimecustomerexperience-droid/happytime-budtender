@@ -54,14 +54,16 @@ def test_mount_vernon_call_then_the_pullman_call(convo, fake_bt):
     assert "9 AM" in t1.answer and "10 PM" in t1.answer, "Mt Vernon's own hours row is now spoken"
     assert "8AM to 11:30PM" not in t1.answer, "no longer reads Yakima's hours to a Mt Vernon caller"
 
-    # 2 ── directions. FIXED (retrieval-precision follow-up): the winning row used to be a global
-    # site FAQ with Yakima hard-coded in its body — Dana was confidently sent to the Yakima
-    # address. topic="hours_location" now excludes that global FAQ, and the correct Mt Vernon
-    # address row has no lexical bridge to "and where are you located" for the keyword fallback to
-    # find, so retrieval safely declines instead of confidently sending her to the wrong address.
+    # 2 ── directions. The winning row used to be a global site FAQ with Yakima hard-coded in its
+    # body — Dana was confidently sent to the Yakima address. topic="hours_location" excludes that
+    # global FAQ; for a while after that the correct Mt Vernon address row had no lexical bridge to
+    # "and where are you located" either, so the honest-but-poor outcome was a decline. StoreFact
+    # now carries kind-derived phrasings (kb/models.py ``_KIND_PHRASINGS``), so a plain "where are
+    # you located" reaches the store's OWN address row — the right answer, not just a safe one.
     t2 = mv.say(SCRIPT[1])
     assert t2.intent == "hours_location"
-    assert t2.grounded is False
+    assert t2.grounded is True
+    assert MV_ADDRESS in t2.answer
     assert YAKIMA_ADDRESS not in t2.answer, "no longer sent to Yakima's address"
 
     # 3 ── the address, asked plainly. Store-scoped, and correct.
@@ -135,11 +137,12 @@ def test_mount_vernon_call_then_the_pullman_call(convo, fake_bt):
     assert "9 AM" in p1.answer and "10 PM" in p1.answer, "Pullman's own hours row is now spoken"
 
     p2 = pu.say(SCRIPT[1])
-    # Both decline now (no lexical bridge to either store's address row) — the fallback text is
-    # store-independent, so they're still byte-identical, just for a different (safer) reason.
-    assert p2.answer == t2.answer
-    assert p2.grounded is False
-    assert PULLMAN_ADDRESS not in p2.answer
+    # "and where are you located" now reaches each store's OWN address row, so the two calls no
+    # longer give the same answer — which is the whole point of store scoping.
+    assert p2.answer != t2.answer
+    assert p2.grounded is True
+    assert PULLMAN_ADDRESS in p2.answer
+    assert MV_ADDRESS not in p2.answer
 
     p3 = pu.say(SCRIPT[2])
     assert PULLMAN_ADDRESS in p3.answer
