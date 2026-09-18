@@ -493,6 +493,36 @@ def _prefers_products(message: str, category: str, *, escalation: bool) -> bool:
 # do not touch the existing escalation/leak-guard/Numbers-Guard paths.
 _INGESTION_SUBJECT_RE = re.compile(r"\b(dog|cat|pet|child|kid|toddler|baby)\b", re.I)
 _INGESTION_VERB_RE = re.compile(r"\b(ate|ingested|swallowed|got\s+into)\b", re.I)
+# An ADULT going down after a product is the highest-urgency shape there is, and it had no slot
+# here at all: "my friend just passed out after eating a gummy" matched neither the pet/child
+# subject list nor the standalone vocabulary below ("passed out" is in neither).
+_COLLAPSE_SUBJECT_RE = re.compile(
+    r"\b(dog|cat|pet|child|kid|toddler|baby|friend|buddy|wife|husband|roommate|girlfriend|"
+    r"boyfriend|partner|brother|sister|son|daughter|mom|dad|someone|he|she|they)\b",
+    re.I,
+)
+_COLLAPSE_RE = re.compile(
+    r"\bpassed\s+out\b|\bblacked\s+out\b|\bunconscious\b|\b(?:can'?t|won'?t|cannot)\s+wake\b|"
+    r"\b(?:not|isn'?t|aren'?t)\s+breathing\b|\b(?:not|isn'?t)\s+responding\b|\bwon'?t\s+respond\b",
+    re.I,
+)
+# The other half of the same fix: the ingestion branch fired on ANY subject+verb pair anywhere in
+# the message, with no cannabis connection required at all — so "my dog got into the neighbor's
+# trash again", an aside buried in a 150-word ramble, hijacked the whole turn into a 911 hand-off
+# and buried the caller's actual question ("a low dose gummy for anxiety under 20 bucks"). The
+# subject, the verb AND a product word now have to sit in the SAME clause.
+_CANNABIS_CONTEXT_RE = re.compile(
+    r"\b(edibles?|gumm(?:y|ies|ie|ys)|chocolates?|carts?|cartridges?|vapes?|disposables?|"
+    r"pre.?rolls?|joints?|blunts?|weed|cannabis|marijuana|thc|cbd|flowers?|buds?|concentrates?|"
+    r"dabs?|wax|rosin|resin|hash|tinctures?|topicals?|capsules?|mints?|rso|stash|"
+    r"brownies?|cookies?|drinks?|beverages?|products?)\b",
+    re.I,
+)
+# "...ate one of the ones I bought here" names no product of its own — the product is the one
+# already on the table in THIS session, so a session that has been shopping supplies the context.
+_INGESTION_BACKREF_RE = re.compile(
+    r"\b(?:one|some|a\s+bunch|a\s+few)\s+of\s+(?:the|my|your|those|these|them)\b", re.I
+)
 _INGESTION_STANDALONE_RE = re.compile(
     r"\b(overdose|poison(?:ed|ing)?|throwing\s+up|won'?t\s+wake\s+up|unresponsive|emergency|"
     r"hospital|ambulance|911)\b"
@@ -510,16 +540,36 @@ _ALLERGEN_KEYWORD_RE = re.compile(r"\b(allerg(?:ic|y|ies)|nuts?|peanuts?|gluten|
 _ALLERGEN_QUALIFIER_RE = re.compile(r"\b(ingredient|ingredients|contain|contains|have|has|free)\b", re.I)
 
 
-def _is_ingestion_emergency(message: str) -> bool:
-    return bool(
-        (_INGESTION_SUBJECT_RE.search(message or "") and _INGESTION_VERB_RE.search(message or ""))
-        or _INGESTION_STANDALONE_RE.search(message or "")
-        or _ER_RE.search(message or "")
-    )
+def _is_ingestion_emergency(message: str, *, product_context: bool = False) -> bool:
+    """A poisoning/collapse report. The standalone vocabulary (overdose/unresponsive/911/ER) fires
+    unconditionally — those words are never incidental. The subject+verb shapes only fire inside a
+    clause that ALSO carries cannabis/product context (see ``_CANNABIS_CONTEXT_RE``), so an
+    unrelated aside about a pet and a rubbish bin can no longer hijack a shopping turn."""
+    text = message or ""
+    if _INGESTION_STANDALONE_RE.search(text) or _ER_RE.search(text):
+        return True
+    for clause in re.split(r"[.?!;\n]|,", text):
+        reported = (_INGESTION_SUBJECT_RE.search(clause) and _INGESTION_VERB_RE.search(clause)) or (
+            _COLLAPSE_SUBJECT_RE.search(clause) and _COLLAPSE_RE.search(clause)
+        )
+        if not reported:
+            continue
+        if _CANNABIS_CONTEXT_RE.search(clause):
+            return True
+        if product_context and _INGESTION_BACKREF_RE.search(clause):
+            return True
+    return False
 
 
 def _is_impaired_driving_question(message: str) -> bool:
-    return bool(_DRIVING_RE.search(message or "") and _DRIVING_QUALIFIER_RE.search(message or ""))
+    """Same clause-scoping as ``_is_ingestion_emergency``, for the same reason: matched across the
+    WHOLE message, "okay so this is going to sound like a lot..." (the opener of a long ramble)
+    plus "we ended up driving around for like three hours" (an aside 40 words later) satisfied
+    both halves and escalated a harmless shopping turn as an impaired-driving question."""
+    for clause in re.split(r"[.?!;\n]|,", message or ""):
+        if _DRIVING_RE.search(clause) and _DRIVING_QUALIFIER_RE.search(clause):
+            return True
+    return False
 
 
 def _is_allergen_question(message: str) -> bool:
@@ -654,9 +704,9 @@ _PROXY_PURCHASE_RE = re.compile(
     r"\bcan'?t\s+come\s+in\b|"
     r"\bbuy\s+(?:this|it|that|them)\s+for\s+my\b|"
     # A third party buying and HANDING IT OVER is the same diversion said the long way round:
-    # "can he just buy the edibles and bring them out to me", "my cousin will get it for me".
-    # None of the pick/grab-up shapes above reach these, so a proxy request phrased this way fell
-    # straight through to ordinary product routing.
+    # "can he just buy the edibles and bring them out to me", "she can grab it and give it to me",
+    # "my cousin will get it for me". None of the pick/grab-up shapes above reach these, so a
+    # proxy request phrased this way fell straight through to ordinary product routing.
     r"\b(?:he|she|they|someone(?:\s+else)?|my\s+\w+)\s+(?:can\s+|could\s+|will\s+|would\s+|just\s+)*"
     r"(?:buy|buys|get|gets|grab|grabs|purchase|purchases|pick\s+up)\b"
     r"[^.?!]{0,40}?(?:\bfor\s+me\b|\b(?:brings?|gives?|hands?)\s+(?:it|them|that|those)?\s*(?:out\s+)?(?:to\s+)?me\b)|"
@@ -1187,6 +1237,28 @@ def _carried_category(history) -> str:
     return ""
 
 
+# A long, rambling message carries vocabulary from every subject the caller touched on, and the
+# product-vs-FAQ preference is decided by a scan of the WHOLE blob — so "driving around for like
+# three hours" outranked the request the caller actually ended on ("do you guys have a low dose
+# gummy for anxiety under 20 bucks") purely because "hours" is FAQ vocabulary. The ask is the LAST
+# clause that carries a routable signal; that clause decides the route, while every SAFETY check
+# keeps reading the whole message (an emergency buried mid-ramble must still fire).
+_RAMBLE_WORDS = 40
+_CLAUSE_SPLIT_RE = re.compile(r"[.?!;\n]|,|\s—\s|\s--\s")
+
+
+def _ask_clause(message: str) -> str:
+    """The clause that carries the caller's actual ask, for a message long enough to have wandered.
+    Short messages (the overwhelming majority) are returned unchanged, so nothing else moves."""
+    text = message or ""
+    if len(text.split()) < _RAMBLE_WORDS:
+        return text
+    for clause in reversed([c.strip() for c in _CLAUSE_SPLIT_RE.split(text) if c.strip()]):
+        if _category_from_text(clause) or _FAQ_FIRST_RE.search(clause) or _HOURS_LOC_RE.search(clause):
+            return clause
+    return text
+
+
 def _faq_topic(message: str) -> str:
     if _RETURN_RE.search(message or ""):
         return "return_policy"
@@ -1394,12 +1466,16 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     # Safety check runs before category routing and wins over it: an ingestion/poisoning report,
     # an impaired-driving question, or an allergen ask must never fall through to the ordinary
     # category regex and become a product pitch.
-    is_poison_emergency = _is_ingestion_emergency(message)
+    is_poison_emergency = _is_ingestion_emergency(
+        message, product_context=bool(_carried_category(history))
+    )
     # An under-21 admission is a property of the SESSION, not of one message (see
-    # ``_session_declared_underage``), scoped to the turns it must actually stop: a SHOPPING ask
-    # (a category word, a proxy/handoff request, a hold). A general question — "is it safe to use
-    # while pregnant", "what are your hours" — keeps its ordinary grounded answer, which is
-    # exactly what ``UNDER_21`` promises ("I'm still happy to answer general questions").
+    # ``_session_declared_underage``) — once it is on the record, nothing in this call may be
+    # searched, quoted or staged, however the next ask is phrased.
+    # Scoped to the turns it must actually stop: a SHOPPING ask (a category word, a proxy/handoff
+    # request, a hold). A general question — "is it safe to use while pregnant", "what are your
+    # hours" — keeps its ordinary grounded answer, which is exactly what ``UNDER_21`` promises
+    # ("I'm still happy to answer general questions about the store").
     under_21 = bool(_UNDERAGE_RE.search(message)) or (
         _session_declared_underage(history)
         and bool(message_category or _PROXY_PURCHASE_RE.search(message) or _STAGE_RE.search(message))
@@ -1421,7 +1497,10 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         # blanket escalation. Left as a documented gap rather than papered over with a handoff.
     )
     escalation = escalation_now or carried or safety_hit
-    category = str(slots.get("category") or _category_from_text(message)).strip()
+    # Routing (product-vs-FAQ, slots, intent) reads the caller's ASK; every safety check above
+    # keeps reading the whole message. For anything short of a ramble the two are identical.
+    ask = _ask_clause(message)
+    category = str(slots.get("category") or _category_from_text(ask)).strip()
     category = _normalize_category(category)
     # A refinement belongs to the ask before it. Carry the category so "keep it under 40 though"
     # re-runs the search instead of falling through to whatever the FAQ ranks first.
@@ -1430,12 +1509,12 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     # on the FAQ path — same guard _prefers_products uses.
     if (
         not category
-        and _is_refinement(message)
-        and not _requires_sources(message)
-        and not _FAQ_FIRST_RE.search(message)
+        and _is_refinement(ask)
+        and not _requires_sources(ask)
+        and not _FAQ_FIRST_RE.search(ask)
     ):
         category = _carried_category(history)
-    if not category and not _requires_sources(message):
+    if not category and not _requires_sources(ask):
         category = _profile_top_category(ctx.get("profile_summary"))
     # An effect ("help me relax") or a named brand ("anything from Wyld") is a real product ask
     # even with no category word and nothing carried/profiled. suggest_products can't be given a
@@ -1449,24 +1528,24 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     attempt_product_search = bool(
         not category
         and not escalation
-        and (_effect_from_text(message) or _BRAND_MENTION_RE.search(message or ""))
-        and not _requires_sources(message)
-        and not _FAQ_FIRST_RE.search(message)
-        and not _DOSING_QUESTION_RE.search(message or "")
-        and not _is_condition_followup_question(message)
+        and (_effect_from_text(ask) or _BRAND_MENTION_RE.search(ask or ""))
+        and not _requires_sources(ask)
+        and not _FAQ_FIRST_RE.search(ask)
+        and not _DOSING_QUESTION_RE.search(ask or "")
+        and not _is_condition_followup_question(ask)
     )
     # Education guard (see ``_EDUCATION_QUESTION_RE``): a definition question keeps its product
     # noun but loses the product route, so it reaches the KB's defined-term row instead of the
     # shelf. Placed with the other pre-routing guards, after category derivation so nothing else
     # has to know about it.
-    if _is_education_question(message):
+    if _is_education_question(ask):
         category = ""
         attempt_product_search = False
-    prefer_products = _prefers_products(message, category, escalation=escalation) or attempt_product_search
+    prefer_products = _prefers_products(ask, category, escalation=escalation) or attempt_product_search
     # The router already classifies the subject; retrieval was never told, so "what time do you
     # close today" came back with the July specials row. Pass it so retrieval can be constrained.
-    faq_args = {"query": message, "store": store}
-    faq_topic = _faq_topic(message)
+    faq_args = {"query": ask, "store": store}
+    faq_topic = _faq_topic(ask)
     if faq_topic:
         faq_args["topic"] = faq_topic
     faq = dispatch("faq_lookup", faq_args, ctx)
@@ -1554,7 +1633,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             answer = f"I'm sorry that happened. {answer} {_staff_followup_hint(store, phone)}"
         return {
             "ok": True,
-            "intent": _intent_label(message, escalation=escalation, product=False),
+            "intent": _intent_label(ask, escalation=escalation, product=False),
             "answer": answer,
             "grounded": True,
             "sources": faq.get("sources", []),
@@ -1640,22 +1719,22 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     if category or attempt_product_search:
         suggest_args = {key: slots[key] for key in _PRODUCT_SLOT_KEYS if key in slots}
         if "price_max" not in suggest_args:
-            price_max = _price_max_from_text(message)
+            price_max = _price_max_from_text(ask)
             if price_max is not None:
                 suggest_args["price_max"] = price_max
         if "subcategory" not in suggest_args:
-            subcategory = _subcategory_from_text(message)
+            subcategory = _subcategory_from_text(ask)
             if subcategory:
                 suggest_args["subcategory"] = subcategory
         if "effect_desired" not in suggest_args:
-            effect = _effect_from_text(message)
+            effect = _effect_from_text(ask)
             if effect:
                 suggest_args["effect_desired"] = _EFFECT_TO_BUDTENDER.get(effect, effect)
         if "size" not in suggest_args:
-            size = _size_from_text(message)
+            size = _size_from_text(ask)
             if size:
                 suggest_args["size"] = size
-        if "doh_only" not in suggest_args and _DOH_ONLY_RE.search(message):
+        if "doh_only" not in suggest_args and _DOH_ONLY_RE.search(ask):
             suggest_args["doh_only"] = True
         suggest_args["category"] = category
         if isinstance(suggest_args.get("category_blocklist"), (list, tuple)):
@@ -1715,7 +1794,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         answer = f"I can't confirm that right now from the current knowledge base. {_staff_followup_hint(store, phone)}"
     return {
         "ok": True,
-        "intent": _intent_label(message, escalation=escalation, product=False),
+        "intent": _intent_label(ask, escalation=escalation, product=False),
         "answer": answer,
         "grounded": False,
         "sources": [],
