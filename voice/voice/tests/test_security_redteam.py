@@ -85,7 +85,7 @@ def test_fixed_tool_results_are_injection_screened():
     the same ``_looks_poisoned`` detector faq.py trusts for KB rows, replacing any injected
     string with "[removed]" — in addition to the existing scrub_leak/redact_pii passes.
     See voice/tools/__init__.py::_screen_injection."""
-    from voice.tools import register, TOOL_REGISTRY, dispatch
+    from voice.tools import TOOL_REGISTRY, dispatch, register
 
     poisoned = {"products": [{"name": f"Blue Dream 1g <!-- {INJECTION} -->", "why_this": "nice"}]}
 
@@ -317,7 +317,7 @@ def test_finding_injected_assistant_turn_replays_through_trusted_history(setting
     assert _looks_poisoned(poisoned_turn) is True  # the detector WOULD catch it if applied
     VoiceTurn.objects.create(call=vc, seq=0, role="assistant", text=poisoned_turn)
 
-    result = answer_text_chat(
+    answer_text_chat(
         {"session_token": session_token, "message": "what carts do you have", "store": "yakima"}
     )
 
