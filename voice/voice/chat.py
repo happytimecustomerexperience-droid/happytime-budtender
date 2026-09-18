@@ -213,7 +213,7 @@ _FAQ_FIRST_RE = re.compile(
     # The payment row is one of the most-asked FAQs and nobody asks it with the word "payment" —
     # they say "do I need cash or can I use my card". Without these the turn classified as
     # greeting_other and lost its FAQ preference entirely.
-    r"cash|debit|credit|cards?|atm"
+    r"cash|debit|credit|atm"
     r")\b",
     re.I,
 )
@@ -1899,9 +1899,11 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         and (
             _effect_from_text(ask)
             or _brand_from_text(ask)
-            # A bare ceiling with no category is still a real ask ("anything under twenty bucks");
-            # suggest_products can narrow on the ceiling alone.
-            or _price_max_from_text(ask) is not None
+            # A ceiling on an explicitly category-LESS ask ("anything under twenty bucks") is
+            # still a real request; suggest_products can narrow on the ceiling alone. A bare
+            # "keep it under 40 though" is a refinement of something and is left to the carry,
+            # so it never reaches the shelf on its own.
+            or (_price_max_from_text(ask) is not None and _BROAD_OBJECT_RE.search(ask))
         )
         and not _requires_sources(ask)
         and not _faq_first(ask)
