@@ -245,9 +245,16 @@ def menu_map(location_slug: str) -> dict[str, str]:
 
 
 # ── 4. build + store the snapshot ────────────────────────────────────────────
+_SUFFIXES = {"Llc": "LLC", "Inc": "Inc.", "Co": "Co.", "Lp": "LP", "Llp": "LLP"}
+
+
 def _title(s: str | None) -> str | None:
+    """Vendor names arrive ALL CAPS from the backoffice ("JSM LLC"). Title-case them,
+    keeping company suffixes readable ("Jsm Llc" -> "Jsm LLC")."""
     s = (s or "").strip()
-    return s.title() if s and s.isupper() and len(s) > 3 else (s or None)
+    if not (s and s.isupper() and len(s) > 3):
+        return s or None
+    return re.sub(r"\b(Llc|Inc|Co|Lp|Llp)\b\.?", lambda m: _SUFFIXES[m.group(1)], s.title())
 
 
 def build_snapshot(location_slug: str, packages: list[dict], labs: dict[int, dict | None],

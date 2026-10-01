@@ -58,6 +58,14 @@ class SummarizeLabTests(SimpleTestCase):
                          {"thc": None, "cbd": None, "potency_unit": None, "terpenes": [], "coa_url": None})
 
 
+class TitleTests(SimpleTestCase):
+    def test_vendor_suffixes_stay_readable(self):
+        self.assertEqual(new_drops._title("PAINTED ROOSTER, LLC"), "Painted Rooster, LLC")
+        self.assertEqual(new_drops._title("JSM LLC"), "Jsm LLC")
+        self.assertEqual(new_drops._title("CURATIONS CORPORATION"), "Curations Corporation")
+        self.assertEqual(new_drops._title("Already Mixed Case"), "Already Mixed Case")
+
+
 class BuildSnapshotTests(SimpleTestCase):
     def test_grouped_by_brand_newest_first_and_deduped(self):
         packages = [
