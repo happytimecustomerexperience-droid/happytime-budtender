@@ -199,3 +199,46 @@ class RunLockTests(SimpleTestCase):
         cache.add("newdrops:lock", 1, 60)
         self.assertEqual(tasks.refresh_new_drops_all(force=True), {"skipped": "previous_run_still_going"})
         cache.delete("newdrops:lock")
+
+
+class ChatCoaTests(TestCase):
+    """The chat's product cards get a COA: POS link first, else the cached lab result."""
+
+    def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+    def _product(self, **kw):
+        from budtender.models import Product
+        base = dict(sku="S1", location_slug="yakima", name="Blue Dream", price=30,
+                    quantity_on_hand=5, availability=True)
+        return Product.objects.create(**{**base, **kw})
+
+    def test_public_product_coa_prefers_pos_then_lab_cache(self):
+        from budtender.serializers import public_product
+        cache.set("newdrops:lab:77", LAB_FLOWER)
+        self.assertEqual(public_product(self._product(sku="A", batch_id="77"))["coa_url"], "https://certs.conflabs.com/x.pdf")
+        self.assertEqual(public_product(self._product(sku="B", batch_id="77", coa_url="https://pos.example/c.pdf"))["coa_url"],
+                         "https://pos.example/c.pdf")
+        self.assertIsNone(public_product(self._product(sku="C", batch_id="78"))["coa_url"])
+        cache.set("newdrops:lab:79", {"TestDetails": {"CoaUrl": "javascript:alert(1)"}})
+        self.assertIsNone(public_product(self._product(sku="D", batch_id="79"))["coa_url"])
+
+    def test_backfill_only_looks_up_uncached_in_stock_batches_without_a_pos_coa(self):
+        self._product(sku="A", batch_id="1")                                   # needs a lookup
+        self._product(sku="B", batch_id="1")                                   # same batch, once
+        self._product(sku="C", batch_id="2", coa_url="https://pos.example/c.pdf")  # POS has it
+        self._product(sku="D", batch_id="3", availability=False)               # not in stock
+        self._product(sku="E", batch_id="4")
+        cache.set("newdrops:lab:4", {})                                        # already looked up
+        with mock.patch.object(new_drops, "_client"), \
+                mock.patch.object(new_drops, "lab_for_batch") as lab:
+            self.assertEqual(new_drops.backfill_lab("yakima"), 1)
+        self.assertEqual([c.args[1] for c in lab.call_args_list], ["1"])
+
+    def test_public_product_menu_slug_is_matched_on_pos_product_id(self):
+        from budtender.serializers import public_product
+        new_drops._SLUG_MEMO.clear()
+        cache.set("newdrops:menu:yakima", {"555": "blue-dream-3-5g"})
+        self.assertEqual(public_product(self._product(sku="A", product_id="555"))["menu_slug"], "blue-dream-3-5g")
+        self.assertIsNone(public_product(self._product(sku="B", product_id="556"))["menu_slug"])

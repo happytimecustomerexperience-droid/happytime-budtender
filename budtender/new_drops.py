@@ -36,6 +36,7 @@ from django.core.cache import cache
 
 from dutchie.session import PosClient, Store
 
+from .dutchie import https_url
 from .models import Setting
 
 logger = logging.getLogger(__name__)
@@ -350,6 +351,48 @@ def refresh_store(location_slug: str, now: datetime | None = None,
     Setting.objects.update_or_create(key=f"new_drops:{location_slug}", defaults={"value": snap})
     logger.info("new_drops %s: %d packages -> %d brands", location_slug, len(packages), len(snap["brands"]))
     return snap
+
+
+_SLUG_MEMO: dict[str, tuple[float, dict]] = {}
+
+
+def menu_slug(location_slug: str, product_id: str) -> str | None:
+    """Exact Dutchie menu slug for a POS product id (the map menu_map keeps), or
+    None. Read from the cache — never a menu call on the request path. The map is
+    memoized per process for 60 s so a 5-card search reads Redis once."""
+    if not product_id:
+        return None
+    ts, m = _SLUG_MEMO.get(location_slug, (0.0, {}))
+    if time.monotonic() - ts > 60:
+        m = cache.get(f"newdrops:menu:{location_slug}") or {}
+        _SLUG_MEMO[location_slug] = (time.monotonic(), m)
+    return m.get(str(product_id))
+
+
+def cached_coa(batch_id: str) -> str:
+    """COA link from the cached backoffice lab result, or ''. Cache read only —
+    never a Dutchie call, so it is safe on the chat request path."""
+    if not batch_id:
+        return ""
+    data = cache.get(f"newdrops:lab:{batch_id}") or {}
+    return https_url((data.get("TestDetails") or {}).get("CoaUrl"))
+
+
+def backfill_lab(location_slug: str, max_lookups: int = MAX_LAB_LOOKUPS_PER_RUN) -> int:
+    """Warm the lab cache for in-stock batches the POS gave no COA for, fastest
+    sellers first (what the chat suggests most). Shares the paced client, so it
+    stays under Dutchie's per-minute limit; a lab result is cached 30 days, so
+    after the first fill only new batches cost a call. Returns lookups made."""
+    from .models import Product
+
+    batches = (Product.objects.filter(location_slug=location_slug, availability=True, coa_url="")
+               .exclude(batch_id="").order_by("-velocity").values_list("batch_id", flat=True))
+    todo = [b for b in dict.fromkeys(batches) if cache.get(f"newdrops:lab:{b}") is None][:max_lookups]
+    if todo:
+        client = _client(location_slug)
+        for bid in todo:
+            lab_for_batch(client, bid)
+    return len(todo)
 
 
 def get_snapshot(location_slug: str) -> dict | None:

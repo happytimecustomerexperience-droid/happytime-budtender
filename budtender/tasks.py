@@ -132,6 +132,8 @@ def sync_inventory(location_slug: str) -> int:
                 "image_url": r.get("image_url", ""),
                 "unit_weight": r.get("unit_weight"),
                 "potency_mg": r.get("potency_mg"),
+                "batch_id": r.get("batch_id", ""),
+                "coa_url": r.get("coa_url", ""),
             },
         )
     # Mark anything not in the latest pull as out of stock.
@@ -719,6 +721,11 @@ def refresh_new_drops_all(force: bool = False) -> dict:
             except Exception as exc:  # noqa: BLE001 - report, keep the other stores going
                 logger.warning("refresh_new_drops %s failed: %s", slug, exc)
                 out[slug] = f"error: {type(exc).__name__}"
+            # COA links for what the chat suggests (in-stock batches with no POS link).
+            try:
+                out[f"{slug}:lab_lookups"] = new_drops.backfill_lab(slug)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("backfill_lab %s failed: %s", slug, exc)
     finally:
         cache.delete("newdrops:lock")
     return out

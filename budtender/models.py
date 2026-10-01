@@ -45,6 +45,11 @@ class Product(models.Model):
     # mg (edibles/tinctures), pulled from Dutchie's unitWeight / effectivePotencyMg.
     unit_weight = models.FloatField(null=True, blank=True)
     potency_mg = models.FloatField(null=True, blank=True)
+    # Lab: the batch on the sales floor (most floor stock) and its COA when the POS
+    # carries one. Without one, the backoffice lab result cached by new_drops
+    # (keyed on batch_id) supplies it — see serializers.public_product.
+    batch_id = models.CharField(max_length=32, blank=True)
+    coa_url = models.URLField(max_length=500, blank=True)
 
     # ── Merchandising classification (server-only; see subsystem-1 spec) ──
     # `margin` above is the gross profit $ (price − cost). These add the
