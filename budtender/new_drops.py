@@ -196,51 +196,73 @@ def lab_for_batch(client: BackofficeClient, batch_id: int) -> dict | None:
     return data
 
 
-# ── 3. menu slugs (public menu, matched on canonicalID == backoffice product.id) ─
+# ── 3. menu slugs (public menu, matched on POS product id) ───────────────────
+# Verified 2026-10-01 on the full Yakima menu (2,890 products):
+#  - A menu product groups its SIZES; each size is its own POS product, listed in
+#    POSMetaData.children[].canonicalID. Matching only the parent canonicalID found
+#    550/1,168 received products; including children, 1,070.
+#  - Paging is only stable with an explicit sort: unsorted pages repeat some
+#    products and skip others (a Dabstract cart matched in one pull, vanished in the
+#    next; the owner's No Mids Popcorn Bud Grape Z was never returned at all).
+#  - bypassOnlineThresholds:true includes low-stock items that are still on the menu.
 _MENU_Q = """query($id:String!,$p:Int!){ filteredProducts(filter:{dispensaryId:$id, Status:"Active", types:[],
-  bypassOnlineThresholds:false}, page:$p, perPage:100){ products{ cName POSMetaData{ canonicalID } }
-  queryInfo{ totalPages } } }"""
+  bypassOnlineThresholds:true, sortBy:"name", sortDirection:1}, page:$p, perPage:100){
+  products{ cName POSMetaData{ canonicalID children{ canonicalID } } } queryInfo{ totalPages } } }"""
+MENU_FULL_REFRESH = 6 * 3600
+MENU_GAP_REFRESH = 25 * 60  # unmatched new arrivals: re-pull at most this often
 
 
-def _fetch_menu_map(location_slug: str, pause: float = 3.0) -> dict[str, str] | None:
+def _fetch_menu_map(location_slug: str, pause: float = 3.0, retries: int = 4) -> tuple[dict[str, str], bool]:
+    """(map of every POS product id -> cName, complete?). A page Cloudflare
+    challenges is retried after a pause; if it still fails the partial map is
+    returned — every entry in it is keyed on a POS id, so partial is never wrong."""
     from curl_cffi import requests as cffi
 
     headers = {"content-type": "application/json", "accept": "application/json",
                "origin": "https://dutchie.com", "referer": "https://dutchie.com/"}
     out: dict[str, str] = {}
-    page, pages = 0, 1
+    page, pages, fails = 0, 1, 0
     while page < pages:
         try:
             resp = cffi.post("https://dutchie.com/graphql", impersonate="chrome", timeout=60, headers=headers,
                              json={"query": _MENU_Q, "variables": {"id": MENU_DISPENSARY_IDS[location_slug], "p": page}})
             fp = resp.json()["data"]["filteredProducts"]
-        except Exception as exc:  # Cloudflare challenge / non-JSON: keep what we have
-            logger.info("new_drops menu map %s page %s failed: %s", location_slug, page, exc)
-            return None
+        except Exception as exc:  # Cloudflare challenge / non-JSON
+            fails += 1
+            logger.info("new_drops menu map %s page %s failed (%s/%s): %s", location_slug, page, fails, retries, exc)
+            if fails > retries:
+                return out, False
+            time.sleep(20)
+            continue
         for p in fp.get("products") or []:
-            cid = (p.get("POSMetaData") or {}).get("canonicalID")
-            if cid and p.get("cName"):
-                out[str(cid)] = p["cName"]
+            cname = p.get("cName")
+            pm = p.get("POSMetaData") or {}
+            if not cname:
+                continue
+            for cid in [pm.get("canonicalID")] + [c.get("canonicalID") for c in pm.get("children") or []]:
+                if cid:
+                    out[str(cid)] = cname
         pages = int((fp.get("queryInfo") or {}).get("totalPages") or 1)
         page += 1
         time.sleep(pause)
-    return out
+    return out, True
 
 
-def menu_map(location_slug: str) -> dict[str, str]:
-    """{backoffice product.id -> Dutchie cName}. Refreshed at most every 6 h; a
-    failed refresh returns the last good map (never an empty one in its place)."""
-    key, fresh_key = f"newdrops:menu:{location_slug}", f"newdrops:menu-fresh:{location_slug}"
+def menu_map(location_slug: str, needed: set[str] | None = None, now: float | None = None) -> dict[str, str]:
+    """{POS product id -> Dutchie cName}. Full re-pull every 6 h, or sooner (at most
+    every 25 min) while received products still have no slug. A failed or partial
+    pull only ever ADDS id-keyed entries; it never empties the map."""
+    key, ts_key = f"newdrops:menu:{location_slug}", f"newdrops:menu-ts:{location_slug}"
     current = cache.get(key) or {}
-    if cache.get(fresh_key):
+    now = now if now is not None else time.time()
+    age = now - (cache.get(ts_key) or 0)
+    missing = bool(needed and (needed - current.keys()))
+    if age < MENU_FULL_REFRESH and not (missing and age >= MENU_GAP_REFRESH):
         return current
-    fetched = _fetch_menu_map(location_slug)
-    if fetched:
-        current = {**current, **fetched}
-        cache.set(key, current, None)
-        cache.set(fresh_key, True, 6 * 3600)
-    else:
-        cache.set(fresh_key, True, 30 * 60)  # back off, retry next run
+    fetched, _complete = _fetch_menu_map(location_slug)
+    current = {**current, **fetched}
+    cache.set(key, current, None)
+    cache.set(ts_key, now, None)  # also stamps failures, so a blocked menu is not hammered
     return current
 
 
@@ -323,7 +345,8 @@ def refresh_store(location_slug: str, now: datetime | None = None,
         elif lookups < max_lookups:
             labs[bid] = lab_for_batch(client, bid)
             lookups += 1
-    snap = build_snapshot(location_slug, packages, labs, menu_map(location_slug), now)
+    needed = {str((p.get("product") or {}).get("id")) for p in packages if (p.get("product") or {}).get("id")}
+    snap = build_snapshot(location_slug, packages, labs, menu_map(location_slug, needed), now)
     Setting.objects.update_or_create(key=f"new_drops:{location_slug}", defaults={"value": snap})
     logger.info("new_drops %s: %d packages -> %d brands", location_slug, len(packages), len(snap["brands"]))
     return snap

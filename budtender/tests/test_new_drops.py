@@ -102,14 +102,33 @@ class MenuMapTests(SimpleTestCase):
 
     def test_failed_refresh_keeps_last_good_map(self):
         cache.set("newdrops:menu:yakima", {"1": "kept-slug"}, None)
-        with mock.patch.object(new_drops, "_fetch_menu_map", return_value=None):
-            self.assertEqual(new_drops.menu_map("yakima"), {"1": "kept-slug"})
+        with mock.patch.object(new_drops, "_fetch_menu_map", return_value=({}, False)):
+            self.assertEqual(new_drops.menu_map("yakima", now=1e9), {"1": "kept-slug"})
 
-    def test_refresh_merges_and_respects_freshness_window(self):
-        with mock.patch.object(new_drops, "_fetch_menu_map", return_value={"2": "new-slug"}) as f:
-            self.assertEqual(new_drops.menu_map("yakima"), {"2": "new-slug"})
-            new_drops.menu_map("yakima")
-            self.assertEqual(f.call_count, 1)  # second call served from the 6 h window
+    def test_refresh_merges_and_respects_full_window(self):
+        with mock.patch.object(new_drops, "_fetch_menu_map", return_value=({"2": "new-slug"}, True)) as f:
+            self.assertEqual(new_drops.menu_map("yakima", {"2"}, now=1e9), {"2": "new-slug"})
+            new_drops.menu_map("yakima", {"2"}, now=1e9 + 3 * 3600)  # nothing missing, < 6 h
+            self.assertEqual(f.call_count, 1)
+
+    def test_unmatched_arrivals_trigger_gap_refresh_but_not_too_often(self):
+        with mock.patch.object(new_drops, "_fetch_menu_map", return_value=({"2": "s"}, True)) as f:
+            new_drops.menu_map("yakima", {"2"}, now=1e9)
+            new_drops.menu_map("yakima", {"2", "9"}, now=1e9 + 10 * 60)   # missing, but < 25 min
+            self.assertEqual(f.call_count, 1)
+            new_drops.menu_map("yakima", {"2", "9"}, now=1e9 + 26 * 60)   # missing and >= 25 min
+            self.assertEqual(f.call_count, 2)
+
+    def test_size_options_are_indexed_by_their_own_pos_id(self):
+        page = {"data": {"filteredProducts": {"queryInfo": {"totalPages": 1}, "products": [
+            {"cName": "no-mids-doh-approved-popcorn-bud-grape-z",
+             "POSMetaData": {"canonicalID": "3585552", "children": [{"canonicalID": "3585552"}, {"canonicalID": "3585553"}]}}]}}}
+        resp = mock.Mock(json=mock.Mock(return_value=page))
+        with mock.patch("curl_cffi.requests.post", return_value=resp), mock.patch.object(new_drops.time, "sleep"):
+            out, complete = new_drops._fetch_menu_map("yakima")
+        self.assertTrue(complete)
+        self.assertEqual(out, {"3585552": "no-mids-doh-approved-popcorn-bud-grape-z",
+                               "3585553": "no-mids-doh-approved-popcorn-bud-grape-z"})
 
 
 class NewDropsViewTests(TestCase):
