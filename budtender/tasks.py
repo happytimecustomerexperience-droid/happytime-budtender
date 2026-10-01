@@ -697,3 +697,28 @@ def _fold_history(phone: str, lines: list[dict], name: str | None = None) -> Non
 def _normalize_counter(counter: Counter) -> dict:
     total = sum(counter.values()) or 1
     return {k: round(v / total, 4) for k, v in counter.items()}
+
+
+@shared_task
+def refresh_new_drops_all(force: bool = False) -> dict:
+    """New Drops snapshot (website /new-drops) for every store. Every 30 min while a
+    store is open; one store failing never blocks the others, and a failed store
+    keeps serving its last good snapshot."""
+    if not force and not any_store_open_or_warming():
+        return {"skipped": "stores_closed"}
+    from . import new_drops
+
+    # One run at a time: a paced cold-start fill must not overlap the next tick.
+    if not cache.add("newdrops:lock", 1, 50 * 60):
+        return {"skipped": "previous_run_still_going"}
+    out: dict = {}
+    try:
+        for slug in STORE_SLUGS:
+            try:
+                out[slug] = len(new_drops.refresh_store(slug)["brands"])
+            except Exception as exc:  # noqa: BLE001 - report, keep the other stores going
+                logger.warning("refresh_new_drops %s failed: %s", slug, exc)
+                out[slug] = f"error: {type(exc).__name__}"
+    finally:
+        cache.delete("newdrops:lock")
+    return out
