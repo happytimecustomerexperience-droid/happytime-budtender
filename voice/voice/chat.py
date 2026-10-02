@@ -45,11 +45,12 @@ OUT OF SCOPE — Vapi/the phone agent: it never calls ``answer_text_chat``. Vapi
 
 from __future__ import annotations
 
+import datetime
 import re
 import time
 
-from voice import recognition, vendor_flow
-from voice.safety_copy import CANNOT_ANSWER_SAFELY, DISPUTE, POISON_EMERGENCY, UNDER_21
+from voice import guardrails, recognition, vendor_flow
+from voice.safety_copy import CANNOT_ANSWER_SAFELY, CRISIS, DISPUTE, POISON_EMERGENCY, UNDER_21
 from voice.tools import dispatch
 
 _HUMAN_RE = re.compile(
@@ -695,6 +696,32 @@ _INGESTION_STANDALONE_RE = re.compile(
     re.I,
 )
 _ER_RE = re.compile(r"\bER\b")  # case-sensitive: a bare lowercase "er" is a filler word, not a signal
+# The CALLER as the one in trouble. Every shape above needs a third party (pet/child/friend), so
+# "I ate a whole 100 mg gummy an hour ago and my heart is racing" was a shopping turn and a caller
+# in distress was pitched an edible. Distress after their own use, or their own over-use of a
+# product, is a possible-overdose report and gets POISON_EMERGENCY. Fail-safe by design: an
+# enthusiastic "I had the gummies and I'm freaking out how good they are" gets it too.
+_DISTRESS_RE = re.compile(
+    r"\bheart\s+(?:is\s+|keeps\s+)?(?:racing|pounding)\b|\bfreaking\s+out\b|\bpanic(?:king|\s+attack)\b|"
+    r"\bcan'?t\s+breathe\b|\bchest\s+pains?\b|\bhallucinat\w*|\bpassing\s+out\b|"
+    r"\bfeel(?:s|ing)?\s+like\s+i'?m\s+(?:dying|gonna\s+die|going\s+to\s+die)\b|"
+    r"\b(?:throwing|threw)\s+up\b|\bvomit\w*",
+    re.I,
+)
+_FIRST_PERSON_USE_RE = re.compile(
+    r"\bi(?:'ve|\s+have|\s+just)?\s+(?:ate|eaten|took|taken|smoked|had|did|vaped|dabbed|hit|drank|tried)\b",
+    re.I,
+)
+_TOO_MUCH_RE = re.compile(r"\btoo\s+(?:much|many|high)\b", re.I)
+
+
+def _is_first_person_overdose(text: str) -> bool:
+    distress = bool(_DISTRESS_RE.search(text))
+    own_use = bool(_FIRST_PERSON_USE_RE.search(text))
+    too_much = bool(_TOO_MUCH_RE.search(text))
+    return (distress and (own_use or too_much)) or (
+        own_use and too_much and bool(_CANNABIS_CONTEXT_RE.search(text))
+    )
 # "how long"/"safe" paired with "drive" would also catch "how long until I can drive after this" —
 # that turn is a separate, out-of-scope retrieval-relevance bug (it answers with the wrong FAQ row,
 # not a product pitch), so this only fires on the safe/ok phrasing that actually gets hijacked by
@@ -735,7 +762,7 @@ def _is_ingestion_emergency(message: str, *, product_context: bool = False) -> b
     clause that ALSO carries cannabis/product context (see ``_CANNABIS_CONTEXT_RE``), so an
     unrelated aside about a pet and a rubbish bin can no longer hijack a shopping turn."""
     text = message or ""
-    if _INGESTION_STANDALONE_RE.search(text) or _ER_RE.search(text):
+    if _INGESTION_STANDALONE_RE.search(text) or _ER_RE.search(text) or _is_first_person_overdose(text):
         return True
     for clause in re.split(r"[.?!;\n]|,", text):
         reported = (_INGESTION_SUBJECT_RE.search(clause) and _INGESTION_VERB_RE.search(clause)) or (
@@ -947,6 +974,25 @@ _PROXY_PURCHASE_RE = re.compile(
 # get an ambiguous answer. Ages are bounded to 10-20 so that 21+ ("I'm 21", "my brother is 25")
 # stays an ordinary customer, and so a bare quantity ("I want 20 pre-rolls", "20mg edibles") is
 # not mistaken for an age — the age must be attached to a person.
+# 2026-10-01: the age is also SPELLED ("I'm nineteen"), and it is stated the other ways people state
+# it — "just turned 20", "turning 21 next month", "I'll be 21 in March", "born in 2007" — none of
+# which matched, so an under-21 admission shopped. ``_AGE`` stops at twenty (never twenty-one ..
+# twenty-nine), and ``_NOT_A_QUANTITY`` keeps "I'm 20 minutes away" / "I'm fifteen minutes out"
+# from reading as an age (it used to: "I'm 10 minutes out" was refused as a minor).
+_AGE = (
+    r"(?:1\d|20|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+    r"twenty(?![\s-]*(?:one|two|three|four|five|six|seven|eight|nine)\b))"
+)
+_NOT_A_QUANTITY = (
+    r"(?!\s*-?\s*(?:minutes?|mins?|hours?|hrs?|seconds?|secs?|miles?|blocks?|bucks|dollars|"
+    r"percent|mg|grams?|g\b|away|out\b))"
+)
+_ADVERB = r"(?:(?:only|just|barely|merely|still|like|actually|honestly|already)\s+)?"
+_WILL_BE_21 = (
+    r"\bturning\s+(?:21|twenty[-\s]?one)\b|"
+    r"\b(?:i'?ll|i\s+will|i'?m\s+gonna|i'?m\s+going\s+to)\s+be\s+(?:21|twenty[-\s]?one)\b|"
+    r"\b(?:won'?t|will\s+not)\s+be\s+(?:21|twenty[-\s]?one)\s+until\b"
+)
 _UNDERAGE_RE = re.compile(
     # "who's"/"who is" matters: "my friend who's 19 said he could carry it for me" is the exact
     # shape a diversion attempt takes, and it has no "my X is" or "I'm" to anchor on.
@@ -954,28 +1000,52 @@ _UNDERAGE_RE = re.compile(
     # between the pronoun and the age and broke the match entirely, so the single most common
     # phrasing of an under-21 admission was not detected at all.
     r"\b(?:i'?m|i\s+am|he'?s|she'?s|they'?re|who'?s|who\s+is|my\s+\w+\s+is)\s+"
-    r"(?:(?:only|just|barely|merely|still|like|actually|honestly|already)\s+)?(?:1\d|20)\b|"
-    r"\b(?:1\d|20)\s*(?:-|\s)?\s*(?:year|yr)s?\s*-?\s*old\b|"
+    + _ADVERB + _AGE + r"\b" + _NOT_A_QUANTITY + r"|"
+    r"\b" + _AGE + r"\s*(?:-|\s)?\s*(?:year|yr)s?\s*-?\s*old\b|"
+    r"\b(?:just\s+)?turned\s+" + _AGE + r"\b" + _NOT_A_QUANTITY + r"|"
+    + _WILL_BE_21 + r"|"
     r"\bunder\s*(?:21|twenty[-\s]?one)\b|"
     r"\bunderage\b|"
     r"\bnot\s+21\s+yet\b",
     re.I,
 )
+# "born in 2007": the age by arithmetic, against today. Only a CERTAIN under-21 counts (born no
+# earlier than this year minus 20); the boundary year could be 20 or 21 and is left to the ID check.
+_BORN_YEAR_RE = re.compile(
+    r"(?P<self>\bi\s+was\s+|^\s*)?\bborn\b[^.?!\d]{0,30}\b(?P<year>(?:19|20)\d{2})\b", re.I
+)
+
+
+def _born_under_21(text: str, *, self_only: bool = False) -> bool:
+    year_now = datetime.date.today().year
+    for match in _BORN_YEAR_RE.finditer(text or ""):
+        if self_only and match.group("self") is None:
+            continue
+        if 0 <= year_now - int(match.group("year")) <= 20:
+            return True
+    return False
+
+
+def _states_underage(text: str) -> bool:
+    return bool(_UNDERAGE_RE.search(text or "")) or _born_under_21(text)
 
 
 def _is_proxy_purchase_question(message: str) -> bool:
     """Proxy pickup OR an explicit under-21 claim. The agent asserts no legal conclusion and
     quotes no statute — it hands the call to a person, which is the only safe answer here."""
     text = message or ""
-    return bool(_PROXY_PURCHASE_RE.search(text) or _UNDERAGE_RE.search(text))
+    return bool(_PROXY_PURCHASE_RE.search(text)) or _states_underage(text)
 
 
 # Only a FIRST-PERSON admission sticks to the session. "my friend who's 19 could carry it for me"
 # is a per-message proxy/diversion trigger (handled above) but says nothing about the caller's own
 # age — sticking it would refuse to serve an adult for the rest of the call.
 _SELF_UNDERAGE_RE = re.compile(
-    r"\b(?:i'?m|i\s+am)\s+(?:(?:only|just|barely|merely|still|like|actually|honestly|already)\s+)?"
-    r"(?:1\d|20)\b(?:\s*(?:-|\s)?\s*(?:year|yr)s?\s*-?\s*old\b)?|"
+    r"\b(?:i'?m|i\s+am)\s+" + _ADVERB + _AGE + r"\b" + _NOT_A_QUANTITY + r"|"
+    r"\bi\s+(?:just\s+)?turned\s+" + _AGE + r"\b" + _NOT_A_QUANTITY + r"|"
+    r"\bi'?m\s+turning\s+(?:21|twenty[-\s]?one)\b|"
+    r"\b(?:i'?ll|i\s+will|i'?m\s+gonna|i'?m\s+going\s+to)\s+be\s+(?:21|twenty[-\s]?one)\b|"
+    r"\bi\s+(?:won'?t|will\s+not)\s+be\s+(?:21|twenty[-\s]?one)\s+until\b|"
     r"\bi'?m\s+(?:under\s*(?:21|twenty[-\s]?one)|underage|not\s+21\s+yet)\b",
     re.I,
 )
@@ -993,7 +1063,8 @@ def _session_declared_underage(history) -> bool:
     for msg in history:
         if not isinstance(msg, dict) or msg.get("role") != "user":
             continue
-        if _SELF_UNDERAGE_RE.search(str(msg.get("content") or "")):
+        content = str(msg.get("content") or "")
+        if _SELF_UNDERAGE_RE.search(content) or _born_under_21(content, self_only=True):
             return True
     return False
 
@@ -1841,6 +1912,25 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     session_token = str(data.get("session_token") or data.get("session_id") or "")[:128]
     phone = _phone_hint(data)
 
+    # A self-harm / suicide statement wins over EVERY other route — before category routing, before
+    # any tool runs (``guardrails.in_scope`` is the one detector; it had no caller). No product,
+    # FAQ or staff tool is dispatched: the crisis line is the whole answer.
+    if guardrails.in_scope(message)[1] == "crisis":
+        return {
+            "ok": True,
+            "intent": "conflict_resolution",
+            "answer": CRISIS,
+            "grounded": False,
+            "sources": [],
+            "tool_results": [],
+            "escalation_required": True,
+            "escalation_flag": True,
+            "safe_next_action": "escalate",
+            "safe_suggested_next_action": "",
+            "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+            "store": store,
+        }
+
     ctx = {"store": store, "session_token": session_token, "channel": "text", "known": False}
     # Text chat has no Vapi call.id — reuse session_token consistently (the same key
     # ``_persist_trusted_turn``/``_load_trusted_history`` already use) so ``suggest.py``'s
@@ -1878,7 +1968,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     # request, a hold). A general question — "is it safe to use while pregnant", "what are your
     # hours" — keeps its ordinary grounded answer, which is exactly what ``UNDER_21`` promises
     # ("I'm still happy to answer general questions about the store").
-    under_21 = bool(_UNDERAGE_RE.search(message)) or (
+    under_21 = _states_underage(message) or (
         _session_declared_underage(history)
         and bool(message_category or _PROXY_PURCHASE_RE.search(message) or _STAGE_RE.search(message))
     )
@@ -2112,8 +2202,12 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     # cited row through under an "I'm sorry that happened" prefix. When the KB grows a real
     # public-consumption row, the honest move is to scope retrieval to it (a topic), not to let
     # the global-best row speak here.
+    # ...and a possible overdose is never answered with a row: "an hour ago" scopes retrieval to the
+    # hours row, which would then be read out under the apology.
     if speak_faq and (
-        _is_public_consumption_question(message) or _is_impaired_driving_question(message)
+        is_poison_emergency
+        or _is_public_consumption_question(message)
+        or _is_impaired_driving_question(message)
     ):
         speak_faq = False
 

@@ -186,7 +186,34 @@ _OUT_OF_SCOPE = re.compile(
 )
 # A crisis utterance is NOT a flat decline — it routes to a human with a 911/988 line
 # (23-SPEC §3.2 carve-out). Returned as ``reason="crisis"`` for the webhook to map to escalation.
-_CRISIS = re.compile(r"\b(suicid\w+|self-?harm|kill myself|medical emergency)\b", re.IGNORECASE)
+# 2026-10-01: widened to the ways people actually say it ("I want to die", "end my life", "no
+# reason to live") and to a lethality question ("how many would it take to kill me", "will a
+# whole bag of gummies kill me"). A bare "these gummies are gonna kill me" is an idiom and is
+# NOT a crisis on its own — "kill me" counts only beside a despair cue (``_DESPAIR``) or in a
+# lethality question. Fail-safe by design: a nervous "would one gummy kill me" also gets the
+# crisis line, which is conditional ("If you're thinking about hurting yourself...").
+_CRISIS = re.compile(
+    r"\b(suicid\w*|self[\s-]?harm\w*|kill(?:ing)?\s+myself|end(?:ing)?\s+(?:my\s+(?:own\s+)?life|it\s+all)|"
+    r"take\s+my\s+(?:own\s+)?life|(?:want|wanna|wanting)\s+(?:to\s+)?die|"
+    r"don'?t\s+want\s+to\s+(?:live|be\s+alive|be\s+here|wake\s+up)|better\s+off\s+dead|"
+    r"(?:hurt|harm)\s+myself|nothing\s+(?:left\s+)?to\s+live\s+for|"
+    r"no\s+(?:reason|point)\s+(?:to|in)\s+(?:live|living|going\s+on)|"
+    r"how\s+(?:many|much)\b[^.?!]{0,60}\b(?:to\s+die|kill\s+me|lethal|(?:to\s+)?overdose)|"
+    r"(?:will|would|could|can|enough\s+to)\b[^.?!]{0,60}\bkill\s+me|"
+    r"medical emergency)\b",
+    re.IGNORECASE,
+)
+_KILL_ME = re.compile(r"\bkill(?:s|ing)?\s+me\b", re.IGNORECASE)
+_DESPAIR = re.compile(
+    r"\b(?:done\s+with\s+(?:everything|it\s+all|life)|can'?t\s+(?:go\s+on|do\s+this\s+anymore|"
+    r"take\s+(?:it|this)\s+anymore)|give\s+up\s+on\s+(?:life|everything)|hopeless)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_crisis(text: str) -> bool:
+    text = text or ""
+    return bool(_CRISIS.search(text) or (_KILL_ME.search(text) and _DESPAIR.search(text)))
 
 
 def age_gate_required(ctx) -> bool:
@@ -200,7 +227,7 @@ def age_gate_required(ctx) -> bool:
 def in_scope(text: str) -> tuple[bool, str]:
     """Return ``(ok, reason)``. ``ok=False`` with ``reason="crisis"`` means route to a human;
     any other ``reason`` is an off-domain decline. Keyword-deterministic + version-controlled."""
-    if _CRISIS.search(text or ""):
+    if _is_crisis(text):
         return False, "crisis"
     m = _OUT_OF_SCOPE.search(text or "")
     if m:

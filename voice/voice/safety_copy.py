@@ -46,3 +46,12 @@ TOOL_DISABLED = "I can't help with that one here right now — a team member at 
 CHAT_OFFLINE = (
     "Our website chat is offline right now — please call the store and a budtender will help."
 )
+
+# NEW COPY — owner sign-off. voice/chat.py — the caller talks about suicide or self-harm
+# (voice/guardrails.py::in_scope reason "crisis"). Wins over every other route; no product tool runs.
+CRISIS = (
+    "I'm really sorry you're going through this, and I'm glad you said something. If you're "
+    "thinking about hurting yourself, please call or text 988 right now to reach the Suicide & "
+    "Crisis Lifeline — it's free, confidential, and open 24/7. If you're in immediate danger, "
+    "call 911."
+)
