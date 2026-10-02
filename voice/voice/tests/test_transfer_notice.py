@@ -145,7 +145,10 @@ def test_the_dashboard_offers_the_pushover_keys_and_says_plainly_it_is_not_sms(
     from django.urls import reverse
     from django.utils.html import escape
 
-    client.force_login(django_user_model.objects.create_user("o", password="x", is_staff=True))
+    # the credentials page is superuser-only (a staff account alone gets 403)
+    client.force_login(
+        django_user_model.objects.create_user("o", password="x", is_staff=True, is_superuser=True)
+    )
     creds = client.get(reverse("dash-credentials")).content.decode()
     for name in ("PUSHOVER_APP_TOKEN", "PUSHOVER_USER_YAKIMA", "PUSHOVER_USER_MTVERNON",
                  "PUSHOVER_USER_PULLMAN", "HHT_TRANSFER_NOTICE_DAILY_CAP", "HHT_TRANSFER_NUMBER_PULLMAN"):

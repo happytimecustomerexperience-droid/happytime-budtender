@@ -6,16 +6,17 @@ class DashboardConfig(AppConfig):
     name = "dashboard"
 
     def ready(self):
-        # Re-assert dashboard-edited credentials over the .env defaults (P6). Applied ONCE on the
-        # first request rather than in ready() itself — querying the DB during app init is
-        # discouraged (and the DB may be unmigrated at boot). CLI/management commands read env/.env
+        # Keep dashboard-edited credentials (P6) in step with the shared version token: at the start
+        # of EVERY request, re-apply the stored rows when the token changed since this web worker
+        # last applied (a cheap cache.get otherwise). Not done in ready() itself — querying the DB
+        # during app init is discouraged (and the DB may be unmigrated at boot). The Celery worker
+        # does the same at task_prerun (core/celery.py). CLI/management commands read env/.env
         # directly, which is the documented bootstrap source.
         from django.core.signals import request_started
 
-        def _apply_once(sender, **kwargs):
-            request_started.disconnect(_apply_once)
+        def _refresh(sender, **kwargs):
             from . import credentials
 
-            credentials.apply_all()
+            credentials.refresh_if_stale()
 
-        request_started.connect(_apply_once, weak=False)
+        request_started.connect(_refresh, weak=False, dispatch_uid="dashboard-credentials-refresh")

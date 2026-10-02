@@ -22,9 +22,11 @@ Boundaries (binding, §1.3):
 from __future__ import annotations
 
 import json
+from functools import wraps
 from urllib.parse import urlencode
 
 from django.contrib.admin.views.decorators import staff_member_required
+from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -1047,27 +1049,57 @@ def _baskets_index() -> dict | None:
 
 
 # ── Credentials editor (P6) ───────────────────────────────────────────────────
-@staff_member_required
+def superuser_required(view):
+    """Staff login first (anonymous → admin login), then superuser: a staff account that is not a
+    superuser gets 403. The credentials page is the one place a saved value can redirect the
+    service's outbound calls — and the Bearer token they carry — so it is the owner's alone."""
+
+    @wraps(view)
+    def wrapper(request, *args, **kwargs):
+        if not request.user.is_superuser:
+            raise PermissionDenied
+        return view(request, *args, **kwargs)
+
+    return staff_member_required(wrapper)
+
+
+@superuser_required
 def credentials_page(request):
-    """The credentials/config editor — every secret + integration config in one place, masked."""
+    """The credentials/config editor — every secret + integration config in one place. Secrets are
+    write-only: set / not set, never a character of the value."""
     from . import credentials as cred
 
     return render(request, "dashboard/credentials.html", {"groups": cred.catalog_with_values()})
 
 
-@staff_member_required
+def _credential_row(request, name: str, **ctx):
+    from . import credentials as cred
+
+    item = cred.catalog_item(cred._CATALOG_BY_NAME[name], cred.stored_names())
+    return render(request, "dashboard/_credential_row.html", {"c": item, **ctx})
+
+
+@superuser_required
 @require_POST
 def credentials_save(request):
-    """Inline-save one credential. Applies it live (os.environ + settings) and re-renders the row."""
+    """Inline-save one credential. Applies it live (os.environ + settings), tells the other
+    processes, and re-renders the row. A URL its allow-rule rejects is not saved at all."""
     from . import credentials as cred
 
     name = (request.POST.get("name") or "").strip()
     if not cred.is_known(name):
         return HttpResponseBadRequest("unknown credential")
+    entry = cred._CATALOG_BY_NAME[name]
     # Strip — a trailing newline/space silently breaks a token or URL. Whitespace-only → "" → keep.
     value = (request.POST.get("value", "") or "").strip()
     # Blank submit = "keep existing" (the placeholder says so) — never silently wipe a set secret.
-    # To CLEAR a credential, delete the row in Django admin (ponytail: clearing is rare).
+    # To remove a stored value, use the Clear button (credentials_clear).
+    error = cred.validate(name, value) if value else None
+    if error:
+        # 200, not 4xx: htmx does not swap an error status into the row, and the message must show.
+        resp = _credential_row(request, name, error=error)
+        resp["HX-Trigger"] = _toast("error", f"{entry['label']}: {error}")
+        return resp
     saved = False
     publish_note = None  # set only when this save changed a transfer number
     if value != "":
@@ -1077,16 +1109,41 @@ def credentials_save(request):
         if changed and name.startswith("HHT_TRANSFER_NUMBER_"):
             publish_note = _republish_transfer_members()
 
-    entry = cred._CATALOG_BY_NAME[name]
-    val = cred.current_value(name)
-    item = {**entry, "is_set": bool(val), "preview": cred.mask(val) if entry["secret"] else val}
-    resp = render(request, "dashboard/_credential_row.html", {"c": item, "saved": saved})
+    resp = _credential_row(request, name, saved=saved)
     if saved:
         if publish_note is None:
             resp["HX-Trigger"] = _toast("success", f"{entry['label']} saved — live now ✓")
         else:  # the number is inside the Vapi assistants: say what the publish actually did
             level = "error" if "failed" in publish_note else "success"
             resp["HX-Trigger"] = _toast(level, f"{entry['label']}: {_publish_note(publish_note)}")
+    return resp
+
+
+@superuser_required
+@require_POST
+def credentials_clear(request):
+    """Delete a stored credential: the value falls back to the server's env/.env default, in every
+    process (same version-token path as a save), and the row is re-rendered."""
+    from . import credentials as cred
+
+    name = (request.POST.get("name") or "").strip()
+    if not cred.is_known(name):
+        return HttpResponseBadRequest("unknown credential")
+    label = cred._CATALOG_BY_NAME[name]["label"]
+    before = cred.current_value(name)
+    cleared = cred.clear_credential(name)
+    resp = _credential_row(request, name)
+    if not cleared:
+        resp["HX-Trigger"] = _toast("success", f"{label} had no saved value — nothing to clear.")
+    elif name.startswith("HHT_TRANSFER_NUMBER_") and cred.current_value(name) != before:
+        # the number is inside the Vapi assistants: say what the publish actually did
+        note = _republish_transfer_members()
+        level = "error" if "failed" in note else "success"
+        resp["HX-Trigger"] = _toast(
+            level, f"{label} cleared — {note or 'not published (auto-publish off) — press Publish to update the phone'}"
+        )
+    else:
+        resp["HX-Trigger"] = _toast("success", f"{label} cleared — using the server default ✓")
     return resp
 
 

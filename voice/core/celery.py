@@ -19,6 +19,7 @@ import os
 
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import task_prerun
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
@@ -44,6 +45,16 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute="*/30"),
     },
 }
+
+
+@task_prerun.connect
+def _refresh_dashboard_credentials(*args, **kwargs):
+    """The worker is a separate process from the web workers: a credential saved on the dashboard
+    (the staff alert email, the n8n/Slack URLs) reaches it only through this. A cheap cache.get
+    unless the shared version token changed since this worker last applied the stored rows."""
+    from dashboard import credentials
+
+    credentials.refresh_if_stale()
 
 
 @app.task(bind=True, ignore_result=True)

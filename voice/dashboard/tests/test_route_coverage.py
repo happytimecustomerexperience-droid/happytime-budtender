@@ -95,7 +95,6 @@ def one_faq_row(db):
         "dash-flow",
         "dash-kb",
         "dash-weights",
-        "dash-credentials",
         "dash-customers",
         "dash-calls",
         "dash-call-log",
