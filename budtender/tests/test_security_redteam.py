@@ -39,9 +39,12 @@ def test_fixed_injection_detected_across_padding():
     assert _safe_grounding_value(padded, limit=1200) == ""
 
 
-def test_fixed_history_sent_to_the_brain_is_injection_screened(monkeypatch):
-    """The only place stored turns still leave this service is the history posted to the
-    voice brain: an injected turn is blanked there, not repeated verbatim."""
+def test_fixed_no_stored_turn_is_sent_to_the_brain(monkeypatch):
+    """Stored turns used to leave this service as the ``history`` posted to the voice brain (an
+    injected turn was blanked there). The brain never read that field (it keeps its own history),
+    and an unbounded one tripped its 16 KB body cap, so it is no longer sent at all: only the
+    latest customer message goes up. Renamed from ..._history_..._is_injection_screened
+    (2026-10-01) — the guarantee is now stronger, not weaker."""
     import budtender.gemini_chat as gc
 
     sent = {}
@@ -56,7 +59,7 @@ def test_fixed_history_sent_to_the_brain_is_injection_screened(monkeypatch):
     monkeypatch.setattr(gc.requests, "post", fake_post)
     gc._voice_chat([_Msg("user", "hi"), _Msg("assistant", INJECTION), _Msg("user", "ok")], store="yakima")
     assert INJECTION not in json.dumps(sent)
-    assert [m["content"] for m in sent["history"]] == ["hi", "", "ok"]
+    assert sent == {"message": "ok", "store": "yakima"}
 
 
 def test_control_grounding_blanks_a_direct_injection():

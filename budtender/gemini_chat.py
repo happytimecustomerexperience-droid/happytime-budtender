@@ -69,17 +69,12 @@ def _voice_chat(messages, *, store: str = "") -> dict | None:
     latest = _latest_customer_message(messages)
     if not base or not token or not latest:
         return None
-    history = [
-        {
-            "role": "assistant" if getattr(m, "role", "") == "assistant" else "user",
-            "content": _safe_grounding_value(getattr(m, "content", ""), limit=1200),
-        }
-        for m in messages
-    ]
+    # No ``history``: the brain never reads a client-supplied one (voice/chat.py keeps its own,
+    # keyed by session), and an unbounded one trips its 16 KB body cap on a long session.
     try:
         resp = requests.post(
             f"{base}/api/voice/chat",
-            json={"message": latest, "history": history, "store": store},
+            json={"message": latest, "store": store},
             headers={**_VOICE_HEADERS, "Authorization": f"Bearer {token}"},
             timeout=(2.0, float(os.environ.get("HHT_VOICE_TIMEOUT", "5") or 5)),
         )
