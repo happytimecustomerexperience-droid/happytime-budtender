@@ -121,6 +121,20 @@ def _phone_last4(raw: str) -> str:
     return digits[-4:] if len(digits) >= 4 else ""
 
 
+# bundles/cart.py stamps EVERY web cart with this session_token, so as a lookup key it names
+# all of them, not one: "newest by token" would hand the caller a stranger's cart. Online carts
+# are reached by their own draft_token only.
+_ONLINE_SESSION_TOKEN = "online"
+
+
+def _shared_online_token(data: dict) -> bool:
+    return str(data.get("session_token") or "").strip().lower() == _ONLINE_SESSION_TOKEN
+
+
+def _online_token_refused() -> Response:
+    return Response({"ok": False, "error": "online_cart_not_addressable_by_session_token"}, status=400)
+
+
 def _draft_lookup(data: dict):
     token = str(data.get("draft_token") or "").strip()[:64]
     call_id = str(data.get("call_id") or "").strip()[:80]
@@ -1072,6 +1086,8 @@ class PhoneCartUpsertView(APIView):
 
     def post(self, request):
         data = request.data or {}
+        if _shared_online_token(data):
+            return _online_token_refused()
         location = _safe_location(data.get("location") or data.get("store"))
         action = str(data.get("action") or "quote").strip()
         allowed = {"add_item", "remove_item", "set_quantity", "quote"}
@@ -1162,7 +1178,10 @@ class PhoneCartReleaseView(APIView):
     """Release a staged draft at hangup. This is not a reservation or checkout."""
 
     def post(self, request):
-        draft = _draft_lookup(request.data or {})
+        data = request.data or {}
+        if _shared_online_token(data):
+            return _online_token_refused()
+        draft = _draft_lookup(data)
         if not draft:
             return Response({"ok": False, "error": "not_found"}, status=404)
         if draft.status != PhoneCartDraft.Status.CLAIMED:
@@ -1179,7 +1198,10 @@ class PhoneCartClaimView(APIView):
     """POS website claims a released draft after scan/lookup. No Dutchie write happens here."""
 
     def post(self, request):
-        draft = _draft_lookup(request.data or {})
+        data = request.data or {}
+        if _shared_online_token(data):
+            return _online_token_refused()
+        draft = _draft_lookup(data)
         if not draft:
             return Response({"ok": False, "error": "not_found"}, status=404)
         if draft.status not in {PhoneCartDraft.Status.RELEASED, PhoneCartDraft.Status.OPEN}:

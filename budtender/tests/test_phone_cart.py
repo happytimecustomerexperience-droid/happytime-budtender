@@ -219,3 +219,61 @@ def test_pos_queue_panel_lists_saved_phone_carts_for_budtenders(client):
     screen = client.get(reverse("screen"), SERVER_NAME="localhost")
     assert screen.status_code == 200
     assert visible.draft_token in screen.content.decode()
+
+
+def _online_cart():
+    """What bundles/cart.py creates for every web shopper: the SAME session_token for all."""
+    return PhoneCartDraft.objects.create(
+        location_slug="yakima", source=PhoneCartDraft.Source.ONLINE, session_token="online",
+        status=PhoneCartDraft.Status.OPEN, contact_phone="5095550100", lines=[{"sku": "SKU-1"}],
+    )
+
+
+@override_settings(HHT_BACKEND_TOKEN=TOKEN)
+@pytest.mark.parametrize("path,extra", [
+    ("/api/v1/phone-cart/release", {}),
+    ("/api/v1/phone-cart/claim", {}),
+    ("/api/v1/phone-cart/upsert", {"store": "yakima", "action": "quote"}),
+    ("/api/v1/phone-cart/upsert", {"store": "yakima", "action": "set_quantity", "sku": "SKU-1", "quantity": 9}),
+])
+@pytest.mark.parametrize("sentinel", ["online", " Online "])
+def test_the_shared_online_token_never_addresses_a_strangers_cart(client, path, extra, sentinel):
+    """Every web cart carries session_token="online", so release/claim/upsert "by token" acted
+    on whichever stranger's online cart was newest. The sentinel is refused outright."""
+    cart = _online_cart()
+
+    resp = client.post(path, data=json.dumps({"session_token": sentinel, **extra}),
+                       content_type="application/json", **_auth())
+
+    assert resp.status_code == 400
+    assert resp.json()["ok"] is False
+    cart.refresh_from_db()
+    assert cart.status == PhoneCartDraft.Status.OPEN
+    assert cart.released_at is None and cart.claimed_at is None
+    assert cart.lines == [{"sku": "SKU-1"}]
+    assert PhoneCartDraft.objects.count() == 1
+
+
+@override_settings(HHT_BACKEND_TOKEN=TOKEN)
+def test_an_online_cart_is_still_reachable_by_its_own_draft_token(client):
+    cart = _online_cart()
+
+    resp = client.post("/api/v1/phone-cart/claim", data=json.dumps({"draft_token": cart.draft_token}),
+                       content_type="application/json", **_auth())
+
+    assert resp.status_code == 200
+    cart.refresh_from_db()
+    assert cart.status == PhoneCartDraft.Status.CLAIMED
+
+
+@override_settings(HHT_BACKEND_TOKEN=TOKEN)
+def test_a_real_phone_session_token_still_works(client):
+    draft = PhoneCartDraft.objects.create(location_slug="yakima", session_token="s-caller-1",
+                                          status=PhoneCartDraft.Status.OPEN)
+
+    resp = client.post("/api/v1/phone-cart/release", data=json.dumps({"session_token": "s-caller-1"}),
+                       content_type="application/json", **_auth())
+
+    assert resp.status_code == 200
+    draft.refresh_from_db()
+    assert draft.status == PhoneCartDraft.Status.RELEASED
