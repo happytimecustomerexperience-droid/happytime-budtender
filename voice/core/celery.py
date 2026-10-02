@@ -25,9 +25,9 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 app = Celery("happytime_voice")
 # Read CELERY_* settings off Django settings (namespace="CELERY"), then discover ``<app>/tasks.py``.
 app.config_from_object("django.conf:settings", namespace="CELERY")
-# Explicit package list (more reliable than the bare autodiscover under a worker boot) — the only
-# task module today is ``voice.tasks``; add new ``<app>.tasks`` modules here.
-app.autodiscover_tasks(["voice"])
+# Explicit package list (more reliable than the bare autodiscover under a worker boot) — the task
+# modules are ``voice.tasks`` and ``kb.tasks``; add new ``<app>.tasks`` modules here.
+app.autodiscover_tasks(["voice", "kb"])
 
 # Beat schedule (requires a `celery -A core beat` process; a no-op unless one is running). Nightly
 # check that the public site (its own Supabase CMS, not ours) still agrees with the KB — alerts
@@ -36,6 +36,12 @@ app.conf.beat_schedule = {
     "check-store-facts-nightly": {
         "task": "voice.check_store_facts_nightly",
         "schedule": crontab(hour=3, minute=0),  # 3am Pacific — low-traffic window
+    },
+    # Mirror each store's current Dutchie deals into the Specials & hours rows. A no-op unless the
+    # "Sync deals from Dutchie" capability (auto.deals_sync) is on.
+    "sync-deals-from-dutchie": {
+        "task": "kb.sync_deals",
+        "schedule": crontab(minute="*/30"),
     },
 }
 

@@ -88,7 +88,15 @@ class BudtenderClient:
             logger.warning("budtender POST %s failed", path, exc_info=True)
             return empty
 
-    def _get(self, path: str, params: dict | None = None, *, empty, require_token: bool = True):
+    def _get(
+        self,
+        path: str,
+        params: dict | None = None,
+        *,
+        empty,
+        require_token: bool = True,
+        read_timeout: float | None = None,
+    ):
         """GET; on any failure return ``empty``, never raise. ``/health/`` passes
         ``require_token=False`` (the open probe carries no Bearer)."""
         if require_token and not self._token:
@@ -103,7 +111,7 @@ class BudtenderClient:
                 self._url(path),
                 params=params or {},
                 headers=headers,
-                timeout=(self._connect_timeout, self.timeout),
+                timeout=(self._connect_timeout, read_timeout or self.timeout),
             )
             if resp.status_code >= 300:
                 logger.warning("budtender GET %s → HTTP %s", path, resp.status_code)
@@ -211,6 +219,17 @@ class BudtenderClient:
         out.setdefault("strength", 0.0)
         out.setdefault("reason_text", "")
         out.setdefault("reason_code", "none")
+        return out
+
+    def deals(self) -> dict:
+        """``GET /deals/`` — every deal running today on each store's Dutchie online menu:
+        ``{ok, stores: {slug: [deal…] | None}, errors, fetched_at}``. A store whose Dutchie feed was
+        unreachable is ``None`` (unknown), never ``[]`` (none). Graceful-empty = ``{"stores": {}}``,
+        which reads as every store unreachable. A cold fetch reads six Dutchie feeds (~6 s), so the
+        read timeout is longer than a voice turn's."""
+        out = self._get("/deals/", empty={}, read_timeout=45)
+        if not isinstance(out, dict) or not isinstance(out.get("stores"), dict):
+            return {"ok": False, "stores": {}, "errors": {}}
         return out
 
     # ── staff customer browse (P7) — the dashboard reads the LIVE, auto-recomputed profiles ──

@@ -559,8 +559,10 @@ def seed_store_facts() -> int:
         )
         n += 1
     # Wipe all existing special rows so stale weekly deals (Flower Monday, etc.) don't
-    # survive alongside the current monthly deals — then recreate from SPECIAL_ROWS.
-    m.StoreFact.objects.filter(kind="special").delete()
+    # survive alongside the current monthly deals — then recreate from SPECIAL_ROWS. The
+    # "Dutchie #" rows belong to kb.deals_sync (every deploy runs this seed); wiping them would
+    # leave callers with no deals until the next sync.
+    m.StoreFact.objects.filter(kind="special").exclude(label__startswith="Dutchie #").delete()
     valid_from, valid_to = SPECIAL_WINDOW
     for store, label, value in SPECIAL_ROWS:
         m.StoreFact.objects.create(
