@@ -192,6 +192,9 @@ class BudtenderClient:
                 "price_otd": pricing.otd(prod.get("price"), store),
                 "stock_on_hand": prod.get("stock_on_hand"),
                 "name": prod.get("name"),
+                # public_product's lab report + exact menu slug; suggest.check_inventory validates.
+                "coa_url": prod.get("coa_url"),
+                "menu_slug": prod.get("menu_slug"),
             }
         return {"in_stock": False}
 

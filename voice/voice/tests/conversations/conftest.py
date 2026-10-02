@@ -133,7 +133,8 @@ class FakeBudtender:
         if not row:
             return {"in_stock": False}
         return {"in_stock": True, "price_otd": round(row["price"] * 1.485, 2),
-                "stock_on_hand": row["stock_on_hand"], "name": row["name"]}
+                "stock_on_hand": row["stock_on_hand"], "name": row["name"],
+                "coa_url": row.get("coa_url"), "menu_slug": row.get("menu_slug")}
 
     def pair_for_sku(self, store, anchor_sku, *, phone=None, session_token=None):
         self._record("pair_for_sku", {"store": store, "anchor": anchor_sku})

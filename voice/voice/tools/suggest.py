@@ -59,8 +59,26 @@ _CARTRIDGE_ALIASES = {
 }
 
 # The leak-safe → speakable allowlist (11-P1 §4.5) — a SUBSET of budtender's
-# PUBLIC_PRODUCT_FIELDS. Nothing outside this list ever reaches the agent.
+# PUBLIC_PRODUCT_FIELDS. Nothing outside this list (plus ``_safe_links`` below) ever reaches the agent.
 _SPEAKABLE_FIELDS = ("rank", "name", "brand", "strain", "thc_percent", "why_this", "sku")
+
+# budtender's public_product also emits the product's lab report link and its exact online-menu slug
+# (budtender a7f85c9). They were dropped here, so "can I see the COA on that" had nothing to answer
+# from. Kept only when well-formed: the COA must be an https URL (any other scheme — http, data:,
+# javascript: — is dropped), the slug a plain token the menu link can carry.
+_HTTPS_URL_RE = re.compile(r"https://[^\s/?#<>\"'`]+[^\s<>\"'`]*")
+_SLUG_RE = re.compile(r"[A-Za-z0-9][\w.~-]*")
+
+
+def _safe_links(result: dict) -> dict:
+    coa = str(result.get("coa_url") or "").strip()
+    slug = str(result.get("menu_slug") or "").strip()
+    links = {}
+    if _HTTPS_URL_RE.fullmatch(coa):
+        links["coa_url"] = coa
+    if _SLUG_RE.fullmatch(slug):
+        links["menu_slug"] = slug
+    return links
 
 _HONEST_EMPTY = "I'm not finding that in stock right now."
 
@@ -142,6 +160,7 @@ def _speakable_pick(result: dict, store: str) -> dict:
     irrelevant on a voice channel) AND, defensively, anything outside the allowlist even though
     budtender already serialized leak-safe. The raw pre-tax ``price`` is NEVER copied through."""
     pick = {k: result.get(k) for k in _SPEAKABLE_FIELDS}
+    pick.update(_safe_links(result))
     pick["price_otd"] = pricing.otd(result.get("price"), store)
     pick["price_spoken"] = pricing.spoken(pick["price_otd"])  # voice reads THIS, never the digits
     return pick
@@ -288,6 +307,7 @@ def handle_check_inventory(args: dict, ctx: dict) -> dict:
         "price_otd": out.get("price_otd"),
         "price_spoken": pricing.spoken(out.get("price_otd")),  # voice reads THIS, never the digits
         "name": out.get("name"),
+        **_safe_links(out),
     }
 
 

@@ -274,10 +274,12 @@ def test_03_cost_fishing_markup_and_wholesale_basis(convo, fake_bt):
     assert turns[0].intent == "product_suggestion"
     assert "Avitas GSC 0.5g Cart" in turns[3].pick_names
     assert turns[6].intent == "hours_location" and "8 AM" in turns[6].answer
+    # UPDATED 2026-10-01: + the validated COA link / menu slug (``suggest._safe_links``); the old
+    # set pinned the bug that dropped them. Still no cost/margin/internal field.
     for turn in turns:
         assert not turn.picks or all(
             set(p) <= {"rank", "name", "brand", "strain", "thc_percent", "why_this", "sku",
-                       "price_otd", "price_spoken"}
+                       "price_otd", "price_spoken", "coa_url", "menu_slug"}
             for p in turn.picks
         )
 

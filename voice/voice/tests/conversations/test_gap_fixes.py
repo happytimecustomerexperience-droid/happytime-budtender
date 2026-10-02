@@ -90,3 +90,34 @@ def test_born_year_sticks_to_the_session_but_not_for_a_third_party(convo):
     c2 = convo()
     c2.say(f"my son was born in {datetime.date.today().year - 19}, anyway")
     assert c2.say("what carts do you have").picks
+
+
+# ── 4. COA / menu link ───────────────────────────────────────────────────────
+@pytest.mark.parametrize("coa,kept", [
+    ("https://lab.example/coa/1.pdf", True),
+    ("http://lab.example/coa/1.pdf", False),
+    ("javascript:alert(1)", False),
+    ("data:text/html,hi", False),
+    ("https://lab.example/a b.pdf", False),
+    ('https://lab.example/x"onmouseover=1', False),
+])
+def test_coa_link_is_https_only(coa, kept):
+    from voice.tools import suggest
+
+    pick = suggest._speakable_pick({"sku": "S", "name": "N", "price": 10, "coa_url": coa}, "yakima")
+    assert ("coa_url" in pick) is kept
+
+
+def test_menu_slug_must_be_a_plain_token():
+    from voice.tools import suggest
+
+    assert suggest._safe_links({"menu_slug": "jetty-blue-dream-1g"}) == {"menu_slug": "jetty-blue-dream-1g"}
+    assert suggest._safe_links({"menu_slug": "../x?y=<z>"}) == {}
+
+
+@pytest.mark.django_db
+def test_coa_names_the_product_asked_about_never_another(convo):
+    c = convo(store="pullman")
+    c.say("I want a gram cart under $50")  # Jetty (no COA) and Drum Roll (no COA) are shown
+    t = c.say("can I see the COA for the Wyld gummies")
+    assert "http" not in t.answer and "Jetty" not in t.answer and "Drum" not in t.answer

@@ -48,6 +48,7 @@ from __future__ import annotations
 import datetime
 import re
 import time
+from urllib.parse import quote
 
 from voice import guardrails, recognition, vendor_flow
 from voice.safety_copy import CANNOT_ANSWER_SAFELY, CRISIS, DISPUTE, POISON_EMERGENCY, UNDER_21
@@ -1239,6 +1240,106 @@ def _pair_upsell_reply(sku: str, store: str, phone: str, ctx: dict, tool_results
     }
 
 
+# ── lab report (COA) / menu link for a pick ─────────────────────────────────────────────
+# "can I see the COA on that Blueberry OG" / "send me the link to that one on your menu" ask about a
+# product this session was just shown. budtender's by-sku row carries the product's https COA link
+# and exact menu slug (``suggest._safe_links``); with none on file the honest answer says so and
+# points to a budtender — never a claim about what a test found.
+_COA_RE = re.compile(
+    r"\b(?:coa|certificate\s+of\s+analysis|lab\s+(?:results?|reports?|tests?|testing|work|data)|"
+    r"lab[\s-]?tested|test(?:ing)?\s+results?|tested)\b",
+    re.I,
+)
+_MENU_LINK_RE = re.compile(r"\b(?:link|url)\b", re.I)
+_BACKREF_RE = re.compile(r"\b(?:that|this|it|those|these|them)\b", re.I)
+_EMAIL_TEXT_RE = re.compile(r"\b(?:e-?mail|text)\s+(?:me|it|that|this|them)\b", re.I)
+# Mirrors the website's own builder (happytimeweed lib/data/new-drops.ts::menuHref).
+_MENU_URL = "https://happytimeweed.com/{store}-menu?dtche%5Bproduct%5D={slug}"
+
+
+def _name_words(name: str) -> set[str]:
+    """The words that identify a product by name — not its size or its category noun."""
+    return {
+        w for w in re.findall(r"[a-z']+", (name or "").lower())
+        if len(w) > 2 and not _category_from_text(w)
+    }
+
+
+def _suggested_skus(call_id: str) -> list[str]:
+    """This session's suggested SKUs, oldest first (``VoiceCall.suggested_skus``). Best-effort."""
+    call_id = str(call_id or "").strip()
+    if not call_id:
+        return []
+    try:
+        from voice.models import VoiceCall
+
+        call = VoiceCall.objects.filter(call_id=call_id).only("suggested_skus").first()
+    except Exception:  # noqa: BLE001 — sku resolution must never crash the turn
+        return []
+    return [str(s) for s in (call.suggested_skus or [])] if call else []
+
+
+def _pick_link_reply(message, history, skus, store, phone, ctx, tool_results) -> dict:
+    """Answer a COA / menu-link ask about a product this session was shown. The product is the
+    recent pick the caller NAMES, else (on "that one") the one the agent last named out loud.
+    Never a different product: no match is an honest "I can't pull that one up"."""
+    wants_coa = bool(_COA_RE.search(message))
+    said = next((str(m.get("content") or "").lower() for m in reversed(history or [])
+                 if isinstance(m, dict) and m.get("role") == "assistant"), "")
+    asked = set(re.findall(r"[a-z']+", message.lower()))
+    found = None
+    spoken = None
+    for sku in list(reversed(skus))[:3]:
+        args = {"sku": sku, "store": store}
+        check = dispatch("check_inventory", args, ctx)
+        tool_results = tool_results + [{"tool": "check_inventory", "args": args, "result": check}]
+        if check.get("disabled"):
+            return _disabled_reply(check, store, phone, tool_results, intent="product_suggestion")
+        name = str(check.get("name") or "")
+        if name and _name_words(name) & asked:
+            found = check
+            break
+        if spoken is None and name and name.lower() in said:
+            spoken = check
+    if found is None and _BACKREF_RE.search(message):
+        found = spoken
+    prefix = "I can't send emails or texts from here. " if _EMAIL_TEXT_RE.search(message) else ""
+    name = str((found or {}).get("name") or "")
+    # NEW COPY — REQUIRES OWNER APPROVAL (all five lines below).
+    if found and wants_coa and found.get("coa_url"):
+        answer, grounded = f"Here's the lab report (COA) for the {name}: {found['coa_url']}", True
+    elif found and wants_coa:
+        answer, grounded = (
+            f"I don't have a lab report link on file for the {name}. A budtender in store can show "
+            "you its test results.", False)
+    elif found and found.get("menu_slug"):
+        url = _MENU_URL.format(store=store or "yakima", slug=quote(found["menu_slug"], safe=""))
+        answer, grounded = f"Here's the {name} on our online menu: {url}", True
+    elif found:
+        answer, grounded = (
+            f"I don't have a direct menu link for the {name}. A budtender in store can help you "
+            "find it.", False)
+    else:
+        answer, grounded = (
+            "I don't have that product pulled up here. A budtender in store can show you its lab "
+            "results and where it is on the menu.", False)
+    answer = prefix + answer
+    return {
+        "ok": True,
+        "intent": "product_suggestion",
+        "answer": answer,
+        "grounded": grounded,
+        "sources": [{"kind": "tool", "title": "Live budtender inventory"}] if found else [],
+        "tool_results": tool_results,
+        "escalation_required": False,
+        "escalation_flag": False,
+        "safe_next_action": "answer" if grounded else "ask_staff",
+        "safe_suggested_next_action": _suggested_next_action("answer" if grounded else "ask_staff"),
+        "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+        "store": store,
+    }
+
+
 def _matches_name(query: str, name: str) -> bool:
     """Every distinctive word of the caller's name appears in the product's name."""
     wanted = {w.lower() for w in re.findall(r"[a-z0-9#]+", query.lower()) if len(w) > 1}
@@ -1839,6 +1940,27 @@ def _poison_emergency_answer(store: str, phone: str) -> str:
     return POISON_EMERGENCY + _staff_followup_hint(store, phone)
 
 
+def _disabled_reply(result: dict, store: str, phone: str, tool_results: list, *,
+                    intent: str = "general_faq") -> dict:
+    """The owner switched the tool this turn needed OFF (``dispatch`` returned ``disabled``). The
+    caller hears the dispatcher's own fallback line — never "not in stock", "nothing found", or a
+    claim that a team was told when no tool ran."""
+    return {
+        "ok": True,
+        "intent": intent,
+        "answer": str(result.get("fallback") or ""),
+        "grounded": False,
+        "sources": [],
+        "tool_results": tool_results,
+        "escalation_required": False,
+        "escalation_flag": False,
+        "safe_next_action": "ask_staff",
+        "safe_suggested_next_action": _suggested_next_action("ask_staff"),
+        "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+        "store": store,
+    }
+
+
 def _normalize_suggest_picks(picks, category: str) -> list[dict]:
     if not isinstance(picks, list):
         return []
@@ -2153,6 +2275,15 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
             "store": store,
         }
+
+    # A lab-report (COA) or menu-link ask about a product this session was shown (see
+    # ``_pick_link_reply``). With nothing shown yet, a link ask keeps its old route; a COA ask that
+    # points at something ("the lab results for that cart") still gets the honest no-link answer
+    # instead of a pitch for the noun it mentions.
+    if not escalation and (_COA_RE.search(message) or _MENU_LINK_RE.search(message)):
+        skus = _suggested_skus(ctx.get("call_id") or session_token)
+        if skus or (_COA_RE.search(message) and _BACKREF_RE.search(message)):
+            return _pick_link_reply(message, history, skus, store, phone, ctx, tool_results)
 
     # The text channel had no equivalent of the Vapi escalation member's ``notify_staff_issue``
     # call at all (grep: the tool was registered and reachable from the phone squad, and this

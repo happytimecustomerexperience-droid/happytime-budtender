@@ -16,9 +16,11 @@ from voice.tools import TOOL_REGISTRY
 _LEAK_WORDS = ("cost", "margin")
 
 # Fields a spoken pick may carry (voice/tools/suggest.py ``_SPEAKABLE_FIELDS`` + the OTD relabel).
+# UPDATED 2026-10-01: + the validated COA link / menu slug (``suggest._safe_links``) — the old set
+# pinned the bug that dropped them, so "can I see the COA on that" had nothing to answer from.
 _ALLOWED_PICK_FIELDS = {
     "rank", "name", "brand", "strain", "thc_percent", "why_this", "sku",
-    "price_otd", "price_spoken",
+    "price_otd", "price_spoken", "coa_url", "menu_slug",
 }
 # The pre-tax ``price`` is deliberately in here too: the caller hears out-the-door or nothing.
 _BANNED_PICK_FIELDS = {"cost", "margin", "margin_pct", "margin_z", "velocity", "bucket", "price_z",
