@@ -27,6 +27,8 @@ import logging
 
 from django.core.cache import cache
 
+from budtender.dutchie import https_url
+
 from .session import PosClient
 from .stores import get_store
 
@@ -222,7 +224,8 @@ def normalise(row: dict, mapping: dict[str, dict]) -> dict:
         "expires": _clean(row.get("ExpirationDate")),
         "lab_name": _clean(row.get("LabName")),
         "lab_license": _clean(row.get("LabLicenseNumber")),
-        "coa_url": _clean(row.get("LabResultUrl")),
+        # Goes straight into an href: plain https or nothing (a `javascript:` URL is a click-to-run).
+        "coa_url": https_url(row.get("LabResultUrl")) or None,
         **totals,
     }
     # Drop the empty keys too — the UI checks `if lab.terpenes`, not lengths.

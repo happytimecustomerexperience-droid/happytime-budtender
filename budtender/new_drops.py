@@ -164,7 +164,7 @@ def _value(section: dict | None, key: str) -> float | None:
 def summarize_lab(data: dict, category: str) -> dict:
     """Pure: lab-results Data -> {thc, cbd, potency_unit, terpenes, coa_url}."""
     cann = data.get("Cannabinoids") or {}
-    coa = ((data.get("TestDetails") or {}).get("CoaUrl") or "").strip() or None
+    coa = https_url((data.get("TestDetails") or {}).get("CoaUrl")) or None   # lands in an href
     unit_ok = all(((cann.get(k) or {}).get("UnitId") in (None, 2)) for k in ("Thc", "Thca", "Cbd", "Cbda"))
     thc = cbd = None
     if category.strip().lower() not in _NO_POTENCY_CATEGORIES and unit_ok:

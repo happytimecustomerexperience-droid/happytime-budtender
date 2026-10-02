@@ -142,6 +142,22 @@ def test_lab_result_keeps_the_dates_that_exist(patched):
     assert out["batch_id"] == 7548778
 
 
+@pytest.mark.parametrize("hostile", [
+    "javascript:alert(document.cookie)", "JaVaScRiPt:alert(1)", "data:text/html,<script>1</script>",
+    "http://insecure.example/coa.pdf", "//evil.example/coa.pdf", "https://x.example/a b",
+])
+def test_a_coa_link_that_is_not_plain_https_is_dropped(patched, hostile):
+    """`coa_url` is rendered straight into an href on the POS and /custom-order lab panels."""
+    patched(result=[{**RESULT_PAYLOAD["Data"][0], "LabResultUrl": hostile}])
+    out = lab.lab_result("yakima", 7548778)
+    assert "coa_url" not in out
+
+
+def test_an_https_coa_link_is_kept(patched):
+    patched(result=[{**RESULT_PAYLOAD["Data"][0], "LabResultUrl": "https://certs.example/coa.pdf"}])
+    assert lab.lab_result("yakima", 7548778)["coa_url"] == "https://certs.example/coa.pdf"
+
+
 def test_cannabinoids_sorted_strongest_first(patched):
     patched()
     out = lab.lab_result("yakima", 7548778)

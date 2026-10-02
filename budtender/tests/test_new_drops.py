@@ -49,6 +49,12 @@ class SummarizeLabTests(SimpleTestCase):
         self.assertIsNone(out["potency_unit"])
         self.assertEqual(out["coa_url"], "https://certs.conflabs.com/y.pdf")  # COA still offered
 
+    def test_a_coa_link_that_is_not_plain_https_is_dropped(self):
+        for hostile in ("javascript:alert(1)", "data:text/html,<script>1</script>",
+                        "http://insecure.example/x.pdf", "ftp://x.example/x.pdf"):
+            lab = {**LAB_BEVERAGE, "TestDetails": {"CoaUrl": hostile}}
+            self.assertIsNone(new_drops.summarize_lab(lab, "Liquid Edible")["coa_url"], hostile)
+
     def test_unknown_unit_hides_potency(self):
         lab = {"Cannabinoids": {"Thc": {"Value": 80, "UnitId": 7}}}
         self.assertIsNone(new_drops.summarize_lab(lab, "Vape Cartridge")["thc"])
