@@ -54,6 +54,24 @@ class Credential(models.Model):
         return f"Credential<{self.name}>"
 
 
+class BotCapability(models.Model):
+    """The owner's on/off state for one declared capability (``voice/voice/capabilities.py``).
+
+    No row = the capability's declared default. Only declared keys are ever written
+    (``capabilities.set_enabled`` refuses anything else)."""
+
+    key = models.CharField(max_length=64, unique=True)
+    enabled = models.BooleanField()
+    updated_by = models.CharField(max_length=150, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["key"]
+
+    def __str__(self) -> str:
+        return f"BotCapability<{self.key}={'on' if self.enabled else 'off'}>"
+
+
 class RankingWeights(models.Model):
     """Singleton (pk=1) — the owner's ranking-weight levers, pushed to budtender (§4.6)."""
 
