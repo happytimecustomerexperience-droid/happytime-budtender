@@ -116,9 +116,12 @@ class SuggestBundleLinksTests(SimpleTestCase):
         # A three-slot bundle that emits two lines is worse than no link: the email
         # promises an edible the landing page never shows. Raising min_stock above the
         # edible's 50 makes that slot unfillable.
+        # `run` patches the register pull like every other test here. This test used to call the
+        # command bare, so it hit the REAL get_inventory: with no store configured that is a
+        # KeyError instead of the CommandError asserted, and with stores configured (a dev box)
+        # it would have pulled the live register.
         with self.assertRaises(CommandError):
-            call_command("suggest_bundle_links", store=["yakima"], bundle=["roll-relax"],
-                         min_stock=100, stdout=StringIO(), stderr=StringIO())
+            run(store=["yakima"], bundle=["roll-relax"], min_stock=100)
 
     def test_an_empty_floor_fails_loudly(self):
         # Silence here would mean a campaign built on nothing.

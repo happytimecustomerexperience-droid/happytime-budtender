@@ -47,6 +47,7 @@ from budtender.models import PhoneCartDraft
 from bundles import cart as cart_mod
 from bundles.tests.test_resolver import live
 
+NEEDS_CONCURRENT_WRITERS = "needs a database with concurrent writers (Postgres or file SQLite)"
 SECRET = "burst-test-secret-value"
 LOCMEM = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 
@@ -156,6 +157,12 @@ class BurstTestCase(TransactionTestCase):
 
     # ── the burst ────────────────────────────────────────────────────────────
     def _fire(self, shoppers: list[Shopper]) -> float:
+        # In-memory SQLite is one shared connection, so overlapping writers die on "table is
+        # locked" before they measure anything. Skip, never weaken: every assertion still runs
+        # on Postgres or a file-backed SQLite. Everything that overlaps writes goes through here;
+        # the one test that only reads (the checkout GET) is not skipped.
+        if connection.vendor == "sqlite" and connection.is_in_memory_db():
+            self.skipTest(NEEDS_CONCURRENT_WRITERS)
         n = len(shoppers)
         gate = threading.Barrier(n + 1, timeout=60)   # +1: the main thread releases it
 
