@@ -3,16 +3,21 @@
 #
 #   30 7 * * *  /root/happytime-budtender/scripts/daily-maintenance.sh >> /var/log/happytime-maintenance.log 2>&1
 #
-# TIMING: 07:30 America/Los_Angeles — 30 minutes before the earliest store opens (Yakima 08:00;
-# Mt Vernon and Pullman 09:00). Everything below is a read/refresh of data callers will use that
-# day, so it runs just before the doors open rather than in the middle of the night: the KB, the
-# embeddings and the inventory are then fresh for the first call of the day instead of being
-# eight hours old by opening. Nothing here needs to run while the stores are closed.
+# TIMING: the crontab line above fires at 07:30 UTC, NOT 07:30 Pacific. Host cron ignores CRON_TZ
+# here, so this runs at 00:30 PDT (23:30 PST) — in the middle of the night, about 7.5 hours before
+# Yakima opens (08:00; Mt Vernon and Pullman 09:00). It was written to land 30 minutes before
+# opening; it does not, and the schedule is deliberately left as it is. Nothing here needs to run
+# while the stores are closed, but the data is that much older by the first call of the day.
 #
-# WHY host cron and not Celery beat: the budtender service already has a beat container running
-# inventory/transaction syncs, but the VOICE service has a worker and NO beat — so anything
-# scheduled there would silently never fire. Rather than add a second beat container for four
-# commands a day, this runs them directly. It is one file, greppable, and easy to change.
+# WHY host cron and not Celery beat: the budtender service has a beat container running
+# inventory/transaction syncs, and the voice service has one too (voice-worker runs `celery -A core
+# worker --beat`; its schedule is in voice/core/celery.py). This job stays on host cron because it
+# runs commands in BOTH stacks (`web` and `voice-web`) and checks the proxy from the host, which
+# neither beat can do. It is one file, greppable, and easy to change.
+#
+# HEALTH PAGE: the last step reports this run to /dashboard/health/ (record_job_run, name
+# `daily-maintenance`): ok, or FAILED with the failed step names. The page marks it STALE when it
+# has not finished within 26 hours.
 #
 # Deliberately NOT `set -e`: every step must run even when an earlier one fails, otherwise one
 # bad night silently skips the rest of maintenance. Failures are collected and reported at the end,
@@ -30,6 +35,16 @@ step() {
 }
 
 dc() { docker compose "$@"; }
+
+# Report this run to the dashboard Health page. Best-effort: it must never change the script's own
+# exit code or stop the failure alert below, so a failed report is logged and nothing more.
+record_run() {
+  local flag="--ok" summary="all steps ok"
+  if [ ${#FAILED[@]} -gt 0 ]; then flag="--fail"; summary="FAILED: ${FAILED[*]}"; fi
+  dc exec -T voice-web python manage.py record_job_run daily-maintenance "$flag" \
+    --summary "$summary" --source cron \
+    || log "   (could not record this run on the dashboard Health page)"
+}
 
 log "===== daily maintenance start ====="
 log "commit: $(git log --oneline -1 2>/dev/null || echo unknown)"
@@ -110,6 +125,7 @@ step "public healthz is ok (through the proxy)" bash -c '
 '
 
 log "===== summary ====="
+record_run
 if [ ${#FAILED[@]} -eq 0 ]; then
   log "all steps ok"
   exit 0

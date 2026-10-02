@@ -6,7 +6,7 @@ Cron example:
 
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 
 class Command(BaseCommand):
@@ -39,3 +39,9 @@ class Command(BaseCommand):
         if run.validation_errors:
             for err in run.validation_errors:
                 self.stdout.write(f"- {err}")
+        if run.status == "failed":
+            # The fetch (or the apply) threw — e.g. HTTP 429 from the site. Exit non-zero so the
+            # nightly maintenance step is reported FAIL; "failed" used to exit 0 and read as ok.
+            # A "blocked" scrape (validation said no, nothing saved) keeps its existing exit 0.
+            detail = " ".join("; ".join(str(e) for e in run.validation_errors).split())[:300]
+            raise CommandError(f"{msg} ({detail})" if detail else msg)
