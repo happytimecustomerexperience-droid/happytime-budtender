@@ -1,5 +1,4 @@
 import os
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -76,24 +75,3 @@ class FetchPersonaTests(SimpleTestCase):
         self.assertEqual(text, gemini_chat._SAFETY_ONLY_INSTRUCTION)
         self.assertTrue(any("voice service unreachable" in line for line in logs.output))
         self.assertEqual(gemini_chat.greeting(), "")
-
-    def test_fallback_reply_passes_system_instruction_into_generate_content_config(self):
-        messages = [SimpleNamespace(role="user", content="hello")]
-        with patch.dict(os.environ, ENV), patch(
-            "budtender.gemini_chat.requests.get", return_value=Resp(200, PERSONA)
-        ), patch(
-            "budtender.gemini_chat._voice_chat", return_value=None
-        ), patch(
-            "budtender.gemini_chat._voice_grounding", return_value=None
-        ), patch(
-            "budtender.gemini_chat._client"
-        ) as fake_client:
-            fake_client.return_value.models.generate_content.return_value = SimpleNamespace(
-                text="Vertex answered this one."
-            )
-            gemini_chat.generate_chat_reply_with_source(messages, store="yakima")
-
-        _, kwargs = fake_client.return_value.models.generate_content.call_args
-        self.assertEqual(
-            kwargs["config"].system_instruction, PERSONA["written_system_instruction"]
-        )

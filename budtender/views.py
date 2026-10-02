@@ -17,13 +17,16 @@ from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from bundles import caps
+from pos_core.ratelimit import _client_ip
+
 from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
                      CustomerProfile, Feedback, PhoneCartDraft, Product,
                      SuggestedProduct)
 from .pairing import pair_for
 from . import facets, live_stock
-from .gemini_chat import (GeminiChatUnavailable, fetch_persona,
-                          generate_chat_reply_with_source, invalidate_persona)
+from .gemini_chat import (fetch_persona, generate_chat_reply_with_source,
+                          invalidate_persona)
 from .intents import classify_intent, conversation_breakdown, intent_breakdown
 from .ranking import MIN_STOCK, W_ANON, W_KNOWN, rank_products
 from .serializers import (customer_detail, customer_row, profile_summary,
@@ -420,21 +423,43 @@ class SessionStartView(APIView):
 
 _MINTED_SESSION_TOKEN = re.compile(r"^s-[A-Za-z0-9_-]+$")
 
+# Every chat turn costs a brain call, so a turn is a unit of spend. The website's server is the
+# only caller, which means the client IP here is one shared address for ALL shoppers: the IP cap is
+# a site-wide ceiling set far above real traffic, and the per-session cap is what stops one chat
+# (or one pasted token) from hammering the brain.
+CHAT_WINDOW = 60
+CHAT_REPLIES_PER_IP = 300
+CHAT_REPLIES_PER_SESSION = 12
+
+
+def _chat_throttled(request, token: str) -> bool:
+    ip = _client_ip(request)
+    if not caps.take("chat-ip", CHAT_REPLIES_PER_IP, CHAT_WINDOW, ip):
+        return True
+    if token and not caps.take("chat-session", CHAT_REPLIES_PER_SESSION, CHAT_WINDOW, token):
+        caps.give_back("chat-ip", ip)
+        return True
+    return False
+
 
 class ChatReplyView(APIView):
-    """Persist one website chat turn and answer with bounded Gemini context.
+    """Persist one website chat turn and answer with the shared voice brain.
 
     Auth is still the global service-token gate. The browser should call this
-    only through the website's server-side proxy, never directly.
+    only through the website's server-side proxy, never directly. When the brain
+    cannot answer the reply is a static floor line, never a direct model call.
     """
 
     def post(self, request):
         data = request.data or {}
+        token = str(data.get("session_token") or data.get("session_id") or "").strip()
+        if _chat_throttled(request, token[:128]):
+            return Response({"ok": False, "error": "rate_limited"}, status=429,
+                            headers={"Retry-After": str(CHAT_WINDOW)})
         raw_message = str(data.get("message") or "").strip()
         if not raw_message:
             return Response({"ok": False, "error": "message required"}, status=400)
 
-        token = str(data.get("session_token") or data.get("session_id") or "").strip()
         location = _safe_location(data.get("location") or data.get("store"))
         channel = _safe_channel(data.get("channel"), default="chat")
         session = ChatSession.objects.filter(session_token=token).first() if token else None
@@ -464,14 +489,8 @@ class ChatReplyView(APIView):
         )
 
         history = list(session.messages.order_by("ts", "id"))
-        try:
-            reply, source, brain_intent = generate_chat_reply_with_source(history, store=session.location_slug)
-            reply = _safe_chat_text(reply)
-        except GeminiChatUnavailable:
-            # ponytail: generic fallback until Gemini auth is configured; upgrade path is env config.
-            reply = "I can help with product questions, store info, or finding something on the menu. What are you shopping for today?"
-            source = "unavailable"
-            brain_intent = ""
+        reply, source, brain_intent = generate_chat_reply_with_source(history, store=session.location_slug)
+        reply = _safe_chat_text(reply)
 
         # Classify the turn — trust the brain's own classification when it answered,
         # so the offline regex in intents.py is only ever the fallback path.

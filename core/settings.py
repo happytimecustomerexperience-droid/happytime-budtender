@@ -184,9 +184,11 @@ USE_TZ = True
 TIME_ZONE = "America/Los_Angeles"
 
 # ── DRF: token-only, no browsable API ────────────────────────────────────────
-# NO IP throttle: this API is called ONLY by the website's server (one shared
-# IP, Bearer-gated). An IP throttle would throttle ALL end users collectively.
-# The ServiceTokenPermission Bearer gate is the security boundary.
+# No DRF-wide throttle: this API is called ONLY by the website's server (one shared
+# IP, Bearer-gated), so a blanket IP throttle would throttle ALL end users together.
+# The ServiceTokenPermission Bearer gate is the security boundary. The one endpoint that
+# spends money on every call, /chat/message, caps itself (per session, plus a generous
+# site-wide ceiling) in budtender.views.ChatReplyView.
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [],
     "DEFAULT_PERMISSION_CLASSES": ["budtender.auth.ServiceTokenPermission"],
