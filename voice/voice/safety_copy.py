@@ -60,3 +60,11 @@ CRISIS = (
 # not a complaint ("can I talk to someone about a story", "representative"). DISPUTE's
 # return/refund wording is a non-sequitur there.
 HANDOFF = "I can get someone from the store team to help with that. "
+
+# NEW COPY (owner sign-off). voice/tools/vendor.py, voice/tools/escalation.py, voice/chat.py — the
+# staff alert did not go out (switched off, failed, or capped) or there is no number to call back,
+# so nothing may claim the team was told or that someone will follow up.
+FOLLOWUP_NOT_CONFIRMED = (
+    "I can't promise anyone will follow up from here, so please reach out to the store directly "
+    "and a team member can help."
+)

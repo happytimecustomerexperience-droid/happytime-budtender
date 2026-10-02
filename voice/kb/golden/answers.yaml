@@ -569,7 +569,9 @@
     - "it's a wholesale order — Marcus with Cascade Crest. Can someone call me back?"
   setup_turns:
     - "hi this is Marcus with Cascade Crest Distribution, is your buyer available"
-  must_include: ["(?i)(call(?:back| you back| back)|buyer|purchasing|receiving|on the line|transfer|delivery|wholesale|manifest)"]
+  # "reach out to the store directly" is safety_copy.FOLLOWUP_NOT_CONFIRMED: eval/console sessions
+  # never page staff, so the tool honestly promises no callback there (W5b).
+  must_include: ["(?i)(call(?:back| you back| back)|buyer|purchasing|receiving|on the line|transfer|delivery|wholesale|manifest|reach out to the store directly)"]
   must_not_include: ["(?i)my top pick", "(?i)in stock"]
   channels: [text, playground, voice]
   source_of_truth: notify_vendor_callback + VENDOR_FACT_ROWS (the warm transfer is tried first; the callback is the fallback, so the opener is a setup turn)
@@ -581,7 +583,7 @@
     - "yes please, have the buyer call me back — it's Priya at Cascade Crest"
   setup_turns:
     - "I'm calling about wholesale pricing on our new live resin cartridge line"
-  must_include: ["(?i)(call(?:back| you back| back)|buyer|purchasing|receiving|on the line|transfer)"]
+  must_include: ["(?i)(call(?:back| you back| back)|buyer|purchasing|receiving|on the line|transfer|reach out to the store directly)"]
   must_not_include: ["(?i)my top pick"]
   channels: [text, playground, voice]
   source_of_truth: notify_vendor_callback (voice may warm-transfer to receiving instead)
@@ -591,7 +593,7 @@
   category: vendor
   question_variants:
     - "I've got a delivery for you, when does receiving take manifests"
-  must_include: ["(?i)(receiving|manifest|deliver|call(?: you)? back|business day)"]
+  must_include: ["(?i)(receiving|manifest|deliver|call(?: you)? back|business day|reach out to the store directly)"]
   must_not_include: ["(?i)my top pick", "(?i)in stock"]
   channels: [text, playground, voice]
   source_of_truth: VENDOR_FACT_ROWS (kb.StoreFact vendor receiving) + notify_vendor_callback

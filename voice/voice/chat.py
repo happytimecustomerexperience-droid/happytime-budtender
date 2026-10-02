@@ -56,6 +56,7 @@ from voice.safety_copy import (
     CRISIS,
     DISPUTE,
     FAQ_FALLBACK,
+    FOLLOWUP_NOT_CONFIRMED,
     HANDOFF,
     POISON_EMERGENCY,
     TOOL_DISABLED,
@@ -2574,7 +2575,8 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             ]
             if staff_result.get("disabled"):
                 return _disabled_reply(staff_result, store, phone, tool_results)
-            filed = not staff_result.get("error")
+            # The tool never returns "error"; whether the team was told is whether the alert went.
+            filed = bool(staff_result.get("alerted"))
         # NEW COPY — REQUIRES OWNER APPROVAL (both lines).
         answer = (
             "I can't change your text or email settings from here, but I've passed your request to "
@@ -2619,10 +2621,13 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             ]
             if staff_result.get("disabled"):  # nothing reached the team, so don't say it did
                 return _disabled_reply(staff_result, store, phone, tool_results)
-            # NEW COPY — REQUIRES OWNER APPROVAL.
+            # NEW COPY — REQUIRES OWNER APPROVAL. "Passed this to the store team" only when the
+            # staff alert actually went out — not when it was off, failed, capped or had no call.
             answer = (
                 "I can't set a back-in-stock alert myself, so I've passed this to the store team "
                 "with your details and a person can follow up."
+                if staff_result.get("alerted")
+                else "I can't set a back-in-stock alert myself. " + FOLLOWUP_NOT_CONFIRMED
             )
         else:
             # NEW COPY — REQUIRES OWNER APPROVAL.

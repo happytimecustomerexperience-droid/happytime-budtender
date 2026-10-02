@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from voice import vendor_flow
-from voice.safety_copy import HANDOFF
+from voice.safety_copy import FOLLOWUP_NOT_CONFIRMED, HANDOFF
 
 
 @pytest.mark.django_db
@@ -36,7 +36,9 @@ def test_wholesale_rep_now_routes_to_the_vendor_path(convo, fake_bt):
         "faq_lookup still runs (unconditional, unchanged) but now so does the vendor tool"
     )
     assert t.grounded is False
-    assert "call you back" in t.answer and "one business day" in t.answer
+    # UPDATED (W5b): the callback is logged, but this ``convo-`` test session never pages staff and
+    # he gave no number — so no "someone will call you back" promise (it would be false).
+    assert t.answer == FOLLOWUP_NOT_CONFIRMED
     assert t.next_action == "answer"
 
     # 2 — the wholesale pitch. FIXED: this used to be read as a retail ask ("cartridge" in his
@@ -194,5 +196,7 @@ def test_the_vendor_tool_now_gets_called_directly_by_the_text_brain(convo):
     result = t.result("notify_vendor_callback")
     assert result["logged"] is True
     assert result["callback_window"] == vendor_flow.callback_window_text("")
-    assert "Yakima" in result["spoken"] and "one business day" in result["spoken"]
+    # UPDATED (W5b): this used to promise "I've let the Yakima team know..." while row.alerted was
+    # False. The spoken line now follows what happened: no alert went, so nothing is promised.
+    assert result["spoken"] == FOLLOWUP_NOT_CONFIRMED
     assert "cost" not in result and "margin" not in result

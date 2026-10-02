@@ -78,7 +78,7 @@ def notify_vendor_callback(args: dict, ctx: dict) -> dict:
     # idempotent record. This never happens on a real Vapi tool-call (call.id is always present).
     if not call_id:
         logger.warning("notify_vendor_callback with no call_id; returning best-effort window")
-        return _envelope(None, store, reason, window, alerted=False)
+        return _envelope(None, store, reason, window, alerted=False, callback_number=False)
 
     # (1+2) durable VoiceCall upsert + the outcome stamp (correct the instant the tool runs).
     voice_call, _ = VoiceCall.objects.update_or_create(
@@ -116,7 +116,9 @@ def notify_vendor_callback(args: dict, ctx: dict) -> dict:
             callback.alerted = True
             callback.save(update_fields=["alerted", "updated_at"])
 
-    return _envelope(callback, store, reason, window, alerted=alerted)
+    return _envelope(
+        callback, store, reason, window, alerted=alerted, callback_number=bool(ctx.get("caller_number"))
+    )
 
 
 def _alert_staff(voice_call) -> bool:
@@ -135,21 +137,33 @@ def _alert_staff(voice_call) -> bool:
         return False
 
 
-def _envelope(callback, store: str, reason: str, window: str, *, alerted: bool) -> dict:
+def _envelope(
+    callback, store: str, reason: str, window: str, *, alerted: bool, callback_number: bool
+) -> dict:
     """The frozen §4.2 tool-result body. The window is the ONLY number and it is config-sourced
     (Numbers-Guard). No cost/margin field exists (Leak-Guard holds uniformly). The spoken line uses
-    the readable store name (never the raw slug); the ``store`` field keeps the slug for logging."""
-    from voice import constants as C
+    the readable store name (never the raw slug); the ``store`` field keeps the slug for logging.
 
+    The spoken line is built from what actually happened: "I've let the team know and someone will
+    call you back" only when a staff alert really went out for this callback (``callback.alerted``
+    — also true on a re-delivery, whose alert went the first time) AND there is a number to call
+    back. Otherwise the caller hears that nobody can promise a follow-up."""
+    from voice import constants as C
+    from voice import safety_copy
+
+    told = bool(callback is not None and callback.alerted)
+    spoken = (
+        f"Got it — I've let the {C.spoken_store(store)} team know and someone will call you back "
+        f"within {window}."
+        if told and callback_number
+        else safety_copy.FOLLOWUP_NOT_CONFIRMED
+    )
     return {
-        "logged": True,
+        "logged": callback is not None,
         "callback_id": callback.pk if callback else None,
         "callback_window": window,
         "store": store,
         "reason": reason,
         "alerted": alerted,
-        "spoken": (
-            f"Got it — I've let the {C.spoken_store(store)} team know and someone will call you back "
-            f"within {window}."
-        ),
+        "spoken": spoken,
     }

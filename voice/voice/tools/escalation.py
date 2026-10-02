@@ -91,8 +91,10 @@ def notify_staff_issue(args: dict, ctx: dict) -> dict:
 
 def _envelope(store: str, *, alerted: bool) -> dict:
     """The spoken confirmation. No number is composed; no cost/margin field exists (Leak-Guard).
-    The ``store`` field keeps the raw slug (logging/routing); the SPOKEN line uses the readable name."""
+    The ``store`` field keeps the raw slug (logging/routing); the SPOKEN line uses the readable name.
+    It claims the team was told only when the staff alert actually went out (``alerted``)."""
     from voice import constants as C
+    from voice import safety_copy
 
     name = C.spoken_store(store)
     return {
@@ -103,5 +105,7 @@ def _envelope(store: str, *, alerted: bool) -> dict:
             f"Thanks for walking me through that — I've sent all of it straight to our {name} "
             "team right now, and they'll follow up with you to make it right. Is there anything "
             "else I can help you with?"
+            if alerted
+            else safety_copy.FOLLOWUP_NOT_CONFIRMED
         ),
     }

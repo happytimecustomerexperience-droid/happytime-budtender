@@ -44,6 +44,7 @@ import json
 import pytest
 
 from voice import vendor_flow
+from voice.safety_copy import FOLLOWUP_NOT_CONFIRMED
 
 # ── store facts pinned from kb/seed.py STORE_FACT_ROWS — the only numbers a turn may speak ──
 YAKIMA_ADDRESS, YAKIMA_PHONE = "1315 N 1st St", "(509) 571-1106"
@@ -874,7 +875,9 @@ def test_15_vendor_who_sounds_retail_at_first(convo, fake_bt):
 
     t = _say(c, "can someone from the purchasing team call me back this week")
     assert t.intent == "vendor_callback"
-    assert "one business day" in t.answer
+    # UPDATED (W5b): a ``convo-`` test session never pages staff and he gave no number, so no
+    # callback is promised — the reply says nobody can promise a follow-up.
+    assert t.answer == FOLLOWUP_NOT_CONFIRMED
 
     t = _say(c, "also, I've got a Metrc transfer manifest to send over before the truck leaves")
     assert t.intent == "vendor_callback"
