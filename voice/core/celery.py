@@ -72,6 +72,8 @@ def _job_outcome(result) -> tuple[bool, str]:
     """(ok, summary) for a task that returned. ``{"skipped": ...}`` (a capability switched off, a
     store unreachable) is not a failure — it is recorded ok with the reason."""
     if isinstance(result, dict):
+        if "error" in result:  # a task that caught its own failure so the beat worker survives
+            return False, str(result["error"])
         if "skipped" in result:
             return True, f"skipped: {result['skipped']}"
         return True, json.dumps(result, default=str, sort_keys=True)

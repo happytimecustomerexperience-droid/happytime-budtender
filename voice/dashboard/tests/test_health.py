@@ -75,6 +75,16 @@ def test_skipped_result_is_ok_not_a_failure(monkeypatch):
 
 
 @pytest.mark.django_db
+def test_an_error_result_is_a_failure_not_ok(monkeypatch):
+    # A task that catches its own failure (so the beat worker survives) must not read as green.
+    _run_beat_task(monkeypatch, lambda: {"error": "comparison failed: site unreachable"})
+
+    row = JobRun.objects.get(name=BEAT_TASK)
+    assert row.ok is False
+    assert row.summary == "comparison failed: site unreachable"
+
+
+@pytest.mark.django_db
 def test_only_beat_scheduled_tasks_are_recorded():
     from voice.tasks import rollup_analytics
 
@@ -273,3 +283,14 @@ def test_call_pages_label_an_unreported_old_call_ended(client_staff):
         html = client_staff.get(reverse(name, args=args)).content.decode().lower()
         assert "ended (no report)" in html, name
         assert "in progress" not in html and "in flight" not in html, name
+
+
+@pytest.mark.django_db
+def test_the_credentials_link_shows_only_to_superusers(client, django_user_model):
+    from django.urls import reverse
+
+    link = f'href="{reverse("dash-credentials")}"'
+    client.force_login(django_user_model.objects.create_user("staff", password="x", is_staff=True))
+    assert link not in client.get(reverse("dash-health")).content.decode()
+    client.force_login(django_user_model.objects.create_superuser("boss", password="x"))
+    assert link in client.get(reverse("dash-health")).content.decode()

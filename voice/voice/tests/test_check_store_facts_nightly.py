@@ -106,7 +106,9 @@ def test_nightly_check_sends_one_alert_on_drift(monkeypatch, settings):
 
 
 @pytest.mark.django_db
-def test_nightly_check_skips_silently_when_site_unreachable(monkeypatch, settings):
+def test_nightly_check_reports_an_unreachable_site_without_alerting_staff(monkeypatch, settings):
+    # Was ..._skips_silently_... (returned {}): the Health page then showed a check that never ran
+    # as ok. Staff are still not paged for it; the failure is now reported (2026-10-01).
     from crm import sinks
     from voice import tasks
 
@@ -116,5 +118,6 @@ def test_nightly_check_skips_silently_when_site_unreachable(monkeypatch, setting
 
     result = tasks.check_store_facts_nightly()
 
-    assert result == {}
+    assert result["error"].startswith("comparison failed: ")
+    assert "HAPPYTIME_SITE_URL" in result["error"]
     assert alerts == []

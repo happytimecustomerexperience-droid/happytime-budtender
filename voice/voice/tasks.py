@@ -183,9 +183,10 @@ def check_store_facts_nightly() -> dict:
         return {"skipped": "capability off"}
     try:
         rows = diff_against_site()
-    except Exception:  # noqa: BLE001 — a fetch/compare failure must never crash the beat worker
+    except Exception as exc:  # noqa: BLE001 — a fetch/compare failure must never crash the beat worker
         logger.warning("check_store_facts_nightly: comparison failed", exc_info=True)
-        return {}
+        # Reported, not hidden: the Health page records an ``error`` result as FAILED.
+        return {"error": f"comparison failed: {exc}"[:300]}
     mismatches = [r for r in rows if r["status"] == "MISMATCH"]
     if not mismatches:
         return {"drift": False, "mismatches": 0}

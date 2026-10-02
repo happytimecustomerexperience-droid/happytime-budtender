@@ -113,7 +113,7 @@
       <a class="nav" href="{% url 'dash-policies' %}">Policies</a>
       <a class="nav" href="{% url 'dash-specials-hours' %}">Specials</a>
       <a class="nav" href="{% url 'dash-weights' %}">Weights</a>
-      <a class="nav" href="{% url 'dash-credentials' %}">Credentials</a>
+      {% if request.user.is_superuser %}<a class="nav" href="{% url 'dash-credentials' %}">Credentials</a>{% endif %}
       <a class="nav" href="{% url 'dash-customers' %}">Customers</a>
       <a class="nav" href="{% url 'dash-calls' %}">Calls</a>
       <a class="nav" href="{% url 'dash-conversation-history' %}">History</a>
