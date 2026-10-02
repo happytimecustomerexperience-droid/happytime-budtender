@@ -5,8 +5,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Happy Time Voice — Dashboard{% endblock %}</title>
-  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <script defer src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js"></script>
+  {# Served from our own static files, not a CDN: a CDN compromise could read the Credentials page. #}
+  {# From the npm tarballs (registry sha512 verified) — htmx.org@1.9.12 dist/htmx.min.js sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2; #}
+  {# alpinejs@3.13.3 dist/cdn.min.js sha384-Rpe/8orFUm5Q1GplYBHxbuA8Az8O8C5sAoOsdbRWkqPjKFaxPgGZipj4zeHL7lxX. #}
+  <script src="{% static 'vendor/htmx-1.9.12.min.js' %}"></script>
+  <script defer src="{% static 'vendor/alpinejs-3.13.3.cdn.min.js' %}"></script>
   {# P5: brand tokens → CSS custom properties (placeholder Happy Time palette until owner capture). #}
   <style>{{ brand_css_vars|safe }}</style>
   <style>

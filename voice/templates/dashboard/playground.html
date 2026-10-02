@@ -219,7 +219,7 @@ web call through Vapi's own speech stack. See dashboard/playground.py for the bo
 {% if vapi_ready %}
 {# Real Vapi web call — Vapi's own ASR/model/TTS. Publishable key only; the webhook does the logging. #}
 <script type="module">
-  import Vapi from "https://esm.sh/@vapi-ai/web";
+  import Vapi from "https://esm.sh/@vapi-ai/web@2.7.1";  // pinned: an unpinned import ran whatever was published last
   const vapi = new Vapi("{{ vapi_public_key|escapejs }}");
   const status = document.getElementById("vapi-status");
   const start = document.getElementById("vapi-start");
