@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from voice import vendor_flow
+from voice.safety_copy import HANDOFF
 
 
 @pytest.mark.django_db
@@ -59,9 +60,9 @@ def test_wholesale_rep_now_routes_to_the_vendor_path(convo, fake_bt):
     assert t.intent == "conflict_resolution", "escalation still outranks vendor detection"
     assert t.escalated is True
     assert t.next_action == "escalate"
-    assert t.answer.startswith("I'm sorry that happened."), (
-        f"the apology template for an upset customer is read to a sales rep: {t.answer!r}"
-    )
+    # UPDATED 2026-10-01: this pinned the bug — the refund apology read to a sales rep who never
+    # complained. A request for a person with no complaint on the session now gets HANDOFF.
+    assert t.answer.startswith(HANDOFF), f"no refund apology for a non-complaint: {t.answer!r}"
     assert not t.grounded, "no KB row matches this message, so nothing is glued onto the apology"
     assert t.tools == ["faq_lookup"], "escalation wins, so the vendor tool never fires here"
 

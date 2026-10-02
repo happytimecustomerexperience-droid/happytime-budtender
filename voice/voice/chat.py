@@ -55,6 +55,8 @@ from voice.safety_copy import (
     CANNOT_ANSWER_SAFELY,
     CRISIS,
     DISPUTE,
+    FAQ_FALLBACK,
+    HANDOFF,
     POISON_EMERGENCY,
     TOOL_DISABLED,
     UNDER_21,
@@ -79,6 +81,10 @@ _HUMAN_RE = re.compile(
     + _HARDWARE_FAILURE + r"|"
     # Nobody answering the store's phone is a complaint, not a request for the number.
     r"(?:nobody|no\s*one)\s+(?:ever\s+)?(?:picks?\s+up|answers?)\s+(?:the\s+|your\s+)?phone|"
+    # A quality complaint that names the category ("the eighth I got was bone dry") read as a
+    # flower ask and was answered with a flower pitch.
+    r"bone\s+dry|dried\s+out|(?:smell(?:s|ed)?|tasted?|tastes)\s+like\s+hay|mold(?:y|ed)?|mildew|"
+    r"disappointed|"
     # "money back" / "busted" are how customers actually phrase a dispute. Without them the
     # category regex wins ("busted vape pen" → cartridge) and the caller gets upsold instead.
     r"money\s*back|busted|"
@@ -149,7 +155,12 @@ _HUMAN_REQUEST_RE = re.compile(
     # role noun is the SUBJECT of the callback, not the object of a talk/speak verb.
     r"\b" + _HUMAN_ROLE + r"\s+(?:needs?\s+to|has\s+to|have\s+to|should|must)\s+"
     r"(?:call|phone|contact|get\s+back\s+to)\s+me\b|"
-    r"\bgive\s+me\s+(?:the\s+)?(?:\w+\s+)?" + _HUMAN_ROLE + r"\b",
+    r"\bgive\s+me\s+(?:the\s+)?(?:\w+\s+)?" + _HUMAN_ROLE + r"\b|"
+    # The phone habit: the whole message is just the role ("representative", "operator", "human
+    # please") — no verb shape at all, so it matched nothing and was neither flagged nor logged.
+    r"^\W*(?:an?\s+)?" + _HUMAN_QUALIFIER
+    + r"(?:human|person|representative|rep|operator|agent|manager|someone|somebody|customer\s+service)"
+    r"(?:\s+(?:please|pls|now))?\W*$",
     re.I,
 )
 
@@ -179,11 +190,16 @@ _CATEGORY_RE = {
     "cartridge": re.compile(r"\b(carts?|cartridges?|vapes?|disposables?|510|pods?)\b", re.I),
     # "zaza"/"za" is ordinary slang for potent flower and matched no lexicon at all, so a very
     # common shopping opener fell out of the product path entirely.
-    "flower": re.compile(r"\b(flowers?|buds?|eighths?|ounces?|zaza|za)\b", re.I),
+    "flower": re.compile(r"\b(flowers?|buds?|eighths?|ounces?|zips?|zaza|za)\b", re.I),
     # Typo-tolerant: "gummys"/"gummie"/"gummiez" are at least as common as the correct spelling
     # and matched neither "gummy" nor "gummies", losing the category outright.
-    "edible": re.compile(r"\b(edibles?|gumm(?:ies|iez|ys|y|ie)|chocolates?|drinks?|beverages?|mg)\b", re.I),
+    "edible": re.compile(
+        r"\b(edibles?|gumm(?:ies|iez|ys|y|ie)|chocolates?|drinks?|beverages?|mg|gomitas?|comestibles?)\b",
+        re.I,
+    ),
     "concentrate": re.compile(r"\b(concentrates?|dabs?|wax|rosin|resin|hash)\b", re.I),
+    # In the TOOL_SPECS category enum and the greeting, and in no lexicon until 2026-10-01.
+    "tincture": re.compile(r"\b(tinctures?)\b", re.I),
     "pre-roll": re.compile(r"\b(pre.?rolls?|joints?)\b", re.I),
     "topical": re.compile(r"\b(topicals?|lotions?|balms?|creams?|salves?)\b", re.I),
     "capsule": re.compile(r"\b(capsules?|pills?|softgels?)\b", re.I),
@@ -265,6 +281,10 @@ _DISPUTE_TOPIC_RE = re.compile(
 # People say budgets out loud: "under twenty bucks", "less than thirty". Digits-only meant a
 # spelled-out ceiling never became a price_max and the caller was shown over-budget picks.
 _PRICE_WORDS = {
+    # 2026-10-01: below ten was missing, so "under five bucks" was dropped and a $6 single shown.
+    "five": 5.0, "six": 6.0, "seven": 7.0, "eight": 8.0, "nine": 9.0, "eleven": 11.0,
+    "twelve": 12.0, "thirteen": 13.0, "fourteen": 14.0, "sixteen": 16.0, "seventeen": 17.0,
+    "eighteen": 18.0, "nineteen": 19.0,
     "ten": 10.0, "fifteen": 15.0, "twenty": 20.0, "twenty-five": 25.0, "twenty five": 25.0,
     "thirty": 30.0, "thirty-five": 35.0, "thirty five": 35.0, "forty": 40.0, "forty-five": 45.0,
     "forty five": 45.0, "fifty": 50.0, "sixty": 60.0, "seventy": 70.0, "eighty": 80.0,
@@ -273,6 +293,12 @@ _PRICE_WORDS = {
 _PRICE_MAX_RE = re.compile(
     r"\b(?:under|below|less than|no more than|up to|max(?:imum)?)\s*\$?\s*"
     r"(\d+(?:\.\d{1,2})?|" + "|".join(sorted(_PRICE_WORDS, key=len, reverse=True)) + r")\b",
+    re.I,
+)
+# ...and the ceiling said AFTER the number: "twenty bucks or less", "$30 max", "40 tops".
+_PRICE_MAX_AFTER_RE = re.compile(
+    r"(?:\$\s*)?\b(\d+(?:\.\d{1,2})?|" + "|".join(sorted(_PRICE_WORDS, key=len, reverse=True)) + r")"
+    r"\s*(?:bucks|dollars)?\s+(?:or\s+(?:less|under|below|cheaper)|max(?:imum)?|tops|at\s+most)\b",
     re.I,
 )
 _DOH_ONLY_RE = re.compile(r"\b(doh|medical|medically compliant|compliant)\b", re.I)
@@ -289,7 +315,7 @@ _EFFECT_TO_BUDTENDER = {
     "focused": "uplifted",
 }
 _EFFECT_ALIASES = (
-    ("sleep", re.compile(r"\b(sleep|sleepy|bedtime|insomnia)\b", re.I)),
+    ("sleep", re.compile(r"\b(sleep|sleepy|bedtime|insomnia|dormir)\b", re.I)),
     # "something good for just tonight" is an evening-relax ask — the time of day IS the effect a
     # customer is naming, and without it the sentence carried no product signal at all and fell
     # out of the shopping path entirely. "tonight" alone never beats an hours question: the
@@ -315,15 +341,32 @@ _EFFECT_ALIASES = (
 _BRAND_MENTION_RE = re.compile(
     r"\b(?:anything|something)\s+from\s+(?P<from>[A-Z][\w'&-]*(?:\s+[A-Z][\w'&-]*)?)|"
     r"\b(?:still\s+)?(?:carry|carrying|stock|stocking|have|got|get)\s+(?:any\s+|the\s+)?"
-    r"(?P<named>[A-Z][\w'&-]*(?:\s+[A-Z][\w'&-]*)?)"
+    r"(?P<named>[A-Z][\w'&-]*(?:\s+[A-Z][\w'&-]*)?)|"
+    # "how much is the Blueberry OG eighth" names the item it prices; without the name the lead pick
+    # was whatever ranked first in the category (a different flower).
+    r"\b[Hh]ow\s+much\s+(?:is|are|for)\s+(?:the\s+|an?\s+)?(?P<priced>[A-Z][\w'&-]*(?:\s+[A-Z][\w'&-]*)?)"
 )
+# A lowercase name ("you guys carry jetty?", "got any blue dream") has no capital to mark it, so it
+# only counts when it ENDS a short ask and the KB had nothing to say (see the call site): then the
+# shelf is tried with it as the brand/strain, and an empty result is the ordinary honest miss.
+_LOOSE_BRAND_RE = re.compile(
+    r"\b(?:carry|carrying|stock|stocking|got|have|sell)\s+(?:any\s+)?"
+    r"(?P<named>[a-z][\w'&-]*(?:\s+[a-z][\w'&-]*)?)\s*[?.!]*\s*$",
+    re.I,
+)
+_NOT_A_NAME = frozenset({"it", "them", "that", "this", "those", "these", "one", "ones", "some", "more",
+                         "left", "any", "anything", "something", "stuff", "here", "there", "today"})
 
 
-def _brand_from_text(text: str) -> str:
+def _brand_from_text(text: str, *, loose: bool = False) -> str:
     match = _BRAND_MENTION_RE.search(text or "")
-    if not match:
+    if match:
+        return (match.group("from") or match.group("named") or match.group("priced") or "").strip()
+    loose_match = _LOOSE_BRAND_RE.search(text or "") if loose else None
+    named = loose_match.group("named").strip() if loose_match else ""
+    if not named or set(named.lower().split()) & _NOT_A_NAME or _category_from_text(named) or _COA_RE.search(named):
         return ""
-    return (match.group("from") or match.group("named") or "").strip()
+    return "" if _effect_from_text(named) else named
 # "how much should I take for my anxiety" carries the same "anxiety" word _EFFECT_ALIASES uses for
 # a shopping ask ("something for anxiety relief"), but it is a condition-dosing SAFETY question
 # (test_thread_17_safety_and_compliance.py) that must never become an upsell attempt — budtenders
@@ -338,7 +381,7 @@ _SIZE_ALIASES = (
     # "halves"/"a half" is how a flower shopper says half-ounce; only the spelled-out forms
     # matched, so the size slot was lost.
     ("14g", re.compile(r"\b(14\s*g|half\s*ounce|halves|a\s+half|1/2\s*oz)\b", re.I)),
-    ("28g", re.compile(r"\b(28\s*g|ounce|1\s*oz)\b", re.I)),
+    ("28g", re.compile(r"\b(28\s*g|ounce|1\s*oz|zips?)\b", re.I)),
     ("5mg", re.compile(r"\b(5\s*mg)\b", re.I)),
     ("10mg", re.compile(r"\b(10\s*mg)\b", re.I)),
     ("20mg+", re.compile(r"\b(20\s*mg|25\s*mg|50\s*mg|100\s*mg)\b", re.I)),
@@ -558,6 +601,9 @@ _NEGATED_SPAN_RE = re.compile(
     r"\b(?:never\s*mind|nevermind|forget(?:\s+about)?|instead\s+of|rather\s+than)(?:\s+[A-Za-z']+){1,3}",
     re.I,
 )
+# ...and a correction said AFTER the retracted word: "gummies, no wait, carts instead", "not edibles,
+# I meant a pre-roll". What follows the last correction marker is the ask, when it names a category.
+_CORRECTION_RE = re.compile(r"\b(?:no\s+wait|wait\s+no|scratch\s+that|i\s+meant?|make\s+that)\b", re.I)
 
 
 def _category_from_text(text: str) -> str:
@@ -566,6 +612,9 @@ def _category_from_text(text: str) -> str:
     checked before "pre-roll" — the caller's own word order is the only honest tie-breaker.
     (Ties still fall to dict order, which is what keeps infused-blunt ahead of blunt: both start
     matching at different offsets in "infused blunt", and infused-blunt starts earlier.)"""
+    corrected = _CORRECTION_RE.split(text or "")[-1]
+    if corrected != text and any(p.search(corrected) for p in _CATEGORY_RE.values()):
+        text = corrected
     text = _NEGATED_SPAN_RE.sub(" ", text or "")
     best, best_start = "", None
     for category, pattern in _CATEGORY_RE.items():
@@ -580,7 +629,7 @@ def _category_from_text(text: str) -> str:
 
 
 def _price_max_from_text(text: str):
-    match = _PRICE_MAX_RE.search(text or "")
+    match = _PRICE_MAX_RE.search(text or "") or _PRICE_MAX_AFTER_RE.search(text or "")
     if not match:
         return None
     raw = match.group(1)
@@ -944,6 +993,29 @@ def _is_pregnancy_question(message: str) -> bool:
     return bool(_PREGNANCY_RE.search(message or ""))
 
 
+# A medical CONDITION plus an ask for advice ("I have asthma, which is easier on my lungs, a cart
+# or flower"). _MEDICATION_RE covers drugs only, so this reached the shelf on "cart" and the pick
+# read as medical guidance. Needs the advice shape too: "anything for my glaucoma" stays shopping.
+_CONDITION_RE = re.compile(
+    r"\b(?:asthma|copd|emphysema|bronchitis|(?:lung|heart|liver|kidney)\s+(?:condition|disease|problems?|issues?)|"
+    r"heart\s+(?:attack|murmur|arrhythmia)|epilep\w*|seizures?|diabet\w*|high\s+blood\s+pressure|"
+    r"bipolar|schizophren\w*|psychosis)\b",
+    re.I,
+)
+_CONDITION_ADVICE_RE = re.compile(
+    r"\bwhich\b[^.?!]{0,40}\b(?:easier|safer|better|gentler|worse|best)\b|"
+    r"\b(?:easier|harder|safer|gentler|easy|hard)\s+on\s+my\b|"
+    r"\b(?:safe|ok|okay|bad)\s+(?:for|with)\s+(?:me|my|someone)\b|\bshould\s+i\b|"
+    r"\bcan\s+i\s+(?:still\s+)?(?:use|smoke|vape|take|have|do)\b|\bwill\s+it\s+(?:hurt|affect|trigger)\b",
+    re.I,
+)
+
+
+def _is_medical_condition_question(message: str) -> bool:
+    text = message or ""
+    return bool(_CONDITION_RE.search(text) and _CONDITION_ADVICE_RE.search(text))
+
+
 def _is_drug_interaction_question(message: str) -> bool:
     text = message or ""
     return bool(_MEDICATION_RE.search(text) and _INTERACTION_VERB_RE.search(text))
@@ -995,7 +1067,12 @@ _PROXY_PURCHASE_RE = re.compile(
     # ...and the handoff on its own: "what if he brings it out to me in the parking lot after" is
     # the same diversion one step later in the plan, with the purchase already assumed.
     r"\b(?:he|she|they|someone(?:\s+else)?|my\s+\w+)\s+(?:can\s+|could\s+|will\s+|would\s+|just\s+)*"
-    r"(?:brings?|gives?|hands?)\s+(?:it|them|that|those)\s+(?:out\s+)?to\s+me\b",
+    r"(?:brings?|gives?|hands?)\s+(?:it|them|that|those)\s+(?:out\s+)?to\s+me\b|"
+    # A courier collecting a customer's order ("I'm a DoorDash driver, here to pick up an order for
+    # a customer") is the same third-party pickup — and delivery is not legal in WA at all.
+    r"\bpick(?:ing)?\s+up\s+(?:an?\s+|the\s+)?order\s+for\s+(?:a\s+|my\s+)?"
+    r"(?:customer|client|someone|somebody|friend|him|her|them)\b|"
+    r"\b(?:doordash|door\s+dash|uber\s*eats|grubhub|instacart|postmates)\b",
     re.I,
 )
 
@@ -1476,7 +1553,15 @@ _VENDOR_RE = re.compile(
     r"i'?m\s+a\s+vendor|vendor\s+account|vendor\s+callback|"
     r"wholesale\s+(pricing|order|orders|account|accounts|purchasing|distributor|rep|reps|"
     r"representative)|calling\s+about\s+wholesale|"
-    r"distributor|"
+    # A distributor identifying itself — NOT a bare "distributor": "who's your distributor" is a
+    # competitor asking where the store sources product, and it was logged as a vendor callback.
+    r"(?:i'?m|we'?re|i\s+am|we\s+are)\s+(?:a|an|the|with)\s+(?:\w+\s+){0,3}distributor|"
+    r"distributor\s+(?:rep|calling|here)|"
+    # A brand pitching shelf space, a vendor collecting a return, a driver at the door.
+    r"(?:my|our)\s+(?:brand|line|products?)\s+(?:on|in|into)\s+(?:your\s+)?(?:shelves|stores?|menu)|"
+    r"(?:carry|stock)\s+(?:my|our)\s+(?:brand|line|products?)|"
+    r"\brma\b|pick\s+up\s+(?:the|a|our)\s+returns?\b|return\s+authori[sz]ation|"
+    r"(?:i'?ve\s+)?got\s+a\s+delivery\s+for\s+(?:you|the\s+store|y'?all)|"
     r"purchasing\s+manager|handles?\s+purchasing|purchasing\s+(department|team)|"
     r"(?:is\s+)?your\s+buyer\s+(?:available|there|in)|the\s+buyer\s+available|"
     r"delivery\s+driver|i'?m\s+the\s+driver|dropping\s+off\s+a\s+delivery|here\s+with\s+a\s+delivery|"
@@ -1621,6 +1706,74 @@ def _is_order_status_question(message: str) -> bool:
     return bool(_ORDER_STATUS_RE.search(message or ""))
 
 
+# Three more things no tool can do, each said plainly instead of answered from a row that shares a
+# word: change/cancel an order, read a loyalty balance, or change marketing-text settings.
+_ORDER_CHANGE_RE = re.compile(
+    r"\bcancel\b[^.?!]{0,30}\border\b|\border\b[^.?!]{0,20}\bcancel|"
+    r"\b(?:change|modify|update)\s+(?:my|the)\s+order\b",
+    re.I,
+)
+_POINTS_BALANCE_RE = re.compile(
+    r"\bhow\s+many\s+(?:loyalty\s+|reward\s+)?points\b|\b(?:points?|rewards?)\s+balance\b|"
+    r"\bpoints\s+do\s+i\s+have\b|\bcheck\s+my\s+(?:points|rewards)\b",
+    re.I,
+)
+_OPT_OUT_RE = re.compile(
+    r"\bstop\s+(?:texting|messaging|sending\s+me|emailing)\b|\bunsubscribe\b|\bopt\s*(?:me\s+)?out\b|"
+    r"\b(?:take|remove)\s+me\s+(?:off|from)\s+(?:your|the)\s+(?:list|texts?|messages|emails?)\b",
+    re.I,
+)
+# Questions with no KB row and no tool behind them. Each used to be answered from whatever row
+# shared a word (a lost wallet got the "you've reached Happy Time" row) or pitched a product for a
+# noun in it ("who do you buy your carts from" got a cart). The FAQ hand-off is the honest answer.
+_HANDOFF_ONLY_RE = re.compile(
+    # lost and found
+    r"\b(?:left|lost|forgot|dropped)\s+(?:my|a|an|our)\s+[\w'-]+(?:\s+[\w'-]+)?\s+(?:in|at)\s+"
+    r"(?:your|the)\s+(?:store|shop|counter|lobby|lot|parking\s+lot)\b|"
+    r"\b(?:anyone|anybody|someone)\s+turn(?:ed)?\s+(?:one|it|a\s+\w+)\s+in\b|\blost\s+and\s+found\b|"
+    # where the store sources product (a competitor's question, not a vendor's)
+    r"\bwho(?:'s|\s+is|\s+are)\s+your\s+(?:distributors?|suppliers?|vendors?|wholesalers?|growers?)\b|"
+    r"\b(?:who|where)\s+do\s+you\s+(?:buy|get|source|order)\b[^.?!]{0,30}\bfrom\b|"
+    # a THC-percent filter or a potency comparison (no THC slot exists)
+    r"\b(?:over|above|more\s+than|at\s+least|higher\s+than|under|below|less\s+than)\s+\d{1,2}(?:\.\d)?\s*"
+    r"(?:%|percent)|"
+    r"\bwhich\s+(?:one\s+)?(?:has|is|'s)\s+(?:more|less|higher|lower)\s+(?:thc|cbd|potency)\b|"
+    r"\bwhich\s+(?:one\s+)?is\s+stronger\b|"
+    # accessories (no category for them; "510 batteries" read as a cart)
+    r"\b(?:510\s+)?batter(?:y|ies)\b|\bchargers?\b|\bgrinders?\b|\brolling\s+papers?\b|\bbongs?\b|"
+    r"\blighters?\b|"
+    # what just arrived (no receipt data reaches the brain)
+    r"\bwhat'?s\s+new\b|\bnew\s+(?:arrivals?|drops?|stuff|products?|strains?)\b|"
+    r"\b(?:just|recently)\s+(?:came|come|got)\s+in\b|"
+    r"\b(?:get|got)\s+(?:any\s+)?new\b[^.?!]{0,30}\b(?:in|lately|recently)\b",
+    re.I,
+)
+# More flower than one visit allows. "quarter" alone is the 7 g size, so a quarter POUND searched
+# the shelf for quarter-ounces; the answer is the WA per-visit flower limit row.
+_OVER_LIMIT_RE = re.compile(
+    r"\b(?:quarter|half)\s+(?:a\s+)?(?:pound|lb)s?\b|\b(?:a|one|1)\s+(?:pound|lb)\b|\bqp\b|"
+    r"\b(?:two|three|four|five|2|3|4|5)\s+(?:ounces|oz|zips)\b",
+    re.I,
+)
+_FLOWER_LIMIT_QUERY = "what is the useable flower purchase limit per visit"
+_ADD_TO_HOLD_RE = re.compile(
+    r"\badd\b[^.?!]{0,40}\bto\s+(?:that|it|this|my\s+(?:order|hold|cart)|the\s+(?:order|hold|cart))\b", re.I
+)
+# A lone greeting or "are you still there" (no question yet) and a request to hear the last answer
+# again. Both used to get "I'm not certain on that one".
+_GREETING_ONLY_RE = re.compile(
+    r"^\W*(?:(?:hi|hello|hey|hiya|howdy|yo|good\s+(?:morning|afternoon|evening))\W*)*"
+    r"(?:(?:are\s+you|you|is\s+anyone|anyone|anybody)\s+(?:still\s+)?(?:there|here)\W*)?$",
+    re.I,
+)
+_REPEAT_RE = re.compile(
+    r"^\W*(?:what|huh|pardon(?:\s+me)?|sorry|come\s+again|excuse\s+me)\W*$|"
+    r"\b(?:say|repeat)\s+(?:that|it)\s+(?:again|one\s+more\s+time)\b|\bcan\s+you\s+repeat\b|"
+    r"\bdidn'?t\s+(?:catch|hear|get)\s+(?:that|you|it)\b",
+    re.I,
+)
+
+
 def _is_restock_request(message: str) -> bool:
     return bool(_RESTOCK_RE.search(message or ""))
 
@@ -1760,6 +1913,8 @@ _DURATION_RE = re.compile(
 _REFINEMENT_RE = re.compile(
     r"\b(cheaper|cheapest|less\s+expensive|lower|smaller|bigger|larger|stronger|weaker|"
     r"something\s+else|anything\s+else|other\s+options?|different|instead|"
+    # "what's a good alternative" after an honest miss is the same ask, re-aimed.
+    r"alternatives?|similar|something\s+like\s+(?:it|that)|"
     # "just the medically compliant ones" is a narrowing of the ask before it, not a new subject.
     r"medically\s+compliant|doh)\b",
     re.I,
@@ -1860,6 +2015,18 @@ def _compound_halves(message: str) -> tuple[str, str]:
         return faq_half, product_half
     return "", ""
 
+
+def _faq_pair(message: str) -> tuple[str, str]:
+    """Two FAQ halves on DIFFERENT topics ("what time do you close and what's your return policy").
+    Only the first used to be answered, and the second dropped with no acknowledgement."""
+    parts = [p.strip() for p in _COMPOUND_SPLIT_RE.split(message or "") if p.strip()]
+    topical = [p for p in parts if _faq_topic(p)]
+    for i, first in enumerate(topical):
+        second = next((p for p in topical[i + 1:] if _faq_topic(p) != _faq_topic(first)), "")
+        if second:
+            return first, second
+    return "", ""
+
 def _ask_clause(message: str) -> str:
     """The clause that carries the caller's actual ask, for a message long enough to have wandered.
     Short messages (the overwhelming majority) are returned unchanged, so nothing else moves."""
@@ -1891,11 +2058,16 @@ def _faq_topic(message: str) -> str:
     message = _DURATION_RE.sub(" ", _faq_vocabulary(message))
     if _RETURN_RE.search(message or ""):
         return "return_policy"
-    if _SPECIALS_RE.search(message or ""):
+    # "do I still earn points if the item is on sale" is a loyalty question that says "sale"; scoped
+    # to specials it could only be answered with the deal list.
+    if _SPECIALS_RE.search(message or "") and not _LOYALTY_RE.search(message or ""):
         return "specials"
     if _HOURS_LOC_RE.search(message or ""):
         return "hours_location"
     return ""
+
+
+_LOYALTY_RE = re.compile(r"\b(?:points?|loyalty|rewards?)\b", re.I)
 
 
 _TOPIC_VOCAB = {"return_policy": _RETURN_RE, "specials": _SPECIALS_RE, "hours_location": _HOURS_LOC_RE}
@@ -1963,11 +2135,21 @@ def _staff_issue_type(message: str) -> str:
     return "dispute"
 
 
-def _escalation_answer(store: str, phone: str) -> str:
+def _escalation_answer(store: str, phone: str, *, complained: bool = True) -> str:
     """The un-grounded dispute reply. Personalized through ``_staff_followup_hint`` — the previous
     hardcoded string dropped store/phone entirely, so a caller who had just read out her callback
-    number was never told it had been taken down."""
-    return DISPUTE + _staff_followup_hint(store, phone)
+    number was never told it had been taken down. When nobody on the session has complained (a
+    reporter, "representative", "can I talk to someone") the neutral HANDOFF line replaces the
+    return/refund apology, which is a non-sequitur there."""
+    return (DISPUTE if complained else HANDOFF) + _staff_followup_hint(store, phone)
+
+
+def _session_complained(message: str, history) -> bool:
+    """Whether this turn or any earlier caller turn on the session used complaint vocabulary."""
+    return bool(_HUMAN_RE.search(message or "")) or any(
+        isinstance(m, dict) and m.get("role") == "user" and _HUMAN_RE.search(str(m.get("content") or ""))
+        for m in (history or [])
+    )
 
 
 # NEW COPY — REQUIRES OWNER APPROVAL. The generic _escalation_answer ("I can't confirm a return or
@@ -2001,6 +2183,26 @@ def _under_21_answer(store: str, phone: str) -> str:
 
 def _poison_emergency_answer(store: str, phone: str) -> str:
     return POISON_EMERGENCY + _staff_followup_hint(store, phone)
+
+
+def _plain_reply(answer: str, store: str, phone: str, tool_results: list, *,
+                 escalated: bool = False, action: str = "ask_staff", intent: str = "general_faq") -> dict:
+    """An ungrounded answer — by default one that hands the caller to a person."""
+    action = "escalate" if escalated else action
+    return {
+        "ok": True,
+        "intent": intent,
+        "answer": answer,
+        "grounded": False,
+        "sources": [],
+        "tool_results": tool_results,
+        "escalation_required": escalated,
+        "escalation_flag": escalated,
+        "safe_next_action": action,
+        "safe_suggested_next_action": _suggested_next_action(action),
+        "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+        "store": store,
+    }
 
 
 def _disabled_reply(result: dict, store: str, phone: str, tool_results: list, *,
@@ -2116,6 +2318,27 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             "store": store,
         }
 
+    # "what?" / "can you say that again": the agent's own last answer, again. A stored answer that
+    # had PII masked out of it ("[redacted]" — an address, a number) is re-derived from the
+    # question that produced it instead, so the caller never hears the mask.
+    if _REPEAT_RE.search(message):
+        said = _last_agent_line(history)
+        if said and "[redacted]" not in said:
+            return _plain_reply(said, store, phone, [], action="answer", intent="greeting_other")
+        prior = next((str(m.get("content") or "") for m in reversed(history or [])
+                      if isinstance(m, dict) and m.get("role") == "user"
+                      and not _REPEAT_RE.search(str(m.get("content") or ""))), "")
+        if prior:
+            return _route_chat_turn({**data, "message": prior}, history, escalation_state)
+    # A lone "hello?" / "are you still there": the owner's own opener (the entry_router
+    # first_message the phone and the website already use), not "I'm not certain on that one".
+    if re.search(r"[a-z]", message, re.I) and _GREETING_ONLY_RE.fullmatch(message):
+        from voice.provision import entry_greeting
+
+        greeting = entry_greeting()
+        if greeting:
+            return _plain_reply(greeting, store, phone, [], action="answer", intent="greeting_other")
+
     ctx = {"store": store, "session_token": session_token, "channel": "text", "known": False}
     # Text chat has no Vapi call.id — reuse session_token consistently (the same key
     # ``_persist_trusted_turn``/``_load_trusted_history`` already use) so ``suggest.py``'s
@@ -2164,6 +2387,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         or _is_dosing_advice_question(message)
         or _is_drug_interaction_question(message)
         or _is_pregnancy_question(message)
+        or _is_medical_condition_question(message)
         or _is_adverse_event_report(message)
         or _is_proxy_purchase_question(message)
         # NOTE: interstate transport is deliberately NOT a safety escalation. Tried it; it made
@@ -2236,14 +2460,29 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     prefer_products = _prefers_products(ask, category, escalation=escalation) or attempt_product_search
     # The router already classifies the subject; retrieval was never told, so "what time do you
     # close today" came back with the July specials row. Pass it so retrieval can be constrained.
-    faq_args = {"query": faq_half or ask, "store": store}
-    faq_topic = _faq_topic(faq_half or ask)
+    # More flower than one visit allows ("a quarter pound") is answered by the WA limit row, not
+    # by a shelf search for the 7 g "quarter" the size parser hears.
+    over_limit = bool(_OVER_LIMIT_RE.search(ask))
+    if over_limit:
+        category, attempt_product_search, prefer_products = "", False, False
+    pair = ("", "") if (faq_half or over_limit) else _faq_pair(ask)
+    faq_args = {
+        "query": _FLOWER_LIMIT_QUERY if over_limit else (faq_half or pair[0] or ask), "store": store
+    }
+    faq_topic = _faq_topic(faq_args["query"])
     if faq_topic:
         faq_args["topic"] = faq_topic
     faq = dispatch("faq_lookup", faq_args, ctx)
     # ``args`` rides along so a caller (the staff test console) can see WHICH slots the router
     # derived, not just what came back — the difference between "wrong answer" and "wrong routing".
     tool_results = [{"tool": "faq_lookup", "args": faq_args, "result": faq}]
+    if pair[1]:
+        second_args = {"query": pair[1], "store": store, "topic": _faq_topic(pair[1])}
+        second = dispatch("faq_lookup", second_args, ctx)
+        tool_results.append({"tool": "faq_lookup", "args": second_args, "result": second})
+        if faq.get("grounded") and second.get("grounded") and str(second.get("answer") or "").strip():
+            faq = {**faq, "answer": f"{faq['answer']} {second['answer']}",
+                   "sources": list(faq.get("sources") or []) + list(second.get("sources") or [])}
     if faq.get("grounded") and not str(faq.get("answer") or "").strip():
         faq = {"grounded": False, "fallback": faq.get("fallback") or "can't confirm"}
         tool_results[0]["result"] = faq
@@ -2262,9 +2501,22 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     # that merely retrieves the Edibles guide as faq_lookup's incidental top hit), that grounded
     # row is never spoken to the caller either way, so there is nothing to leak and no reason to
     # divert an ordinary sale into an escalation.
-    if not escalation and not prefer_products and _dosing_advice_leaks(faq):
+    dosing_leak = not escalation and not prefer_products and _dosing_advice_leaks(faq)
+    if dosing_leak:
         escalation = True
         safety_hit = True
+
+    # Questions no KB row and no tool can answer (``_HANDOFF_ONLY_RE``) get the honest hand-off —
+    # never a pitch for a noun they mention, never a row that merely shares one of their words.
+    if not escalation and _HANDOFF_ONLY_RE.search(ask):
+        faq = {"grounded": False, "fallback": faq.get("fallback") or FAQ_FALLBACK}
+        category, attempt_product_search, prefer_products = "", False, False
+    # A lowercase brand/strain name ending a short ask is tried on the shelf, but only when the KB
+    # had nothing to say (see ``_LOOSE_BRAND_RE``).
+    loose_brand = ""
+    if not (category or attempt_product_search or escalation or faq.get("grounded")) and not _faq_first(ask):
+        loose_brand = _brand_from_text(ask, loose=True)
+        attempt_product_search = bool(loose_brand)
 
     # Vendor/staging gates (ADDED precedence — see the block comment above their definitions):
     # both lose to escalation/safety, and both win over the grounded-FAQ speak decision and the
@@ -2284,6 +2536,40 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     )
     if not escalation and (_is_staging_request(message) or answers_hold_ask):
         return _stage_cart_reply(ctx, store, phone, tool_results)
+
+    # Change/cancel an order, or read a points balance: no tool can, so say so (``_ORDER_CHANGE_RE``).
+    if not escalation and (_ORDER_CHANGE_RE.search(message) or _POINTS_BALANCE_RE.search(message)):
+        # NEW COPY — REQUIRES OWNER APPROVAL (both lines).
+        what = (
+            "change or cancel an order" if _ORDER_CHANGE_RE.search(message) else "look up a points balance"
+        )
+        answer = f"I can't {what} from here. A team member can do that for you — " + _staff_followup_hint(
+            store, phone
+        )
+        return _plain_reply(answer, store, phone, tool_results)
+
+    # A marketing opt-out is time-sensitive and only a person can action it: file it when there is
+    # a number to file it under, and never claim the caller has been removed (``_OPT_OUT_RE``).
+    if not escalation and _OPT_OUT_RE.search(message):
+        filed = False
+        if phone:
+            staff_args = {"store": store, "issue_type": "other", "summary": f"Opt-out request: {message}"}
+            staff_result = dispatch("notify_staff_issue", staff_args, ctx)
+            tool_results = tool_results + [
+                {"tool": "notify_staff_issue", "args": dict(staff_args), "result": staff_result}
+            ]
+            if staff_result.get("disabled"):
+                return _disabled_reply(staff_result, store, phone, tool_results)
+            filed = not staff_result.get("error")
+        # NEW COPY — REQUIRES OWNER APPROVAL (both lines).
+        answer = (
+            "I can't change your text or email settings from here, but I've passed your request to "
+            "the store team so a person can take you off the list."
+            if filed
+            else "I can't change your text or email settings from here — a team member at the store "
+            "can take you off the list."
+        )
+        return _plain_reply(answer, store, phone, tool_results, escalated=True)
 
     # No tool can look an order up (see ``_ORDER_STATUS_RE``) — hand it to someone who can,
     # rather than reciting the generic online-order ETA as if it were this caller's order.
@@ -2406,6 +2692,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     # hours row, which would then be read out under the apology.
     if speak_faq and (
         is_poison_emergency
+        or _PROXY_PURCHASE_RE.search(message)
         or _is_public_consumption_question(message)
         or _is_impaired_driving_question(message)
     ):
@@ -2449,12 +2736,14 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         # driving/allergen (the agent cannot answer it safely), so they now pick the same
         # already-owner-signed copy. No new wording.
         is_cannot_answer_safely = not is_poison_emergency and (
-            _is_impaired_driving_question(message)
+            dosing_leak
+            or _is_impaired_driving_question(message)
             or _is_public_consumption_question(message)
             or _is_allergen_question(message)
             or _is_dosing_advice_question(message)
             or _is_drug_interaction_question(message)
             or _is_pregnancy_question(message)
+            or _is_medical_condition_question(message)
         )
         if is_poison_emergency:
             answer = _poison_emergency_answer(store, phone)
@@ -2463,7 +2752,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         elif under_21 or _is_proxy_purchase_question(message):
             answer = _under_21_answer(store, phone)
         else:
-            answer = _escalation_answer(store, phone)
+            answer = _escalation_answer(store, phone, complained=safety_hit or _session_complained(message, history))
         return {
             "ok": True,
             "answer": answer,
@@ -2517,7 +2806,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             if effect:
                 suggest_args["effect_desired"] = _EFFECT_TO_BUDTENDER.get(effect, effect)
         if "brand" not in suggest_args:
-            brand = _brand_from_text(ask)
+            brand = loose_brand or _brand_from_text(ask)
             if brand:
                 suggest_args["brand"] = brand
         if "size" not in suggest_args:
@@ -2569,6 +2858,11 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             compound_answer = suggest.get("spoken_summary") or "I found a few in-stock options."
             if faq_half and faq.get("grounded") and str(faq.get("answer") or "").strip():
                 compound_answer = f"{faq['answer']} {compound_answer}"
+            # "add a single pre-roll to that" after a hold: the pick is shown, but nothing was added
+            # to the hold — say so, or the caller walks in expecting both.
+            if _ADD_TO_HOLD_RE.search(ask):
+                # NEW COPY — REQUIRES OWNER APPROVAL.
+                compound_answer += ' That one isn\'t on your hold yet — say "hold that one" and I\'ll set it aside too.'
             return {
                 "ok": True,
                 "intent": "product_suggestion",
@@ -2603,7 +2897,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     fallback = faq.get("fallback") or "I can't confirm that from the current Happy Time knowledge base."
     answer = fallback
     if escalation:
-        answer = _escalation_answer(store, phone)
+        answer = _escalation_answer(store, phone, complained=safety_hit or _session_complained(message, history))
     elif _requires_sources(message) and not faq.get("grounded") and not faq.get("disabled"):
         answer = f"I can't confirm that right now from the current knowledge base. {_staff_followup_hint(store, phone)}"
     return {

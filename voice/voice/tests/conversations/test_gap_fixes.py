@@ -244,3 +244,33 @@ def test_deal_description_is_appended_only_when_it_adds_something():
     assert spoken({**base, "description": "Lowest cost in town"}, today) == "Chewee's Special."
     long = "Buy any two and save. " + "Fine print " * 30
     assert spoken({**base, "description": long}, today) == "Chewee's Special. Buy any two and save."
+
+
+# ── 10. the rest of the gap file: controls the scenarios cannot carry ─────────
+@pytest.mark.django_db
+def test_say_that_again_rederives_an_answer_whose_stored_copy_was_masked(convo):
+    c = convo(store="mount-vernon")
+    first = c.say("what's your address")
+    assert "Suzanne" in first.answer
+    again = c.say("what?")
+    assert "[redacted]" not in again.answer and "Suzanne" in again.answer
+
+
+@pytest.mark.django_db
+def test_greeting_only_when_the_message_is_only_a_greeting(convo):
+    assert convo().say("hello? are you still there").answer.startswith("Welcome to Happy Time")
+    assert convo().say("hi, what time do you close").intent == "hours_location"
+
+
+@pytest.mark.django_db
+def test_lowercase_name_is_tried_only_when_it_ends_a_short_ask(convo):
+    assert convo().say("you guys carry jetty?").picks
+    t = convo().say("do you guys have any tips for a first timer")
+    assert "suggest_products" not in t.tools
+
+
+@pytest.mark.django_db
+def test_a_complaint_session_keeps_the_dispute_apology(convo):
+    c = convo()
+    c.say("my order was wrong and I'm furious")
+    assert c.say("I want to talk to a manager").answer.startswith("I'm sorry that happened.")

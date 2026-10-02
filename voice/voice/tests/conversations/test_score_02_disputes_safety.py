@@ -1157,7 +1157,10 @@ def test_25_grand_finale_shopping_safety_dispute_faq(convo):
     # tax-included row, confidently and cited ("every price already includes all taxes"). "Out" is
     # filler, not evidence, so it declines honestly now and takes this file's NO ANSWER -10 for it.
     # That is the same honesty-costs-points dynamic noted above, in the other direction.
-    assert score == 55, deductions
+    # RESCORED 2026-10-01, 55 -> 75: the DROPPED CONTEXT x2 gap above (turns 9-10) is closed —
+    # "moldy" is complaint vocabulary now, so "just fix the moldy eighth situation" stays the
+    # dispute instead of reading as a flower ask.
+    assert score == 75, deductions
     assert c.turns[1].answer.startswith("This could be an emergency"), (
         "the dedicated poison-emergency copy, not the dispute apology, must open this reply"
     )

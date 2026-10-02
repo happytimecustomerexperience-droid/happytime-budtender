@@ -116,14 +116,15 @@ def test_caller_presses_for_exact_numbers(convo, fake_bt):
     # price" doesn't match ``_FAQ_FIRST_RE``, so the loyalty-program row faq_lookup retrieved is
     # never spoken; the canned escalation copy answers instead, with no KB row riding along.
     assert t.grounded is False
+    # UPDATED 2026-10-01: this pinned the refund apology for a caller who only asked for a person
+    # to quote a price (no complaint on the session); that request now gets the neutral HANDOFF.
     assert t.answer == (
-        "I'm sorry that happened. I can't confirm a return or refund outcome from the current "
-        "Happy Time knowledge base, but I can get the store team involved. "
+        "I can get someone from the store team to help with that. "
         "Please share your details for the yakima team so they can contact you at a callback number or email."
     )
     # The canned escalation copy introduces no figure of its own either.
     assert not _numbers(t.answer), t.answer
-    assert t.answer.startswith("I'm sorry that happened.")
+    assert t.answer.startswith("I can get someone from the store team")  # see the UPDATED note above
     assert "share your details for the yakima team" in t.answer
 
     assert len(c.turns) == 6

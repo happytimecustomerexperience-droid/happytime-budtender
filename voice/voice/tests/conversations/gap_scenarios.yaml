@@ -66,6 +66,7 @@
     tools: [suggest_products]
     must: ['(?i)blue dream']
   note: "[LIKELY FAIL] same root: a bare strain name with no category word and no capital letter is invisible to the router, so a real shopping ask ends as 'I'm not certain on that one'."
+  owner_question: "2026-10-01: the shelf is now searched for 'blue dream' and the top pick IS a Blue Dream product (Single Pre-roll 1g), but the spoken pick line names only product + brand, never the strain. Should a pick line add the strain when the caller asked by strain (e.g. 'Roller Co Single Pre-roll 1g, Blue Dream')? It changes every spoken pick, so it needs your OK."
 
 - id: named-sku-price-eighth-substitution
   class: price-of-named-sku
@@ -266,6 +267,7 @@
     must: ['(?i)(\bid\b|walk in|photo id)']
     must_not: ['(?i)^yes\b', '(?i)you (must|have to|need to) (sign up|join|register)']
   note: "[LIKELY FAIL] 'sign up' is a paraphrase of the loyalty row, so the reply opens 'Yes - it's free to join...' which reads as 'yes, sign up first'. The right grounded rows are in-store / id-required (walk in, bring ID, no account needed)."
+  owner_question: "2026-10-01: turn 1 now grounds on the walk-in row. Turn 2 still lands on a loyalty row because no KB row says shopping needs no account. Add an FAQ row, e.g. 'Do I need to sign up or make an account to shop? — No account needed: walk in with a valid 21+ government photo ID. Rewards sign-up is optional.' (a business-policy claim, so it is yours to approve)."
 
 - id: id-scan-retention-privacy
   class: first-visit

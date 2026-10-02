@@ -55,3 +55,8 @@ CRISIS = (
     "Crisis Lifeline — it's free, confidential, and open 24/7. If you're in immediate danger, "
     "call 911."
 )
+
+# NEW COPY — owner sign-off. voice/chat.py::_escalation_answer — a request for a person that is
+# not a complaint ("can I talk to someone about a story", "representative"). DISPUTE's
+# return/refund wording is a non-sequitur there.
+HANDOFF = "I can get someone from the store team to help with that. "

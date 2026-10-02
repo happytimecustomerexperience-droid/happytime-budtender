@@ -4,6 +4,8 @@ Each entry is a short conversation; ``expect`` is asserted on the LAST turn (or 
 a 0-based index, when an entry says otherwise). ``must``/``must_not`` are regexes over the answer;
 ``tools`` must all appear in that turn's tool_results; ``intent``/``grounded``/``escalated`` are the
 ``Turn`` properties of the same name. Header of the YAML explains the tags and fixture additions.
+An entry carrying ``owner_question`` is a known gap that needs an owner decision (copy or a KB row);
+it runs as a strict xfail, so the day it starts passing the marker has to come off.
 """
 
 from __future__ import annotations
@@ -35,7 +37,11 @@ def _failures(turn, expect: dict) -> list[str]:
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("entry", SCENARIOS, ids=[s["id"] for s in SCENARIOS])
+@pytest.mark.parametrize("entry", [
+    pytest.param(s, marks=pytest.mark.xfail(strict=True, reason=s["owner_question"]))
+    if s.get("owner_question") else s
+    for s in SCENARIOS
+], ids=[s["id"] for s in SCENARIOS])
 def test_gap_scenario(entry, convo):
     c = convo(store=entry.get("store", "yakima"), phone=entry.get("phone", ""))
     turns = [c.say(t) for t in entry["turns"]]
