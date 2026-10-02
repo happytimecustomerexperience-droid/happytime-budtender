@@ -429,7 +429,7 @@ def test_chat_history_fetches_budtender_history_server_side(client_staff, settin
                 "ok": True,
                 "sessions": [
                     {
-                        "session_token": "s-chat",
+                        "id": 7,
                         "channel": "chat",
                         "location_slug": "yakima",
                         "stage": "RESULTS",
@@ -504,7 +504,7 @@ def test_chat_detail_fetches_one_budtender_session_server_side(client_staff, set
                 "ok": True,
                 "sessions": [
                     {
-                        "session_token": "s-history-1",
+                        "id": 41,
                         "channel": "chat",
                         "location_slug": "pullman",
                         "stage": "RESULTS",
@@ -524,14 +524,16 @@ def test_chat_detail_fetches_one_budtender_session_server_side(client_staff, set
 
     monkeypatch.setattr(requests, "post", fake_post)
 
-    resp = client_staff.get(reverse("dash-chat-detail") + "?session_token=s-history-1")
+    resp = client_staff.get(reverse("dash-chat-detail") + "?id=41")
 
     assert resp.status_code == 200
     assert calls[0]["url"] == "https://budtender.internal/api/v1/chat/history"
-    assert calls[0]["json"] == {"session_token": "s-history-1", "limit": 1, "message_limit": 500}
+    # By the opaque row id — the visitor's session token is their write credential and is never
+    # handed to (or sent by) the dashboard.
+    assert calls[0]["json"] == {"id": 41, "limit": 1, "message_limit": 500}
     assert calls[0]["headers"]["Authorization"] == "Bearer secret-token"
     content = resp.content.decode()
-    assert "Chat session s-history-1" in content
+    assert "Chat 41" in content
     assert "pullman / chat" in content
     assert "Need gummies" in content
     assert "What effect?" in content
@@ -561,7 +563,7 @@ def test_conversation_history_combines_voice_and_chat(client_staff, settings, mo
                 "ok": True,
                 "sessions": [
                     {
-                        "session_token": "s-history-1",
+                        "id": 41,
                         "channel": "chat",
                         "location_slug": "pullman",
                         "message_count": 2,
@@ -582,8 +584,8 @@ def test_conversation_history_combines_voice_and_chat(client_staff, settings, mo
     content = resp.content.decode()
     assert "Conversation history" in content
     assert "call-history-1" in content
-    assert "s-history-1" in content
-    assert reverse("dash-chat-detail") + "?session_token=s-history-1" in content
+    assert "chat-41" in content
+    assert reverse("dash-chat-detail") + "?id=41" in content
     assert "yakima" in content
     assert "pullman" in content
     assert "Caller asked about hours." in content

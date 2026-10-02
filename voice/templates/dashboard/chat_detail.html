@@ -1,8 +1,8 @@
 {% extends "dashboard/base.html" %}
-{% block title %}Chat session {{ session_token }} - Happy Time Voice{% endblock %}
+{% block title %}Chat {{ session_id }} - Happy Time Voice{% endblock %}
 {% block content %}
 <p class="muted"><a href="{% url 'dash-conversation-history' %}">← Conversation history</a> · <a href="{% url 'dash-chat-history' %}">Chatbot history</a></p>
-<h1>Chat session {{ session_token|default:"-" }}</h1>
+<h1>Chat {{ session_id|default:"-" }}</h1>
 
 {% if not result.ok %}
   <div class="card"><p class="muted">{{ result.reason }}</p></div>
@@ -14,7 +14,7 @@
         <span class="muted">{{ session.last_active_at }}</span>
       </div>
       <p class="muted">
-        Session {{ session.session_token }} · {{ session.message_count }} messages · {{ session.stage|default:"-" }}
+        Chat {{ session.id }} · {{ session.message_count }} messages · {{ session.stage|default:"-" }}
       </p>
       <table>
         <tr><th>Role</th><th>Message</th><th>When</th></tr>

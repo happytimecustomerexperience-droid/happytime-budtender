@@ -167,11 +167,13 @@ def _chatbot_history(limit: int = 25) -> dict:
     return _chatbot_history_for_payload({"limit": limit, "message_limit": 200})
 
 
-def _chatbot_session(session_token: str) -> dict:
-    token = str(session_token or "").strip()[:128]
-    if not token:
-        return {"ok": False, "reason": "missing chatbot session token", "session": None}
-    data = _chatbot_history_for_payload({"session_token": token, "limit": 1, "message_limit": 500})
+def _chatbot_session(session_id: str) -> dict:
+    # The history list hands out an opaque row ``id`` (never the visitor's session token — that is
+    # the credential their browser writes to its own chat with), so a transcript opens by id.
+    sid = str(session_id or "").strip()
+    if not sid.isdigit():
+        return {"ok": False, "reason": "missing chatbot session id", "session": None}
+    data = _chatbot_history_for_payload({"id": int(sid), "limit": 1, "message_limit": 500})
     sessions = data.get("sessions", [])
     return {
         "ok": bool(data.get("ok") and sessions),
@@ -750,12 +752,12 @@ def chat_history(request):
 
 @staff_member_required
 def chat_detail(request):
-    session_token = str(request.GET.get("session_token") or "").strip()[:128]
-    result = _chatbot_session(session_token)
+    session_id = str(request.GET.get("id") or "").strip()[:12]
+    result = _chatbot_session(session_id)
     return render(
         request,
         "dashboard/chat_detail.html",
-        {"result": result, "session_token": session_token},
+        {"result": result, "session_id": session_id},
     )
 
 
@@ -784,18 +786,18 @@ def conversation_history(request):
     for session in chat_history_data.get("sessions", []):
         messages = session.get("messages") if isinstance(session.get("messages"), list) else []
         latest = messages[-1].get("content", "") if messages and isinstance(messages[-1], dict) else ""
-        session_token = session.get("session_token") or ""
+        session_id = session.get("id")
         rows.append(
             {
                 "channel": session.get("channel") or "chat",
                 "store": session.get("location_slug") or "",
                 "when": session.get("last_active_at") or "",
-                "conversation_id": session_token,
+                "conversation_id": f"chat-{session_id}" if session_id else "",
                 "summary": " ".join(str(latest or "").split())[:220],
                 "status": f"{session.get('message_count', 0)} messages",
                 "href": (
-                    reverse("dash-chat-detail") + "?" + urlencode({"session_token": session_token})
-                    if session_token
+                    reverse("dash-chat-detail") + "?" + urlencode({"id": session_id})
+                    if session_id
                     else ""
                 ),
             }

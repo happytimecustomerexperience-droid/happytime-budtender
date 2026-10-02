@@ -22,7 +22,7 @@
       <span class="muted">{{ session.last_active_at }}</span>
     </div>
     <p class="muted">
-      Session {{ session.session_token }} · {{ session.message_count }} messages · {{ session.stage|default:"-" }}
+      Chat {{ session.id }} · {{ session.message_count }} messages · {{ session.stage|default:"-" }}
     </p>
     <table>
       <tr><th>Role</th><th>Message</th><th>When</th></tr>
