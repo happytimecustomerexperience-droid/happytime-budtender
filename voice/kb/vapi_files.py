@@ -9,6 +9,9 @@ duplicate creates on a re-mirror), and attaches/updates a Vapi Query Tool on the
 assistant. Safe no-op when ``VAPI_PRIVATE_KEY`` is unset → ``{"skipped": "not configured"}``
 (the canonical ``faq_lookup`` path still answers from ``kb/``).
 
+The phone model reads these files directly, so every row passes the same poison screen the
+webhook/tool path uses (``_screened``): a row that fails is left out and its id logged.
+
 The exact Files-API endpoint shapes live in 20-SPEC-vapi-deploy.md; this module states only
 what it calls (``/file`` CRUD via the vapi verb primitives, ``/tool`` for the Query Tool).
 """
@@ -18,6 +21,7 @@ from __future__ import annotations
 import logging
 
 from core.services import vapi
+from voice.tools.faq import _looks_poisoned  # the poison screen the webhook/tool path applies
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +36,29 @@ def _h(title: str) -> str:
     return f"# {title}\n\n"
 
 
+def _screened(rows, file_kind: str) -> list:
+    """The rows whose rendered text passes the poison screen the webhook/tool path applies to KB
+    content (``voice.tools.faq._looks_poisoned``). The phone model reads these files directly, with
+    no per-answer screen in between, so a row that fails is left out of the file and its id logged
+    for review — judged on ``chunk_text()``, the exact text this file would carry."""
+    keep, skipped = [], []
+    for r in rows:
+        (skipped if _looks_poisoned(r.chunk_text()) else keep).append(r)
+    if skipped:
+        logger.warning(
+            "vapi_files: %s.md omitted %d poisoned row(s): %s",
+            file_kind, len(skipped), [f"{type(r).__name__}:{r.pk}" for r in skipped],
+        )
+    return keep
+
+
 def _render_faq() -> str:
     from kb.models import FAQEntry
 
     out = [_h("Happy Time — FAQ")]
     rows = FAQEntry.objects.filter(is_active=True).order_by("store", "-weight", "key")
     by_store: dict[str, list] = {}
-    for r in rows:
+    for r in _screened(rows, "faq"):
         by_store.setdefault(r.store or "all stores", []).append(r)
     for store, items in by_store.items():
         out.append(f"## {store}\n\n")
@@ -51,7 +71,8 @@ def _render_return_policy() -> str:
     from kb.models import PolicyDocument
 
     out = [_h("Return policy")]
-    for p in PolicyDocument.objects.filter(is_active=True, category__slug="return_policy"):
+    policies = PolicyDocument.objects.filter(is_active=True, category__slug="return_policy")
+    for p in _screened(policies, "return-policy"):
         out.append(p.chunk_text() + "\n\n")
     return "".join(out)
 
@@ -70,7 +91,7 @@ def _render_store_facts() -> str:
         .order_by("store", "kind")
     )
     by_store: dict[str, list] = {}
-    for r in rows:
+    for r in _screened(rows, "store-facts"):
         by_store.setdefault(r.store or "all stores", []).append(r)
     for store, items in by_store.items():
         out.append(f"## {store}\n\n")
@@ -83,14 +104,14 @@ def _render_wa_law() -> str:
     from kb.models import StoreFact, WeightTypeTaxonomy
 
     out = [_h("Washington law — purchase limits + age")]
-    for r in (
-        StoreFact.objects.current()
-        .filter(is_active=True, kind__in=["limit", "age"])
-        .order_by("label")
-    ):
+    facts = (
+        StoreFact.objects.current().filter(is_active=True, kind__in=["limit", "age"]).order_by("label")
+    )
+    for r in _screened(facts, "wa-law"):
         out.append(r.chunk_text() + "\n\n")
     out.append("## Limits (reference)\n\n")
-    for r in WeightTypeTaxonomy.objects.filter(is_active=True, axis="limit").order_by("id"):
+    limits = WeightTypeTaxonomy.objects.filter(is_active=True, axis="limit").order_by("id")
+    for r in _screened(limits, "wa-law"):
         out.append(r.chunk_text() + "\n\n")
     return "".join(out)
 
@@ -102,6 +123,7 @@ def _render_weights_types() -> str:
     axes = [a for a, _ in WeightTypeTaxonomy.AXES if a != "limit"]
     for axis in axes:
         rows = WeightTypeTaxonomy.objects.filter(is_active=True, axis=axis).order_by("id")
+        rows = _screened(rows, "weights-types")
         if not rows:
             continue
         out.append(f"## {axis}\n\n")
@@ -115,10 +137,11 @@ def _render_education() -> str:
 
     out = [_h("Education + blog")]
     out.append("## Education\n\n")
-    for r in EducationDoc.objects.filter(is_active=True).order_by("topic", "slug"):
+    education = EducationDoc.objects.filter(is_active=True).order_by("topic", "slug")
+    for r in _screened(education, "education"):
         out.append(r.chunk_text() + "\n\n")
     out.append("## Blog\n\n")
-    for r in BlogDoc.objects.filter(is_active=True).order_by("slug"):
+    for r in _screened(BlogDoc.objects.filter(is_active=True).order_by("slug"), "education"):
         out.append(r.chunk_text() + "\n\n")
     return "".join(out)
 

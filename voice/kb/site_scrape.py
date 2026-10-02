@@ -9,18 +9,15 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 import httpx
+from django.db import transaction
 from django.utils import timezone
 
 from kb import semantic, vapi_files
 from kb.models import BlogDoc, FAQEntry, PolicyDocument, SiteScrapeRun, StoreFact
+from voice.tools.faq import _looks_poisoned  # the one poison screen every read path uses
 
 BASE_URL = "https://happytimeweed.com"
 TARGET_PATHS = ["/faq", "/specials", "/yakima", "/mount-vernon", "/pullman"]
-_POISON_RE = re.compile(
-    r"\b(ignore|disregard|override|reveal|print|show|leak)\b.{0,80}\b"
-    r"(instruction|prompt|system|developer|secret|tool|policy|rule)s?\b",
-    re.I | re.S,
-)
 _PHONE_RE = re.compile(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}")
 _HOURS_RE = re.compile(r"Open Every(?:day| Day):?\s*([^|]+?)(?:Order Online|Visit Store|$)", re.I)
 
@@ -172,12 +169,22 @@ def _upsert_policy(page: Page, body: str) -> tuple[str, object]:
 
 
 def _upsert_store_fact(page: Page, *, store: str, kind: str, label: str, value: str):
-    obj, created = StoreFact.objects.update_or_create(
+    # Scraped facts are saved UNCONFIRMED: an unconfirmed fact is never spoken as fact (its
+    # chunk_text is "not confirmed — ask the caller to call the store"), so nothing the site says
+    # reaches a caller until the owner confirms it on the dashboard. A re-scrape keeps the owner's
+    # confirmation while the text is unchanged, and withdraws it when the text changed.
+    value = value[:2000]
+    obj, created = StoreFact.objects.get_or_create(
         store=store,
         kind=kind,
         label=label[:120],
-        defaults={"value": value[:2000], "confirmed": True, "weight": 110, "is_active": True},
+        defaults={"value": value, "confirmed": False, "weight": 110, "is_active": True},
     )
+    if not created:
+        if obj.value != value:
+            obj.confirmed = False
+        obj.value, obj.weight, obj.is_active = value, 110, True
+        obj.save()
     _mark(obj, page=page, status="applied")
     return ("created" if created else "updated", obj)
 
@@ -265,7 +272,7 @@ def validate_rows(rows: list[object]) -> list[str]:
         title = getattr(row, "key", "") or getattr(row, "label", "") or getattr(row, "title", "")
         if not str(text or "").strip():
             errors.append(f"{type(row).__name__} {row.pk} is empty")
-        if _POISON_RE.search(str(text or "")):
+        if _looks_poisoned(str(text or "")):
             errors.append(f"{type(row).__name__} {row.pk} looks like prompt injection")
         critical = isinstance(row, PolicyDocument) or (
             isinstance(row, FAQEntry) and row.topic in {"returns", "limits", "age"}
@@ -279,15 +286,28 @@ def run_scrape(*, publish: bool = True, paths: list[str] | None = None) -> SiteS
     run = SiteScrapeRun.objects.create(status="running")
     try:
         pages = fetch_pages(paths)
-        changes, rows = apply_pages(pages)
-        errors = validate_rows(rows)
-        run.pages = [{"url": p.url, "title": p.title} for p in pages]
-        run.changes = changes
+        # Nothing the scrape writes is live until it has passed validation: write + validate in one
+        # transaction, and a blocking error rolls the whole thing back (the rows were never visible
+        # to another connection). Reindex / Vapi mirror / publish run only after the commit.
+        with transaction.atomic():
+            changes, rows = apply_pages(pages)
+            errors = validate_rows(rows)
+            if errors:
+                transaction.set_rollback(True)
+        if not errors and any(isinstance(r, StoreFact) for r in rows):
+            # The StoreFact save signal nudged root mid-transaction, before these rows were
+            # visible to it; nudge once more now that they are committed.
+            from voice import tasks
+
+            tasks.dispatch_budtender_notify("store-facts")
+        run.pages =[{"url": p.url, "title": p.title} for p in pages]
         run.validation_errors = errors
         if errors:
+            run.changes = {"created": 0, "updated": 0}  # what was rolled back is not a change
             run.status = "blocked"
-            run.summary = f"Blocked: {len(errors)} validation error(s)."
+            run.summary = f"Blocked: {len(errors)} validation error(s); nothing was saved."
         else:
+            run.changes = changes
             chunks = semantic.reindex()
             mirror = vapi_files.mirror_all()
             publish_results = [{"object": "kb", "action": "reindexed", "chunks": chunks}]
