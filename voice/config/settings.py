@@ -252,10 +252,11 @@ STAFF_ALERT_EMAIL = os.environ.get("STAFF_ALERT_EMAIL", "")
 STAFF_ALERT_EMAIL_YAKIMA = os.environ.get("STAFF_ALERT_EMAIL_YAKIMA", "")
 STAFF_ALERT_EMAIL_MTVERNON = os.environ.get("STAFF_ALERT_EMAIL_MTVERNON", "")
 STAFF_ALERT_EMAIL_PULLMAN = os.environ.get("STAFF_ALERT_EMAIL_PULLMAN", "")
-# Website-chat staff alerts per store per clock hour (crm/sinks.py::_over_text_alert_cap). Past it
-# the VoiceCall is still logged for the dashboard, but no email/Slack/n8n goes out. Phone calls are
-# never capped. A string, parsed at use (like HHT_TRANSFER_NOTICE_DAILY_CAP).
-HHT_TEXT_ALERT_CAP_PER_STORE_HOUR = os.environ.get("HHT_TEXT_ALERT_CAP_PER_STORE_HOUR", "6")
+# Website-chat staff alerts per store per clock hour (crm/sinks.py::_over_text_alert_cap) — the
+# backstop behind the per-visitor cap (HHT_TEXT_ALERT_CAP_PER_VISITOR_HOUR, default 2), so one
+# flooder cannot mute everyone else. Past it the chat is still logged for the dashboard and one
+# roll-up email goes out per store-hour. Phone calls are never capped. A string, parsed at use.
+HHT_TEXT_ALERT_CAP_PER_STORE_HOUR = os.environ.get("HHT_TEXT_ALERT_CAP_PER_STORE_HOUR", "20")
 
 # ── Slack (optional secondary sink; 03-CONVENTIONS.md §3.8) ────────────
 # On/off is the "Post staff alerts to Slack" switch on /dashboard/capabilities/ (alerts.slack).
