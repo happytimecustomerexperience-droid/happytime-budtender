@@ -125,7 +125,8 @@ _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[A-Za-z0-9.-]+\b")
 # two two two, one two three four") never matches ``_PHONE_RE`` (no actual digit characters).
 # Require 7+ consecutive number-words separated by whitespace/commas/"and" — long enough that
 # normal speech ("one eighth", "two for one") can't accidentally trip it.
-_DIGIT_WORD = r"(?:oh|zero|one|two|three|four|five|six|seven|eight|nine)"
+# "triple five", "double four" are one spoken digit group each (voice/chat.py parses them the same way).
+_DIGIT_WORD = r"(?:(?:double|triple)\s+)?(?:oh|zero|one|two|three|four|five|six|seven|eight|nine)"
 _SPOKEN_PHONE_RE = re.compile(
     rf"\b{_DIGIT_WORD}(?:[\s,]+(?:and\s+)?{_DIGIT_WORD}){{6,}}\b", re.IGNORECASE
 )

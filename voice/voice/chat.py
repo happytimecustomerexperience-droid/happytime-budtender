@@ -390,10 +390,16 @@ _DIGIT_WORDS = {
 }
 _DIGIT_WORD_RE = re.compile(r"\b(" + "|".join(_DIGIT_WORDS) + r")\b", re.I)
 _PHONE_RUN_RE = re.compile(r"\d[\d\s.,()-]{8,}\d")
+# "five oh nine triple five oh one double four" — how a number with repeats is said out loud.
+_REPEAT_DIGIT_RE = re.compile(r"\b(double|triple)\s+(" + "|".join(_DIGIT_WORDS) + r"|\d)\b", re.I)
 
 
 def _phone_from_message(message: str) -> str:
-    text = _DIGIT_WORD_RE.sub(lambda m: _DIGIT_WORDS[m.group(1).lower()], message or "")
+    text = _REPEAT_DIGIT_RE.sub(
+        lambda m: _DIGIT_WORDS.get(m.group(2).lower(), m.group(2)) * (2 if m.group(1).lower() == "double" else 3),
+        message or "",
+    )
+    text = _DIGIT_WORD_RE.sub(lambda m: _DIGIT_WORDS[m.group(1).lower()], text)
     for match in _PHONE_RUN_RE.finditer(text):
         digits = "".join(ch for ch in match.group(0) if ch.isdigit())
         if len(digits) == 11 and digits.startswith("1"):
@@ -1279,13 +1285,18 @@ def _suggested_skus(call_id: str) -> list[str]:
     return [str(s) for s in (call.suggested_skus or [])] if call else []
 
 
+def _last_agent_line(history) -> str:
+    """What the agent said last on this session (its own trusted record)."""
+    return next((str(m.get("content") or "") for m in reversed(history or [])
+                 if isinstance(m, dict) and m.get("role") == "assistant"), "")
+
+
 def _pick_link_reply(message, history, skus, store, phone, ctx, tool_results) -> dict:
     """Answer a COA / menu-link ask about a product this session was shown. The product is the
     recent pick the caller NAMES, else (on "that one") the one the agent last named out loud.
     Never a different product: no match is an honest "I can't pull that one up"."""
     wants_coa = bool(_COA_RE.search(message))
-    said = next((str(m.get("content") or "").lower() for m in reversed(history or [])
-                 if isinstance(m, dict) and m.get("role") == "assistant"), "")
+    said = _last_agent_line(history).lower()
     asked = set(re.findall(r"[a-z']+", message.lower()))
     found = None
     spoken = None
@@ -1456,7 +1467,10 @@ _VENDOR_RE = re.compile(
 # note the past tense "held", never matched by the literal "hold" below).
 _STAGE_RE = re.compile(
     r"\b("
-    r"set\s+(?:\w+\s+){0,3}aside|"
+    # "put one aside for me" / "can you reserve that for me for tonight" are the same request as
+    # "set it aside" and matched nothing, so nothing was held.
+    r"(?:set|put)\s+(?:\w+\s+){0,3}aside|"
+    r"reserve\s+(?:(?:it|that|this|one|them|those)\b|(?:\w+\s+){0,3}(?:for\s+me|until))|"
     r"hold\s+(?:\w+\s+){0,4}(?:for\s+me|until)|"
     r"put\s+me\s+down\s+for|"
     r"pick\w*\s+(?:it\s+)?up\s+later"
@@ -1579,6 +1593,13 @@ def _is_order_status_question(message: str) -> bool:
 def _is_restock_request(message: str) -> bool:
     return bool(_RESTOCK_RE.search(message or ""))
 
+
+# NEW COPY — REQUIRES OWNER APPROVAL. The hold handshake's question. A turn that answers it with a
+# phone number ("sure, it's 509-555-0188") carries no hold verb of its own, so the router matches
+# this line as the agent's last words instead (see the staging gate in ``_route_chat_turn``).
+_HOLD_PHONE_ASK = "I can hold that for you — what's the best phone number to put it under?"
+
+
 def _stage_cart_reply(ctx: dict, store: str, phone: str, tool_results: list) -> dict:
     """Route a detected staging/hold request to ``stage_phone_cart``. Conservative by design: the
     SKU comes ONLY from ``_last_suggested_sku`` (the caller's own most recently suggested pick,
@@ -1599,8 +1620,7 @@ def _stage_cart_reply(ctx: dict, store: str, phone: str, tool_results: list) -> 
                 "result": {"ok": False, "error": "phone_required", "staged": False},
             }
         ]
-        # NEW COPY — REQUIRES OWNER APPROVAL.
-        answer = "I can hold that for you — what's the best phone number to put it under?"
+        answer = _HOLD_PHONE_ASK
         return {
             "ok": True,
             "intent": "phone_cart_staged",
@@ -2215,7 +2235,11 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     if not escalation and vendor_turn:
         return _vendor_callback_reply(message, store, phone, ctx, tool_results)
 
-    if not escalation and _is_staging_request(message):
+    # ...including the number the agent just asked for to put a hold under (``_HOLD_PHONE_ASK``).
+    answers_hold_ask = bool(_phone_from_message(message)) and (
+        _last_agent_line(history).strip() == _HOLD_PHONE_ASK
+    )
+    if not escalation and (_is_staging_request(message) or answers_hold_ask):
         return _stage_cart_reply(ctx, store, phone, tool_results)
 
     # No tool can look an order up (see ``_ORDER_STATUS_RE``) — hand it to someone who can,

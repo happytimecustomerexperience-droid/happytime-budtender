@@ -121,3 +121,18 @@ def test_coa_names_the_product_asked_about_never_another(convo):
     c.say("I want a gram cart under $50")  # Jetty (no COA) and Drum Roll (no COA) are shown
     t = c.say("can I see the COA for the Wyld gummies")
     assert "http" not in t.answer and "Jetty" not in t.answer and "Drum" not in t.answer
+
+
+# ── 5. phone handshake ───────────────────────────────────────────────────────
+def test_double_triple_digits_parse_and_are_redacted():
+    said = "my number is five oh nine triple five oh one double four"
+    assert chat._phone_from_message(said) == "+15095550144"
+    assert "five oh nine" not in guardrails.redact_pii(said)
+
+
+@pytest.mark.django_db
+def test_a_number_is_only_a_hold_when_the_agent_just_asked_for_one(convo):
+    c = convo()
+    c.say("do you have a full gram cart under $40")
+    t = c.say("my number is 509-555-0188, what are your hours")
+    assert "stage_phone_cart" not in t.tools, "no hold was asked for, so a number is not a hold"
