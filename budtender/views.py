@@ -423,6 +423,21 @@ class SessionStartView(APIView):
 
 _MINTED_SESSION_TOKEN = re.compile(r"^s-[A-Za-z0-9_-]+$")
 
+
+def _session_for_token(token: str, **defaults) -> ChatSession | None:
+    """The session a caller-supplied token addresses, or None.
+
+    The rule ChatReplyView applies: a token we already know is used; an unknown one is
+    only honoured if it has the server-minted shape. An arbitrary caller-chosen string
+    must never create a session (or later be used to overwrite one).
+    """
+    token = str(token or "").strip()
+    session = ChatSession.objects.filter(session_token=token).first() if token else None
+    if session is None and len(token) <= 64 and _MINTED_SESSION_TOKEN.match(token):
+        session, _ = ChatSession.objects.get_or_create(session_token=token, defaults=defaults)
+    return session
+
+
 # Every chat turn costs a brain call, so a turn is a unit of spend. The website's server is the
 # only caller, which means the client IP here is one shared address for ALL shoppers: the IP cap is
 # a site-wide ceiling set far above real traffic, and the per-session cap is what stops one chat
@@ -529,28 +544,38 @@ class ChatReplyView(APIView):
 class ChatHistoryView(APIView):
     """Recent website/chatbot sessions for the voice dashboard.
 
-    Service-token only. Raw phone is never returned; staff get channel/store/session/message context.
+    Service-token only. Raw phone is never returned, and neither is a session's token: that
+    token is the credential the visitor's browser uses to write to its own chat (reply,
+    persist, search), so staff-facing rows carry an opaque ``id`` instead. Browse with no
+    arguments, read one transcript with ``{"id": <id from the list>}``. The visitor's own
+    ``session_token`` is still accepted as the key (the caller already holds it), but it is
+    never echoed back.
     """
 
     def post(self, request):
         data = request.data or {}
         limit = _bounded_int(data.get("limit"), default=25, lo=1, hi=100)
         message_limit = _bounded_int(data.get("message_limit"), default=200, lo=1, hi=500)
+        session_id = data.get("id")
         session_token = str(data.get("session_token") or "").strip()[:128]
         sessions = (
             ChatSession.objects
             .prefetch_related("messages")
             .order_by("-last_active_at")
         )
-        if session_token:
-            sessions = sessions.filter(session_token=session_token)[:1]
+        if session_id not in (None, ""):
+            sessions = sessions.filter(pk=_bounded_int(session_id, default=0, lo=0, hi=2**31))
+        elif session_token:
+            sessions = sessions.filter(session_token=session_token)
+        if session_id not in (None, "") or session_token:
+            shown = list(sessions[:1])
             rows = []
-            for session in sessions:
+            for session in shown:
                 messages = list(session.messages.all())
                 if not messages:
                     continue
                 rows.append({
-                    "session_token": session.session_token,
+                    "id": session.pk,
                     "channel": session.channel,
                     "location_slug": session.location_slug,
                     "stage": session.stage,
@@ -560,24 +585,25 @@ class ChatHistoryView(APIView):
                     "messages": [public_message(m) for m in messages[-message_limit:]],
                 })
         else:
-            # No session_token means "browse recent sessions", not "read their content" —
-            # a bare service token must not be a bulk read of every website conversation.
-            # Metadata only; message bodies require the specific session's own token.
+            # No key means "browse recent sessions", not "read their content" — a bare
+            # service token must not be a bulk read of every website conversation.
+            # Metadata only; bodies need one specific session's id (or its own token).
+            shown = list(sessions[:limit])
             rows = [
                 {
-                    "session_token": session.session_token,
+                    "id": session.pk,
                     "channel": session.channel,
                     "location_slug": session.location_slug,
                     "primary_intent": session.primary_intent,
                     "last_active_at": session.last_active_at.isoformat(),
                 }
-                for session in sessions[:limit]
+                for session in shown
             ]
         fallback_count = AnalyticsEvent.objects.filter(
             event_type="chat_message",
             props__role="assistant",
             props__source="fallback",
-            session_token__in=[r["session_token"] for r in rows],
+            session_token__in=[s.session_token for s in shown],
         ).count()
         return Response({"ok": True, "sessions": rows, "fallback_count": fallback_count})
 
@@ -636,15 +662,12 @@ class ProductSearchView(APIView):
         limit = _bounded_int(request.data.get("limit"), default=5, lo=1, hi=20)
         location = _safe_location(slots.get("store") or request.data.get("location"))
         exclude = {str(s) for s in (request.data.get("exclude_skus") or [])}
-        token = request.data.get("session_token") or ""
-        # Get-or-create the session so EVERY session (incl. anonymous
-        # questionnaire guests) has its suggested products recorded.
-        session = None
-        if token:
-            session, _ = ChatSession.objects.get_or_create(
-                session_token=token,
-                defaults={"location_slug": location, "channel": "questionnaire"},
-            )
+        # Get-or-create the session so EVERY session (incl. anonymous questionnaire
+        # guests) has its suggested products recorded. A token that is neither known nor
+        # minted-shaped gets its results but no session (and never creates one).
+        session = _session_for_token(
+            request.data.get("session_token"), location_slug=location, channel="questionnaire"
+        )
         # Profile drives personalization: prefer the session's linked customer,
         # else resolve by a phone passed with the request (logged-in chat).
         profile = session.customer if session and session.customer else None
@@ -1007,11 +1030,13 @@ class PersistView(APIView):
     def post(self, request):
         data = request.data or {}
         token = data.get("session_id") or data.get("session_token")
-        if not token:
+        # Same refusal as a missing token: persist replaces a session's whole message log, so
+        # it must not create or address a session under a caller-chosen string.
+        session = _session_for_token(token)
+        if session is None:
             return Response({"ok": False}, status=202)
         phone = _normalize_phone(data.get("phone", "")) if data.get("phone") else ""
         profile = CustomerProfile.objects.filter(phone=phone).first() if phone else None
-        session, _ = ChatSession.objects.get_or_create(session_token=token)
         session.location_slug = _safe_location(
             (data.get("slots") or {}).get("store"), default=session.location_slug
         )

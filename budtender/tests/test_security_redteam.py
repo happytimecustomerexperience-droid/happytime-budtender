@@ -125,9 +125,9 @@ def test_fixed_chat_reply_rejects_caller_chosen_session_token(client, settings):
 
 
 def test_fixed_chat_history_with_no_token_returns_metadata_only(client, settings):
-    """Omitting session_token now returns the newest N sessions' METADATA only (token,
-    store, channel, primary_intent, last_active_at) — no message bodies — so one service
-    token is no longer a bulk read of every website conversation's content."""
+    """Omitting the key returns the newest N sessions' METADATA only (opaque id, store,
+    channel, primary_intent, last_active_at) — no message bodies, and no session_token —
+    so one service token is no longer a bulk read of every website conversation's content."""
     from budtender.models import ChatMessage, ChatSession
 
     settings.HHT_BACKEND_TOKEN = "t0ken"
@@ -143,7 +143,8 @@ def test_fixed_chat_history_with_no_token_returns_metadata_only(client, settings
     assert len(rows) == 3
     for row in rows:
         assert "messages" not in row
-        assert {"session_token", "location_slug", "channel", "primary_intent", "last_active_at"} <= row.keys()
+        assert {"id", "location_slug", "channel", "primary_intent", "last_active_at"} <= row.keys()
+        assert "session_token" not in row
     assert "secret" not in json.dumps(body)
 
 

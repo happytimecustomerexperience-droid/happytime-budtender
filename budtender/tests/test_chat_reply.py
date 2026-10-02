@@ -293,7 +293,7 @@ class ChatReplyTests(TestCase):
 
         self.assertEqual(r.status_code, 200)
         body = r.json()
-        self.assertEqual(body["sessions"][0]["session_token"], "s-history")
+        self.assertEqual(body["sessions"][0]["id"], session.pk)
         self.assertEqual(body["sessions"][0]["location_slug"], "yakima")
         self.assertNotIn("messages", body["sessions"][0])
         self.assertNotIn("phone", json.dumps(body).lower())
@@ -358,7 +358,8 @@ class ChatReplyTests(TestCase):
 
         self.assertEqual(r.status_code, 200)
         sessions = r.json()["sessions"]
-        self.assertEqual([s["session_token"] for s in sessions], ["s-wanted"])
+        self.assertEqual([s["id"] for s in sessions], [wanted.pk])
+        self.assertNotIn("session_token", sessions[0])
         self.assertEqual(sessions[0]["messages"][0]["content"], "show this")
 
     def test_persist_snapshot_normalizes_store_and_rejects_client_system_role(self):

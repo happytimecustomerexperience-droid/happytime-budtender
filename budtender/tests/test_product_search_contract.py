@@ -38,7 +38,11 @@ class ProductSearchContractTests(SimpleTestCase):
         original_public = views.public_product
         try:
             views.ChatSession = SimpleNamespace(
-                objects=SimpleNamespace(get_or_create=lambda **kw: (session, True))
+                objects=SimpleNamespace(
+                    # "s1" is a session we already know, so it is used as-is.
+                    filter=lambda **kw: SimpleNamespace(first=lambda: session),
+                    get_or_create=lambda **kw: (session, True),
+                )
             )
             views.SuggestedProduct = SimpleNamespace(
                 objects=SimpleNamespace(create=lambda **kw: None)
