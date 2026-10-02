@@ -9,6 +9,7 @@ urlpatterns = [
     path("chat/history", views.ChatHistoryView.as_view()),
     path("products/search/", views.ProductSearchView.as_view()),
     path("products/in-stock/", views.InStockProductsView.as_view()),
+    path("new-drops/", views.NewDropsView.as_view()),
     path("products/by-sku/", views.ProductBySkuView.as_view()),
     path("products/price-bands", views.PriceBandsView.as_view()),
     path("products/subtypes", views.SubtypesView.as_view()),

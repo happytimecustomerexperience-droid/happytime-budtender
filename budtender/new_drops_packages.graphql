@@ -1,0 +1,208 @@
+query getPackagesV5($lspId: Int!, $locId: Int!, $userId: Int!, $take: Int, $skip: Int, $showLowInventory: Boolean, $orderClause: [PackageSortInput!], $whereClause: PackageFilterInput!, $excludeAllocatedInventorySum: Boolean!, $excludeLastAuditedDateUtc: Boolean!, $excludeLastDatePackageAuditedUtc: Boolean!) {
+  data: packages(
+    where: $whereClause
+    take: $take
+    skip: $skip
+    order: $orderClause
+    locId: $locId
+    lspId: $lspId
+    userId: $userId
+    showLowInventory: $showLowInventory
+  ) {
+    items {
+      ...InventoryPackageAttributesV5
+    }
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+    }
+    totalCount
+  }
+}
+
+fragment InventoryPackageAttributesV5 on Package {
+  id: packageId
+  allocatedInventorySum @skip(if: $excludeAllocatedInventorySum)
+  isOnHold
+  isOnRecall
+  lastDatePackageAuditedUtc @skip(if: $excludeLastDatePackageAuditedUtc)
+  product {
+    id
+    posproducts
+    lastAuditedDateUtc @skip(if: $excludeLastAuditedDateUtc)
+    whseProductsDescription
+    productImageFileNameProcessed
+    whseProductsProductNo
+    upc
+    externalId
+    defaultUnitId
+    grossWeight
+    flowerEquivalent
+    recFlowerEquivalent
+    whseProductsUnitPrice
+    whseProductsRecUnitPrice
+    lowInventoryThreshold
+    lowStockThreshold
+    productGrams
+    productTypeNavigation {
+      id
+      productType
+      masterCategory
+    }
+    productToCustomerTypes {
+      customerType {
+        customerTypeId
+        customerTypeName
+      }
+    }
+    unitType {
+      unitTypeAbbreviation
+      unitTypeName
+    }
+    strain {
+      strainName
+    }
+    brand {
+      brandName
+    }
+    sizeListItem {
+      description
+    }
+    cannabisInventory
+    alternateDesc
+    couponItem
+    isNutrient
+    onlineProduct
+    isRetired
+    isOnSale
+    itemTaxable
+    onlineTitle
+    onlineDescription
+    productImageFileName
+    externalCategory
+    instructions
+    allergenList
+    ingredientList
+    prescription
+    approvalDateUTC
+    parentProductId
+  }
+  locationProductMaster {
+    price
+    recPrice
+    lowInventoryThreshold
+    lowStockThreshold
+    onlineAvailable
+    posAvailable
+  }
+  serialNumber
+  inventoryStatus {
+    invStatusDesc
+  }
+  batch {
+    lot: batchLotNumber
+    batchLotNumber
+    id
+    harvestCompletedOn
+    tblBatchThcs(order: [{tchDate: DESC}]) {
+      thcValue
+      thcUnit
+      cbdValue
+      cbdUnit
+      cbdaValue
+      cbdaUnit
+      cbnValue
+      cbnUnit
+      thcaValue
+      thcaUnit
+      thc9Value
+      thc9Unit
+    }
+    batchStrainNavigation {
+      strainName
+    }
+  }
+  vendor {
+    vendorName
+    id
+    vendorCode
+  }
+  room {
+    roomNo
+    id
+  }
+  quantity
+  unit {
+    abbreviation
+    unitTypeId
+    unitId
+  }
+  inventorySourceBatches {
+    sourceBatch
+  }
+  table {
+    trayNumber
+  }
+  producerId
+  producer {
+    producerName
+  }
+  packageToTags {
+    tag {
+      tagId
+      tagName
+      smartTag {
+        name
+      }
+      childSkuRule {
+        name
+      }
+    }
+  }
+  loc {
+    whichUnitCost
+    whichUnitPrice
+  }
+  expirationDate
+  inventoryStatusId
+  packageWeight
+  netWeight
+  netWeightUnit
+  flowerEquivalent
+  recFlowerEquivalent
+  productWeight
+  unitPrice
+  recUnitPrice
+  cost
+  receivedDate
+  sourceSerialNumber
+  medicalOnly
+  metrclabTestingStatus
+  bioTrackQAStatus
+  packagedDate
+  manufacturingDate
+  iltaxCategory
+  cultivationTax
+  exciseTax
+  isFinishedInIntegration
+  tableId
+  potencyIndicator
+  packageNdc
+  effectivePotencyMg
+  useByDate
+  parentPackageSerialNumber
+  hasMultipleParentPackages
+  isSample
+  labelSource
+  caseSensitiveBarcode
+  packageToCustomerTypes {
+    customerType {
+      customerTypeId
+      customerTypeName
+    }
+  }
+  packageGroup {
+    packageGroupId
+    hasPackageItemLabels
+  }
+}

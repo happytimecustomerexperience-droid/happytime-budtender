@@ -231,3 +231,25 @@ class FetchInventoryParsingTests(TestCase):
             with mock.patch("budtender.dutchie.requests.get") as m:
                 self.assertEqual(dutchie.fetch_inventory(LOC), [])
             m.assert_not_called()
+
+
+@override_settings(DUTCHIE=_DUTCHIE_SETTINGS)
+class FetchInventoryLabTests(TestCase):
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+    def test_coa_and_batch_come_from_the_package_with_most_floor_stock(self):
+        small = _inv_row(batchId=1, labResultUrl="https://lab.example/small.pdf",
+                         roomQuantities=[{"room": "Sales Floor", "quantityAvailable": 2}])
+        big = _inv_row(batchId=2, labResultUrl="https://lab.example/big.pdf",
+                       roomQuantities=[{"room": "Sales Floor", "quantityAvailable": 9}])
+        with mock.patch("budtender.dutchie.requests.get", side_effect=_get([small, big], [_product_row()])):
+            r = dutchie.fetch_inventory(LOC)[0]
+        self.assertEqual((r["batch_id"], r["coa_url"], r["quantity_on_hand"]), ("2", "https://lab.example/big.pdf", 11))
+
+    def test_non_https_lab_link_is_dropped(self):
+        for bad in ("http://lab.example/x.pdf", "javascript:alert(1)", "https://x/a b.pdf", None):
+            with self.subTest(bad=bad):
+                self.assertEqual(dutchie.https_url(bad), "")

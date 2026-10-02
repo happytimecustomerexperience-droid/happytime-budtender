@@ -8,12 +8,13 @@ browser. A regression test (tests/test_no_leak.py) enforces this.
 from decimal import Decimal
 
 from .models import Product
+from .new_drops import cached_coa, menu_slug
 
 # The only fields the website/browser may ever see for a product.
 PUBLIC_PRODUCT_FIELDS = (
     "rank", "sku", "name", "brand", "strain", "price", "price_was",
     "thc_percent", "dominant_terpene", "stock_on_hand", "dutchie_link",
-    "image_url", "why_this",
+    "image_url", "why_this", "coa_url", "menu_slug",
 )
 
 
@@ -51,6 +52,11 @@ def public_product(p: Product, rank: int = 1, why_this: str | None = None,
         "dutchie_link": f"/catalog/product/{p.slug}" if p.slug else "/catalog",
         "image_url": p.image_url or None,
         "why_this": why_this,
+        # POS link first, else the backoffice lab result new_drops cached for the
+        # batch (cache read only — no Dutchie call on the request path).
+        "coa_url": p.coa_url or cached_coa(p.batch_id) or None,
+        # Exact menu product (dtche[product]=<slug>), matched on the POS product id.
+        "menu_slug": menu_slug(p.location_slug, p.product_id),
     }
 
 

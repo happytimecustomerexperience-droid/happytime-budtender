@@ -12,6 +12,7 @@ falls back to its local catalog.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -105,6 +106,16 @@ def _stale(last_modified, max_age_days: int = FRESH_DAYS) -> bool:
     except ValueError:
         return False
     return (datetime.now(timezone.utc).date() - d).days > max_age_days
+
+
+_HTTPS_URL = re.compile(r"^https://[^\s\"'<>]+$")
+
+
+def https_url(u) -> str:
+    """A lab/COA link the website may render, or '' — anything that isn't a plain
+    https URL becomes "no COA button" (same rule as the site's new-drops parser)."""
+    u = str(u or "").strip()
+    return u if len(u) <= 500 and _HTTPS_URL.match(u) else ""
 
 
 # ── Inventory (per store, via POS key) ───────────────────────────────────────
@@ -260,6 +271,7 @@ def fetch_inventory(location_slug: str) -> list[dict]:
     # are kept: priceless rows are back-stock / non-menu items that aren't for
     # sale, which is what was leaking "not for sale" suggestions.
     agg: dict[str, dict] = {}
+    batch_qty: dict[str, float] = {}  # pid -> floor qty of the batch we report for it
     for item in _get_inventory(key):
         name = _first(item, "productName", "name") or ""
         # Sales-floor stock only (room-exact); fall back to the all-rooms aggregate
@@ -273,9 +285,17 @@ def fetch_inventory(location_slug: str) -> list[dict]:
         category = _norm_category(str(_first(item, "category", "masterCategory") or ""))
         price = _to_float(_first(item, "unitPrice", "recUnitPrice", "price", default=0))
         pid = str(_first(item, "productId", "sku", "packageId", "inventoryId", default=name))
+        batch = {"batch_id": str(item.get("batchId") or "")[:32],
+                 "coa_url": https_url(item.get("labResultUrl"))}
         if pid in agg:
             agg[pid]["quantity_on_hand"] += int(qty)
+            # ponytail: one COA per product = the batch with the most floor stock;
+            # a split floor can hand the shopper the other batch.
+            if qty > batch_qty[pid]:
+                agg[pid].update(batch)
+                batch_qty[pid] = qty
             continue
+        batch_qty[pid] = qty
         sku = str(_first(item, "sku", "inventoryId", "packageId", "productId", default=name))
         agg[pid] = {
             "sku": sku,
@@ -297,6 +317,7 @@ def fetch_inventory(location_slug: str) -> list[dict]:
             "quantity_on_hand": int(qty),
             "slug": slugify(f"{name}-{sku}")[:200],
             "image_url": _first(item, "imageUrl", "image", default="") or "",
+            **batch,
         }
     return list(agg.values())
 

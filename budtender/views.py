@@ -366,6 +366,27 @@ def _profile_for_phone(phone: str) -> CustomerProfile | None:
     return CustomerProfile.objects.filter(phone=_normalize_phone(phone)).first()
 
 
+class NewDropsView(APIView):
+    """GET /api/v1/new-drops/?store=<yakima|mount-vernon|pullman>
+
+    Brands received in the last 20 days with per-product lab numbers, COA link and
+    exact menu slug — the snapshot budtender.new_drops builds every 30 min. 503 when
+    no snapshot exists yet (the website then says "temporarily unavailable" rather
+    than inventing a list). Auth: global ServiceTokenPermission.
+    """
+
+    def get(self, request):
+        from . import new_drops
+
+        location = (request.query_params.get("store") or "yakima").strip()
+        if location not in {s[0] for s in STORES}:
+            return Response({"error": f"unknown store: {location}"}, status=400)
+        snap = new_drops.get_snapshot(location)
+        if not snap:
+            return Response({"error": "new drops not built yet"}, status=503)
+        return Response(snap)
+
+
 class HealthView(APIView):
     is_public = True
 

@@ -21,6 +21,12 @@ app.conf.beat_schedule = {
     # Safety net: even if the frequent sync above stalls, force a fresh pull for
     # any store whose inventory is ≥24h old, so suggestions never come from stale
     # stock. Cheap no-op (timestamp check) when everything is already fresh.
+    # New Drops (website /new-drops): brands received in the last 20 days, refreshed
+    # every 30 min; no-op outside the store-hours window (same gate as above).
+    "refresh-new-drops": {
+        "task": "budtender.tasks.refresh_new_drops_all",
+        "schedule": 30 * 60.0,
+    },
     "ensure-inventory-fresh-daily": {
         "task": "budtender.tasks.ensure_inventory_fresh",
         "schedule": 60 * 60.0,  # hourly check; pulls only when ≥24h stale
