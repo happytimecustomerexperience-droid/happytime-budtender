@@ -49,11 +49,19 @@ def _canon_time_atoms(value: str) -> set[str]:
     return {_ZERO_MINUTES.sub(r"\1", a) for a in atoms(value, "times")}
 
 
-def _load_catalog() -> dict:
+def _load_catalog() -> dict | None:
+    """The storefront's static store dict, or None where it doesn't exist.
+
+    The voice image is built from ``voice/`` only, so in production there is no ``bundles``
+    package — the nightly check crashed on this import (2026-10-01). Nothing is lost by skipping
+    it there: the storefront overlays these same KB facts live (root ``core/store_facts.py``), so
+    the comparison that matters in production is KB vs the public site."""
     repo_root = Path(__file__).resolve().parents[4]
     sys.path.insert(0, str(repo_root))
     try:
         from bundles import catalog  # bundles/catalog.py — pure Python, no Django
+    except ImportError:
+        return None
     finally:
         sys.path.remove(str(repo_root))
     return catalog.STORES
@@ -105,15 +113,16 @@ def _street_part(address: str) -> str:
     return address.split(",", 1)[0]
 
 
-def build_rows(catalog_stores: dict, site_locations: dict | None) -> list[dict]:
+def build_rows(catalog_stores: dict | None, site_locations: dict | None) -> list[dict]:
     """The shared compare loop — one row per (store, fact kind), against ``kb.StoreFact`` +
-    ``bundles/catalog.py`` + (when available) the site. Used by both the management command and
-    ``diff_against_site()``."""
+    ``bundles/catalog.py`` and the site, each only when available (None = not compared). Used by
+    both the management command and ``diff_against_site()``."""
     from kb import models as m
 
     rows = []
     for store in STORES:
-        catalog_row = catalog_stores.get(store, {})
+        has_catalog = catalog_stores is not None
+        catalog_row = (catalog_stores or {}).get(store, {})
         site_row = site_locations.get(store) if site_locations else None
 
         for kind in FACT_KINDS:
@@ -130,7 +139,7 @@ def build_rows(catalog_stores: dict, site_locations: dict | None) -> list[dict]:
                 sf_atoms = _canon_time_atoms(storefact_value)
                 cat_atoms = _canon_time_atoms(catalog_value)
                 site_atoms = _canon_time_atoms(site_value) if site_row else None
-                mismatch = bool(sf_atoms) and sf_atoms != cat_atoms
+                mismatch = has_catalog and bool(sf_atoms) and sf_atoms != cat_atoms
                 if site_row is not None:
                     mismatch = mismatch or (bool(sf_atoms) and sf_atoms != site_atoms)
                 display_catalog, display_site = catalog_value, site_value
@@ -140,7 +149,7 @@ def build_rows(catalog_stores: dict, site_locations: dict | None) -> list[dict]:
                 )
                 site_value = site_row.get("address", "") if site_row else ""
                 sf_street = norm(_street_part(storefact_value))
-                mismatch = bool(sf_street) and sf_street not in norm(catalog_value)
+                mismatch = has_catalog and bool(sf_street) and sf_street not in norm(catalog_value)
                 if site_row is not None:
                     mismatch = mismatch or (bool(sf_street) and sf_street not in norm(site_value))
                 display_catalog, display_site = catalog_value, site_value
@@ -150,7 +159,7 @@ def build_rows(catalog_stores: dict, site_locations: dict | None) -> list[dict]:
                 sf_atoms = atoms(storefact_value, "phone")
                 cat_atoms = atoms(catalog_value, "phone")
                 site_atoms = atoms(site_value, "phone") if site_row else None
-                mismatch = bool(sf_atoms) and sf_atoms != cat_atoms
+                mismatch = has_catalog and bool(sf_atoms) and sf_atoms != cat_atoms
                 if site_row is not None:
                     mismatch = mismatch or (bool(sf_atoms) and sf_atoms != site_atoms)
                 display_catalog, display_site = catalog_value, site_value
@@ -161,7 +170,7 @@ def build_rows(catalog_stores: dict, site_locations: dict | None) -> list[dict]:
                     "store": store,
                     "fact": kind,
                     "storefact": storefact_value,
-                    "catalog": display_catalog,
+                    "catalog": display_catalog if has_catalog else "(n/a)",
                     "site": display_site if site_row else "(skipped)",
                     "status": status,
                 }

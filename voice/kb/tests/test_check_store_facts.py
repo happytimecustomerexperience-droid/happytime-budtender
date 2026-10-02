@@ -13,6 +13,7 @@ import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
+from kb.management.commands.check_store_facts import _load_catalog as _real_load_catalog
 from kb.seed import seed_all
 
 # A synthetic catalog that agrees with kb.seed.STORE_FACT_ROWS exactly, so the
@@ -120,3 +121,36 @@ def test_site_json_missing_is_skipped_not_fatal(tmp_path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "site: skipped" in out
+
+
+@pytest.mark.django_db
+def test_without_the_storefront_package_it_compares_kb_to_site_only(tmp_path, monkeypatch, capsys):
+    """Production: the voice image has no `bundles` package. The check must still run (it
+    crashed on the import on 2026-10-01) and still catch site drift."""
+    from kb.management.commands import check_store_facts as csf
+
+    monkeypatch.setattr(csf, "_load_catalog", lambda: None)
+    seed_all()
+    call_command("check_store_facts", site_json=_write_site_json(tmp_path, _agreeing_site_locations()))
+    out = capsys.readouterr().out
+    assert "MISMATCH" not in out and "(n/a)" in out
+
+    locations = _agreeing_site_locations()
+    locations[0]["phone"] = "(509) 555-0000"
+    with pytest.raises(CommandError):
+        call_command("check_store_facts", site_json=_write_site_json(tmp_path, locations))
+
+
+def test_load_catalog_returns_none_when_bundles_is_absent(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "bundles":
+            raise ImportError("no bundles in the voice image")
+        return real_import(name, *args, **kwargs)
+
+    assert _real_load_catalog() is not None  # control: in the repo checkout it loads
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert _real_load_catalog() is None
