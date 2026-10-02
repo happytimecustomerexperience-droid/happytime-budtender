@@ -13,7 +13,7 @@ on an immediate alert — the durable ``VoiceCall`` + email are authoritative.
 
 Each outbound sink also follows its owner switch on /dashboard/capabilities/ (``alerts.email`` /
 ``alerts.slack`` / ``alerts.n8n``); the test-session suppression in ``dispatch`` runs before any
-of them.
+of them, and website-chat alerts are capped per store per hour (``_over_text_alert_cap``).
 
 The transfer heads-up (``deliver_transfer_notice``, driven by ``crm.transfer_notice``) is a separate
 path: it fires while a call is being transferred, not at the end, over Pushover + the Slack and
@@ -28,11 +28,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import urllib.parse
 import urllib.request
 from html import escape
 
 from django.conf import settings
+from django.core.cache import cache
 from django.core.mail import EmailMultiAlternatives
 
 from voice import capabilities, outcomes
@@ -106,6 +108,41 @@ def _is_chat(voice_call) -> bool:
 
 def _channel_label(voice_call) -> str:
     return "website chat" if _is_chat(voice_call) else "voice"
+
+
+def _slack_escape(value) -> str:
+    """Slack's required escaping for message text: a visitor's ``<!channel>`` or
+    ``<https://evil|login>`` must reach staff as literal text, never as a ping or a disguised link."""
+    return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+_TEXT_ALERT_WINDOW_S = 3600
+
+
+def _over_text_alert_cap(voice_call) -> bool:
+    """Whether this website-chat alert is past ``HHT_TEXT_ALERT_CAP_PER_STORE_HOUR`` for its store.
+
+    One visitor rotating session ids mints a fresh VoiceCall (and a fresh URGENT alert) per id, and
+    the ledger only dedupes per call — so chat alerts are counted per store per clock hour. A phone
+    call is never capped. A cache failure lets the alert through: a real dispute must not be
+    silenced because Redis hiccupped."""
+    if not _is_chat(voice_call):
+        return False
+    try:
+        cap = int(getattr(settings, "HHT_TEXT_ALERT_CAP_PER_STORE_HOUR", 6))
+    except (TypeError, ValueError):
+        cap = 6
+    key = f"text_alert_cap:{voice_call.store or '-'}:{int(time.time() // _TEXT_ALERT_WINDOW_S)}"
+    try:
+        cache.add(key, 0, timeout=_TEXT_ALERT_WINDOW_S)
+        count = cache.incr(key)
+    except ValueError:  # expired between add and incr
+        cache.set(key, 1, timeout=_TEXT_ALERT_WINDOW_S)
+        count = 1
+    except Exception:  # noqa: BLE001 — see docstring: fail open, the VoiceCall row is saved either way
+        logger.warning("text alert cap unavailable; alerting anyway", exc_info=True)
+        return False
+    return count > cap
 
 
 def _text_body(voice_call, transfer: str, reason_line: str) -> str:
@@ -225,6 +262,7 @@ class SlackSink(Sink):
             "summary": _safe_text(voice_call.ai_summary, "(no summary)"),
             "call_id": voice_call.call_id,
         }
+        block = {key: _slack_escape(value) for key, value in block.items()}
         data = json.dumps({"text": json.dumps(block)}).encode()
         req = urllib.request.Request(
             url, data=data, headers={"Content-Type": "application/json"}, method="POST"
@@ -342,7 +380,7 @@ def deliver_transfer_notice(store_key: str, store_slug: str, text: str) -> dict[
     attempt(
         "slack",
         bool(slack_url and capabilities.is_enabled("alerts.slack")),
-        lambda: _post(slack_url, json.dumps({"text": text}).encode(), "application/json"),
+        lambda: _post(slack_url, json.dumps({"text": _slack_escape(text)}).encode(), "application/json"),
     )
 
     recipients = _recipients_for(store_slug)
@@ -390,6 +428,18 @@ def dispatch(voice_call) -> dict[str, str]:
     suppressed = _suppression_reason(voice_call)
     if suppressed:
         logger.info("staff alert suppressed for %s: %s", voice_call.call_id, suppressed)
+    capped: list[bool] = []  # decided once per dispatch, only when an outbound sink would fire
+
+    def over_cap() -> bool:
+        if not capped:
+            capped.append(_over_text_alert_cap(voice_call))
+            if capped[0]:
+                logger.warning(
+                    "text-chat alert cap reached for store %s; %s logged on the dashboard only",
+                    voice_call.store or "-", voice_call.call_id,
+                )
+        return capped[0]
+
     for sink in SINKS:
         delivery, _ = AlertDelivery.objects.get_or_create(voice_call=voice_call, sink=sink.name)
         if delivery.status == "success":
@@ -402,6 +452,9 @@ def dispatch(voice_call) -> dict[str, str]:
         elif not sink.enabled(voice_call):
             delivery.status = "skipped"
             delivery.last_error = "disabled or not configured"
+        elif sink.name != DBSink.name and over_cap():  # the db "sink" is the record, not an alert
+            delivery.status = "skipped"
+            delivery.last_error = "text_alert_cap"
         else:
             try:
                 sink.deliver(voice_call)
