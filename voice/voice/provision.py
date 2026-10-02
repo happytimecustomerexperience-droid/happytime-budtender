@@ -102,6 +102,13 @@ _NO_TRANSFER_LINE = (
     "to a person. Take their name and what they need, and alert staff with the tool you have.\n"
 )
 
+# Appended for the phone members that carry the transferCall tool (vendor, escalation) while
+# transfers are ON: the tool has one destination per store, picked by the model.
+_TRANSFER_STORE_LINE = (
+    "- When you transfer a call, transfer to the store the caller is asking about. If you do "
+    "not know which store they mean, ask which store before transferring.\n"
+)
+
 INACTIVE = "inactive, left unchanged"
 
 
@@ -222,6 +229,8 @@ def _with_runtime_safety(body: str, role: str) -> str:
     safety += _OWNER_SAFETY_LINES.format(under_21=under_21)
     if role != "written" and not capabilities.is_enabled("call.transfer"):
         safety += _NO_TRANSFER_LINE
+    elif role in ("vendor", "escalation"):
+        safety += _TRANSFER_STORE_LINE
     if "IMMUTABLE RUNTIME SAFETY" in body:
         return body
     return f"{body.rstrip()}{safety}"
@@ -243,21 +252,26 @@ def build_tool_payload(name: str) -> dict:
     }
 
 
-def _transfer_tool(role: str, warnings: list[str]) -> dict:
-    """The built-in ``transferCall`` tool (warm + summaryPlan) inline on vendor/escalation
-    ``model.tools`` (§4.8). An unset HHT_TRANSFER_NUMBER_<key> (O-4) → a documented placeholder
-    + a warning (never blocks the run)."""
-    key = C.MEMBER_TRANSFER_KEY.get(role, "YAKIMA")
-    number = getattr(settings, f"HHT_TRANSFER_NUMBER_{key}", "") or ""
-    if not number:
-        number = C.TRANSFER_NUMBER_PLACEHOLDER
-        warnings.append(f"transfer number not configured for {key} (using placeholder)")
-    return {
-        "type": "transferCall",
-        "destinations": [
+def _transfer_tool(warnings: list[str]) -> dict:
+    """The built-in ``transferCall`` tool inline on vendor/escalation ``model.tools`` (§4.8): one
+    warm destination per store, each described by its store name (Vapi's model picks the
+    destination from that description). An unset HHT_TRANSFER_NUMBER_<key> (O-4) → a documented
+    placeholder + a warning for THAT store (never blocks the run)."""
+    destinations = []
+    for key, slug in C.TRANSFER_STORES:
+        store = C.spoken_store(slug)
+        number = getattr(settings, f"HHT_TRANSFER_NUMBER_{key}", "") or ""
+        if not number:
+            number = C.TRANSFER_NUMBER_PLACEHOLDER
+            warnings.append(f"transfer number not configured for {key} (using placeholder)")
+        destinations.append(
             {
                 "type": "number",
                 "number": number,
+                "description": (
+                    f"Happy Time {store} store staff. Choose this when the caller is asking "
+                    f"about the {store} store."
+                ),
                 "message": "Connecting you to the team now — one moment.",
                 "transferPlan": {
                     # Warm transfer where the AI reads the operator a call summary, then connects
@@ -282,8 +296,8 @@ def _transfer_tool(role: str, warnings: list[str]) -> dict:
                     },
                 },
             }
-        ],
-    }
+        )
+    return {"type": "transferCall", "destinations": destinations}
 
 
 def _tool_names_for_role(role: str, prompt=None) -> list[str]:
@@ -377,7 +391,7 @@ def build_assistant_payload(role: str, *, name: str | None = None) -> tuple[dict
     # vendor/escalation carry the built-in transferCall inline (warm + summaryPlan, §4.8) —
     # unless the owner switched transfers off.
     if role in ("vendor", "escalation") and capabilities.is_enabled("call.transfer"):
-        model["tools"] = [_transfer_tool(role, warnings)]
+        model["tools"] = [_transfer_tool(warnings)]
 
     payload = {
         "name": name or role,

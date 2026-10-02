@@ -1,0 +1,36 @@
+# crm/ — caller identity, staff alerts, the delivery ledger
+
+## Purpose
+Peppered phone hash + customer profiles, vendor callbacks, and every outbound staff alert. One
+`AlertDelivery` row per `(voice_call, sink)` is the idempotency ledger for all of them.
+
+## Skills
+`live-api-writes` (before any new outbound sink), `diagnose` (an alert that "didn't fire").
+
+## Scripts & commands
+Run from `voice/` with `HHT_TEST_SQLITE=1 DJANGO_DEBUG=1 ALLOW_NON_EU_RESIDENCY=1`:
+- `python -m pytest -q -p no:cacheprovider voice/tests/test_transfer_notice.py voice/tests/test_sinks_email.py`
+- `python manage.py makemigrations --check --dry-run`
+
+## Invariants
+- **End-of-call alerts**: `sinks.dispatch(voice_call)` — each sink independent, never raises, skipped
+  rows for test sessions (`_TEST_SESSION_PREFIXES`) and `HHT_ALERT_SINKS=off`.
+- **Transfer heads-up** (`transfer_notice.heads_up`, called from the `forwarding` status-update): the
+  composed line is deterministic, ASCII, <= 300 chars; gates in order = `call.sms_on_transfer` switch
+  (default OFF) -> store resolved from the DIALLED number -> test-session suppression -> ledger row
+  `xfer:<n>` (dedup) -> 3 per call -> `HHT_TRANSFER_NOTICE_DAILY_CAP` per rolling 24 h. A skipped
+  notice writes no row, so it never counts against a cap.
+- The caller's number is used in-request (last 4 digits, known-customer lookup) and never stored.
+- Real SMS is unavailable to a cannabis retailer. "Text staff" = Pushover push + Slack + email.
+- A new outbound channel obeys its own `alerts.*` switch and has a mocked-`urlopen` test.
+
+## Gotchas
+- `AlertDelivery.sink` is `max_length=24`: `xfer:` + a count, or + the timestamp digits (<= 19).
+- The `forwarding` payload shape (`destination.number`, `customer.number`, `summary`, `messages`) is
+  taken from the brief, not from a live capture; check the first real transfer.
+- Delivery is inline in the webhook (5 s timeout per channel; the known-customer lookup adds up to
+  ~10 s when budtender hangs). Move it onto Celery if that ever shows in call latency.
+
+## Related
+`voice/voice/webhooks.py` (`handle_status_update`), `voice/voice/capabilities.py`,
+`voice/dashboard/credentials.py` (Pushover keys), `voice/voice/provision.py::_transfer_tool`.

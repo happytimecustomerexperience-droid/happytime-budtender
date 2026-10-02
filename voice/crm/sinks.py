@@ -15,6 +15,10 @@ Each outbound sink also follows its owner switch on /dashboard/capabilities/ (``
 ``alerts.slack`` / ``alerts.n8n``); the test-session suppression in ``dispatch`` runs before any
 of them.
 
+The transfer heads-up (``deliver_transfer_notice``, driven by ``crm.transfer_notice``) is a separate
+path: it fires while a call is being transferred, not at the end, over Pushover + the Slack and
+email channels.
+
 Leak-Guard (12-P2 §4.5): the email body is built ONLY from ``VoiceCall`` fields + ``ai_summary`` —
 no product cost/margin field exists on the row; a contract test asserts no ``cost``/``margin``
 substring. PII: the hashed caller, never the raw number.
@@ -24,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import urllib.parse
 import urllib.request
 from html import escape
 
@@ -31,6 +36,7 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 
 from voice import capabilities, outcomes
+from voice import constants as C
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +271,92 @@ class N8nSink(Sink):
 
 
 SINKS: list[Sink] = [DBSink(), EmailSink(), SlackSink(), N8nSink()]
+
+
+# ── Transfer heads-up channels (the call.sms_on_transfer switch) ───────────────────────────────
+# Real SMS is not available to a cannabis retailer (carriers/Twilio refuse it), so the "text" that
+# says who is calling goes out as a phone push (Pushover) and/or the Slack + email sinks above.
+# None of these is in ``SINKS``: that list fires once per FINISHED call; the heads-up is sent while
+# the call is being transferred, by ``crm.transfer_notice`` (which owns the gates + the ledger).
+
+_NOTICE_TIMEOUT_S = 5
+
+
+def _post(url: str, data: bytes, content_type: str) -> bytes:
+    """One bounded POST for a heads-up channel. Raises on a non-2xx; returns the body."""
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": content_type}, method="POST")
+    with urllib.request.urlopen(req, timeout=_NOTICE_TIMEOUT_S) as r:  # noqa: S310 (fixed or config-supplied URL)
+        if r.status >= 300:
+            raise RuntimeError(f"HTTP {r.status}")
+        return r.read()
+
+
+class PushoverSink:
+    """A phone push through Pushover — one HTTPS POST per notice, to the store's own user key.
+    Inert (no request at all) until BOTH ``PUSHOVER_APP_TOKEN`` and that store's
+    ``PUSHOVER_USER_<KEY>`` are set."""
+
+    name = "pushover"
+    URL = "https://api.pushover.net/1/messages.json"
+
+    @staticmethod
+    def _user(store_key: str) -> str:
+        return getattr(settings, f"PUSHOVER_USER_{store_key}", "") or ""
+
+    def enabled(self, store_key: str) -> bool:
+        return bool(getattr(settings, "PUSHOVER_APP_TOKEN", "") and self._user(store_key))
+
+    def deliver(self, store_key: str, text: str) -> None:
+        form = urllib.parse.urlencode(
+            {"token": settings.PUSHOVER_APP_TOKEN, "user": self._user(store_key), "message": text}
+        ).encode()
+        reply = json.loads(_post(self.URL, form, "application/x-www-form-urlencoded") or b"{}")
+        if reply.get("status") != 1:  # an accepted push says status 1; a refusal is not a send
+            raise RuntimeError(f"pushover refused: {reply.get('errors') or 'no status'}")
+
+
+def deliver_transfer_notice(store_key: str, store_slug: str, text: str) -> dict[str, str]:
+    """Send one heads-up on every channel that is switched on and configured for this store.
+
+    Each channel obeys its own switch the way the finished-call sinks do (``alerts.slack`` /
+    ``alerts.email``); Pushover has no other switch than the ``call.sms_on_transfer`` master the
+    caller already checked. Returns ``{channel: "sent" | "skipped" | "failed: why"}``. Never raises,
+    and one channel failing never stops the next."""
+    results: dict[str, str] = {}
+
+    def attempt(channel: str, ready: bool, send) -> None:
+        if not ready:
+            results[channel] = "skipped"
+            return
+        try:
+            send()
+            results[channel] = "sent"
+        except Exception as exc:  # noqa: BLE001 — a dead channel must not stop the others
+            results[channel] = f"failed: {type(exc).__name__}"
+            logger.warning("transfer heads-up via %s failed: %s", channel, exc)
+
+    pushover = PushoverSink()
+    attempt("pushover", pushover.enabled(store_key), lambda: pushover.deliver(store_key, text))
+
+    slack_url = getattr(settings, "SLACK_WEBHOOK_URL", "")
+    attempt(
+        "slack",
+        bool(slack_url and capabilities.is_enabled("alerts.slack")),
+        lambda: _post(slack_url, json.dumps({"text": text}).encode(), "application/json"),
+    )
+
+    recipients = _recipients_for(store_slug)
+    attempt(
+        "email",
+        bool(recipients and capabilities.is_enabled("alerts.email")),
+        lambda: EmailMultiAlternatives(
+            subject=f"[Happy Time voice] {C.spoken_store(store_slug)} — transfer incoming",
+            body=text,
+            from_email=getattr(settings, "LEAD_EMAIL_FROM", "bot@happytimeweed.com"),
+            to=recipients,
+        ).send(fail_silently=False),
+    )
+    return results
 
 
 # Sessions that are never a real caller: the eval harness (``eval-``), the staff console

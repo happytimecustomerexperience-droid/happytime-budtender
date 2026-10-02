@@ -414,7 +414,6 @@ class AgentPrompt(models.Model):
     voice_settings = models.JSONField(default=dict, blank=True)
     tool_names = models.JSONField(default=list, blank=True)  # ["faq_lookup"] — bound custom tools
     vapi_assistant_id = models.CharField(max_length=64, blank=True)  # written back by provisioner
-    transfer_number_key = models.CharField(max_length=32, blank=True)  # YAKIMA|MTVERNON|PULLMAN
     temperature = models.FloatField(null=True, blank=True)
     max_output_tokens = models.IntegerField(null=True, blank=True)
     prompt_version = models.IntegerField(default=1)

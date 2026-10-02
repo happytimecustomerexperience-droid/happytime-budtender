@@ -91,7 +91,7 @@ MEMBER_TOOLS = {
     # answer from the KB without a handoff (else it says "I don't have access to the deals").
     "budtender": ["suggest_products", "check_inventory", "pair_upsell", "faq_lookup", "stage_phone_cart"],
     "faq": ["faq_lookup"],  # + the KB Query Tool (attached by ensure_files)
-    "vendor": ["notify_vendor_callback"],  # + transferCall (built from transfer_number_key)
+    "vendor": ["notify_vendor_callback"],  # + transferCall (one destination per store)
     "escalation": ["notify_staff_issue"],  # gather+email is the default; transferCall is last-resort
 }
 
@@ -369,10 +369,12 @@ def spoken_store(store: str) -> str:
     return STORE_SPOKEN.get(key, key.replace("_", " ").replace("-", " ").title()) or "your"
 
 
-# Per-member transfer destination key → settings.HHT_TRANSFER_NUMBER_<KEY> (env, O-4).
-MEMBER_TRANSFER_KEY = {
-    "vendor": "YAKIMA",
-    "escalation": "YAKIMA",
-}
+# The three stores a warm transfer can reach: (settings key, store slug). The number for a store is
+# settings.HHT_TRANSFER_NUMBER_<KEY> (env, O-4); the spoken name comes from ``spoken_store(slug)``.
+TRANSFER_STORES = (
+    ("YAKIMA", "yakima"),
+    ("MTVERNON", "mount-vernon"),
+    ("PULLMAN", "pullman"),
+)
 # Documented placeholder when a transfer number is unset (O-4) — never blocks the run.
 TRANSFER_NUMBER_PLACEHOLDER = "+10000000000"

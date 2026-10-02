@@ -33,6 +33,8 @@ def _seeded(db):
 def test_escalation_transfer_tool_warm_with_transcript(settings, _seeded):
     """A2: non-empty destinations; B1: warm mode + {{transcript}} summaryPlan; number from env."""
     settings.HHT_TRANSFER_NUMBER_YAKIMA = "+15095711106"
+    settings.HHT_TRANSFER_NUMBER_MTVERNON = "+13604882923"
+    settings.HHT_TRANSFER_NUMBER_PULLMAN = "+15093342788"
     payload, warnings = build_assistant_payload("escalation", name="escalation")
     tools = payload["model"].get("tools", [])
     transfer = [t for t in tools if t["type"] == "transferCall"]

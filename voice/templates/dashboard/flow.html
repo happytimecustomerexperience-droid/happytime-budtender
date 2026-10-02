@@ -115,7 +115,6 @@
                     <label><span class="lt">Max tokens</span><input type="number" min="1" max="65536" x-model="a.max_output_tokens"></label>
                   </div>
                   <label><span class="lt">Tools</span><input x-model="a.tool_names" placeholder="comma-separated"></label>
-                  <label><span class="lt">Transfer number key</span><input x-model="a.transfer_number_key" placeholder="YAKIMA / MTVERNON / PULLMAN"></label>
                   <div style="margin:8px 0">
                     <div class="muted" style="font-size:11px;margin-bottom:4px">✨ AI: add to this prompt (never rewrites)</div>
                     <div class="row">
@@ -295,7 +294,6 @@
         const fd = new URLSearchParams();
         fd.set("vapi_model", a.vapi_model || ""); fd.set("voice_id", a.voice_id || ""); fd.set("body", a.body || "");
         fd.set("tool_names", Array.isArray(a.tool_names) ? a.tool_names.join(",") : (a.tool_names || ""));
-        fd.set("transfer_number_key", a.transfer_number_key || "");
         fd.set("temperature", a.temperature == null ? "" : a.temperature);
         fd.set("max_output_tokens", a.max_output_tokens == null ? "" : a.max_output_tokens);
         if (a.is_active) fd.set("is_active", "on");

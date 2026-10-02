@@ -170,6 +170,16 @@ HHT_TRANSFER_NUMBER_MTVERNON = os.environ.get("HHT_TRANSFER_NUMBER_MTVERNON", ""
 HHT_TRANSFER_NUMBER_PULLMAN = os.environ.get("HHT_TRANSFER_NUMBER_PULLMAN", "")
 HHT_DEFAULT_STORE = os.environ.get("HHT_DEFAULT_STORE", "yakima")
 
+# ── Transfer heads-up (the call.sms_on_transfer switch) ───────────────
+# A push describing the caller, sent when a call is transferred. Pushover is inert until the app
+# token AND that store's user key are set; the cap (kept a string — the credentials editor writes
+# strings; parsed at use) bounds how many notices go out in any 24 hours.
+PUSHOVER_APP_TOKEN = os.environ.get("PUSHOVER_APP_TOKEN", "")
+PUSHOVER_USER_YAKIMA = os.environ.get("PUSHOVER_USER_YAKIMA", "")
+PUSHOVER_USER_MTVERNON = os.environ.get("PUSHOVER_USER_MTVERNON", "")
+PUSHOVER_USER_PULLMAN = os.environ.get("PUSHOVER_USER_PULLMAN", "")
+HHT_TRANSFER_NOTICE_DAILY_CAP = os.environ.get("HHT_TRANSFER_NOTICE_DAILY_CAP", "50")
+
 # ── Post-call queue (P5, gated; 15-P5 §3.5 / ADR-021) ─────────────────
 # OFF by default → post-call work (summary/email/rollup) runs INLINE exactly as P2 (the durable
 # VoiceCall write is always synchronous). Flip HHT_USE_CELERY=1 + run a worker to move it onto Redis.

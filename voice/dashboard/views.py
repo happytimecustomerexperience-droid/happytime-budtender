@@ -233,13 +233,7 @@ def _publish_note(note: str) -> str:
 
 
 def _agent_card_ctx(prompt, *, saved=False, error="", note=""):
-    return {
-        "p": prompt,
-        "saved": saved,
-        "error": error,
-        "note": note,
-        "transfer_keys": ["", "YAKIMA", "MTVERNON", "PULLMAN"],
-    }
+    return {"p": prompt, "saved": saved, "error": error, "note": note}
 
 
 @staff_member_required
@@ -247,18 +241,14 @@ def agent_config(request):
     from kb.models import AgentPrompt
 
     prompts = AgentPrompt.objects.order_by("role")
-    return render(
-        request,
-        "dashboard/agent_config.html",
-        {"prompts": prompts, "transfer_keys": ["", "YAKIMA", "MTVERNON", "PULLMAN"]},
-    )
+    return render(request, "dashboard/agent_config.html", {"prompts": prompts})
 
 
 @staff_member_required
 @require_POST
 def agent_save(request, pk: int):
     """Inline-save one assistant's editable config incl. the voice fields (``vapi_model``/
-    ``voice_id``/``tool_names``/``transfer_number_key``). Fail-closed numeric validation; the
+    ``voice_id``/``tool_names``). Fail-closed numeric validation; the
     hard-coded safety baseline stays in ``voice/guardrails.py`` (this only tunes prompt + knobs)."""
     from kb.models import AgentPrompt
 
@@ -308,12 +298,6 @@ def agent_save(request, pk: int):
             errors.append(f"tool_names: unknown {', '.join(unknown)}")
         else:
             p.tool_names = clean_tools
-
-    key = (request.POST.get("transfer_number_key") or "").strip().upper()
-    if key and key not in ("YAKIMA", "MTVERNON", "PULLMAN"):
-        errors.append("transfer_number_key: unknown")
-    else:
-        p.transfer_number_key = key
 
     def _num(field, cast, *, lo=None, hi=None, default=None):
         raw = (request.POST.get(field) or "").strip()
@@ -444,7 +428,6 @@ def flow_canvas(request):
             "vapi_model": a.vapi_model,
             "voice_id": a.voice_id,
             "tool_names": a.tool_names,
-            "transfer_number_key": a.transfer_number_key,
             "temperature": a.temperature,
             "max_output_tokens": a.max_output_tokens,
             "is_active": a.is_active,
@@ -1084,17 +1067,41 @@ def credentials_save(request):
     # Blank submit = "keep existing" (the placeholder says so) — never silently wipe a set secret.
     # To CLEAR a credential, delete the row in Django admin (ponytail: clearing is rare).
     saved = False
+    publish_note = None  # set only when this save changed a transfer number
     if value != "":
+        changed = value != cred.current_value(name)
         cred.set_credential(name, value)
         saved = True
+        if changed and name.startswith("HHT_TRANSFER_NUMBER_"):
+            publish_note = _republish_transfer_members()
 
     entry = cred._CATALOG_BY_NAME[name]
     val = cred.current_value(name)
     item = {**entry, "is_set": bool(val), "preview": cred.mask(val) if entry["secret"] else val}
     resp = render(request, "dashboard/_credential_row.html", {"c": item, "saved": saved})
     if saved:
-        resp["HX-Trigger"] = _toast("success", f"{entry['label']} saved — live now ✓")
+        if publish_note is None:
+            resp["HX-Trigger"] = _toast("success", f"{entry['label']} saved — live now ✓")
+        else:  # the number is inside the Vapi assistants: say what the publish actually did
+            level = "error" if "failed" in publish_note else "success"
+            resp["HX-Trigger"] = _toast(level, f"{entry['label']}: {_publish_note(publish_note)}")
     return resp
+
+
+def _republish_transfer_members() -> str:
+    """The transfer numbers live inside the escalation + vendor assistants' ``transferCall`` tool, so
+    a changed number only reaches callers once those two are re-published. Same publish call the
+    ``AgentPrompt`` save signal uses (a no-op unless auto-publish is on). Returns the joined status."""
+    from kb.models import AgentPrompt
+
+    from .publish import auto_publish_on_save
+
+    notes = []
+    for prompt in AgentPrompt.objects.filter(is_active=True, role__in=("escalation", "vendor")):
+        note = auto_publish_on_save(prompt)
+        if note:
+            notes.append(f"{prompt.role}: {note}")
+    return "; ".join(notes)
 
 
 # ── Specials / hours editor (14-P4 item 5) ─────────────────────────────────────

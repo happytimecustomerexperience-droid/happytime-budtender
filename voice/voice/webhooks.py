@@ -277,14 +277,20 @@ def _apply_correction(args: dict) -> dict:
 
 def handle_status_update(message: dict) -> JsonResponse:
     """In-flight call state. Append a ``VoiceTurn`` when a transcript fragment is present so the
-    P4 live-monitor + P5 latency p95 read from durable rows. Acks ``200 {}`` (§4.4)."""
+    P4 live-monitor + P5 latency p95 read from durable rows. A ``forwarding`` update (a transfer
+    has started) instead sends the staff heads-up — its ``transcript`` is the whole call so far,
+    not a turn, so it is never stored as one. Acks ``200 {}`` (§4.4)."""
     from voice.models import VoiceCall, VoiceTurn
 
     call = message.get("call") or {}
     call_id = call.get("id", "")
     transcript = message.get("transcript")
     role = message.get("role", "")
-    if call_id and transcript:
+    if message.get("status") == "forwarding":
+        from crm import transfer_notice
+
+        transfer_notice.heads_up(message, call_store=_resolve_store(message))  # never raises
+    elif call_id and transcript:
         store = _resolve_store(message)
         vc, _ = VoiceCall.objects.get_or_create(call_id=call_id, defaults={"store": store})
         seq = vc.turns.count()
@@ -300,6 +306,7 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
     """The durable record + summary + staff alert (ADR-017). Order is binding (§4.5):
     (1) synchronous idempotent ``VoiceCall`` upsert (record never lost) + turns + phone-hash;
     (2) inline summary; (3) ``crm.sinks.dispatch`` email digest. Always returns ``200 {}``."""
+    from crm import transfer_notice
     from crm.models import phone_hash
     from voice.models import VoiceCall, VoiceToolCall, VoiceTurn
 
@@ -318,7 +325,10 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
     outcome, reason = outcomes.classify_outcome(message, transcript)
     human_count = outcomes.human_requested_count(message, transcript)
     transferred, disposition = outcomes.transfer_disposition(message, reason)
-    transfer_key = _transfer_key_for_store(store)
+    # Which store's number was ACTUALLY dialled (not the caller's store): "" when the call had no
+    # transfer destination or it matches no configured store.
+    matched = transfer_notice.store_for_number((message.get("destination") or {}).get("number"))
+    transfer_key = matched[0] if matched else ""
 
     # (1) Synchronous durable write — idempotent on call_id. The record survives even if the
     #     summary/email steps below fail.
@@ -334,7 +344,7 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
             "escalated": transferred,
             "human_requested_count": human_count,
             "transfer_disposition": disposition,
-            "transfer_number_key": transfer_key if transferred else "",
+            "transfer_number_key": transfer_key,
             "assistant_id": call.get("assistantId", "") or "",
         },
     )
@@ -384,19 +394,6 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
         logger.warning("eocr post-call work failed for %s", call_id, exc_info=True)
 
     return JsonResponse({})
-
-
-_STORE_TRANSFER_KEY = {
-    "yakima": "YAKIMA",
-    "mount-vernon": "MTVERNON",
-    "pullman": "PULLMAN",
-}
-
-
-def _transfer_key_for_store(store: str) -> str:
-    """The HHT_TRANSFER_NUMBER_<KEY> key for the caller's store (default YAKIMA). Recorded on the
-    VoiceCall so the staff email + dashboard show which store line the warm transfer targeted."""
-    return _STORE_TRANSFER_KEY.get(store, "YAKIMA")
 
 
 def _message_text(msg: dict) -> str:

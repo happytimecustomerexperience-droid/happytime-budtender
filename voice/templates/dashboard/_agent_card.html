@@ -29,11 +29,6 @@
       <label><span class="lt">Temperature</span><input type="number" step="any" min="0" max="2" name="temperature" value="{{ p.temperature|default_if_none:'' }}"></label>
       <label><span class="lt">Max tokens</span><input type="number" min="1" max="65536" name="max_output_tokens" value="{{ p.max_output_tokens|default_if_none:'' }}"></label>
       <label><span class="lt">Tool names (comma-separated)</span><input name="tool_names" value="{{ p.tool_names|join:', ' }}"></label>
-      <label><span class="lt">Transfer number key</span>
-        <select name="transfer_number_key">
-          {% for k in transfer_keys %}<option value="{{ k }}" {% if k == p.transfer_number_key %}selected{% endif %}>{{ k|default:'(none)' }}</option>{% endfor %}
-        </select>
-      </label>
     </div>
     <label><span class="lt">Voice settings (JSON — ElevenLabs: stability, similarityBoost, style, useSpeakerBoost, model)</span>
       <textarea name="voice_settings" rows="3" placeholder='{"model":"eleven_flash_v2_5","stability":0.5,"similarityBoost":0.75}'>{{ p.voice_settings_json }}</textarea></label>

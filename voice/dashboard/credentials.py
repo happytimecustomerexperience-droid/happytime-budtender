@@ -40,6 +40,18 @@ CREDENTIAL_CATALOG: list[dict] = [
      "help": "E.164 warm-transfer destination for Mount Vernon."},
     {"group": "Transfer numbers", "name": "HHT_TRANSFER_NUMBER_PULLMAN", "label": "Pullman transfer #", "secret": False,
      "help": "E.164 warm-transfer destination for Pullman."},
+    {"group": "Transfer heads-up", "name": "PUSHOVER_APP_TOKEN", "label": "Pushover app token", "secret": True,
+     "help": "Application token from pushover.net. With a store's user key below, staff phones get a push "
+             "describing who is calling when a call is transferred."},
+    {"group": "Transfer heads-up", "name": "PUSHOVER_USER_YAKIMA", "label": "Yakima Pushover user key", "secret": True,
+     "help": "Pushover user (or group) key whose phones are pushed for Yakima transfers."},
+    {"group": "Transfer heads-up", "name": "PUSHOVER_USER_MTVERNON", "label": "Mt Vernon Pushover user key", "secret": True,
+     "help": "Pushover user (or group) key for Mount Vernon transfers."},
+    {"group": "Transfer heads-up", "name": "PUSHOVER_USER_PULLMAN", "label": "Pullman Pushover user key", "secret": True,
+     "help": "Pushover user (or group) key for Pullman transfers."},
+    {"group": "Transfer heads-up", "name": "HHT_TRANSFER_NOTICE_DAILY_CAP", "label": "Transfer notices per day", "secret": False,
+     "help": "Most transfer heads-ups sent in any 24 hours, all stores together (default 50). A runaway "
+             "loop stops here."},
     {"group": "Email", "name": "STAFF_ALERT_EMAIL", "label": "Staff alert email", "secret": False,
      "help": "Where per-call summaries + alerts are sent."},
     {"group": "Email", "name": "EMAIL_HOST_PASSWORD", "label": "SMTP password", "secret": True,

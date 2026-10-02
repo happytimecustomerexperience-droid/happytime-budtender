@@ -96,11 +96,14 @@ CAPABILITIES: tuple[Capability, ...] = (
         (PHONE,),
     ),
     Capability(
-        "call.sms_on_transfer", "Staff & vendors", "Text staff who's calling on a transfer",
-        "When a call is transferred, texts the store's staff phone one short note: the caller's "
-        "first name if they gave it, the last 4 digits of their number, the store, what they want, "
-        "and whether they're a known customer.",
-        "No text is sent; staff still hear the spoken summary.",
+        "call.sms_on_transfer", "Staff & vendors", "Tell staff who's calling on a transfer",
+        "When a call is transferred, sends that store's staff one short note: the caller's first "
+        "name only if they said it, the last 4 digits of their number, what they want, and whether "
+        "they're a known customer. It goes out as a Pushover phone push (needs the Pushover keys on "
+        "Credentials), and also to Slack and email when those Alerts switches are on and set up. "
+        "It is not a text message: carriers block SMS for cannabis businesses, so real texting "
+        "is not available.",
+        "No note is sent; staff still hear the spoken summary when they pick up.",
         (PHONE,), default=False, paid=True,
     ),
     # ── Personalization ───────────────────────────────────────────────────────

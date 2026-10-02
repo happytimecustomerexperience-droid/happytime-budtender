@@ -12,7 +12,7 @@
 </div>
 
 {% for p in prompts %}
-  {% include "dashboard/_agent_card.html" with p=p transfer_keys=transfer_keys %}
+  {% include "dashboard/_agent_card.html" with p=p %}
 {% empty %}
   <div class="card muted">No AgentPrompt rows yet — run <code>seed_kb</code>.</div>
 {% endfor %}

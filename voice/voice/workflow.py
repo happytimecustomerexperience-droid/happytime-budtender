@@ -336,7 +336,7 @@ def build_workflow_payload() -> dict:
         "else I can help you with right now?",
         {"wants_human_again": "boolean"},
     )
-    transfer = {"type": "tool", "name": "transfer", "tool": provision._transfer_tool("escalation", warnings)}
+    transfer = {"type": "tool", "name": "transfer", "tool": provision._transfer_tool(warnings)}
     nodes += [escalation, notify, esc_sent, transfer]
     edges.append(_edge("escalation", "notify_staff_issue", "the issue details were gathered"))
     edges.append(_edge("notify_staff_issue", "escalation_sent", "the team was emailed"))

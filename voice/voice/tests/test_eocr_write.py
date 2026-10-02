@@ -23,6 +23,7 @@ def _cfg(settings):
     settings.VAPI_SIGNATURE_HEADER = "X-Vapi-Signature"
     settings.VAPI_SECRET_HEADER = "X-Vapi-Secret"
     settings.HHT_DEFAULT_STORE = "yakima"
+    settings.HHT_TRANSFER_NUMBER_YAKIMA = "+15095711106"  # the fixture's dialled destination
     settings.STAFF_ALERT_EMAIL = "staff@happytimeweed.com"
     settings.EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 

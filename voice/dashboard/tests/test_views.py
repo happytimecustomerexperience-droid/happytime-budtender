@@ -49,7 +49,6 @@ def test_agent_save_persists_voice_fields(client_staff, budtender_prompt):
             "vapi_model": "gpt-4.1-mini",
             "voice_id": "new-voice",
             "tool_names": "suggest_products, check_inventory, pair_upsell",
-            "transfer_number_key": "YAKIMA",
             "temperature": "0.4",
             "max_output_tokens": "250",
             "is_active": "on",
@@ -59,7 +58,6 @@ def test_agent_save_persists_voice_fields(client_staff, budtender_prompt):
     budtender_prompt.refresh_from_db()
     assert budtender_prompt.voice_id == "new-voice"
     assert budtender_prompt.tool_names == ["suggest_products", "check_inventory", "pair_upsell"]
-    assert budtender_prompt.transfer_number_key == "YAKIMA"
     assert budtender_prompt.temperature == 0.4
     # HHT_AUTO_PUBLISH is off under pytest → the toast says it did NOT publish (never "published").
     assert "not published (auto-publish off)" in resp["HX-Trigger"]
