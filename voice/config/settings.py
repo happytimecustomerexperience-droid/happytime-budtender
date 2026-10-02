@@ -119,6 +119,11 @@ else:
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
 ]
+# The ONLY backend: a ModelBackend that refuses a username/IP locked out after 10 failed logins in
+# 15 min (dashboard/lockout.py). A plain ModelBackend after it would let a locked login through.
+AUTHENTICATION_BACKENDS = ["dashboard.lockout.LockoutModelBackend"]
+# Staff sessions end after 12 h (Django's default is two weeks).
+SESSION_COOKIE_AGE = 12 * 60 * 60
 
 # ── i18n / l10n ───────────────────────────────────────────────────────
 LANGUAGE_CODE = "en"
