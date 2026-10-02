@@ -100,6 +100,10 @@ class Shopper:
 
 @override_settings(BUNDLE_URL_SECRET=SECRET, CACHES=LOCMEM, BUNDLE_MIN_STOCK=2,
                    BUNDLE_MAX_ORDER_TOTAL=300,
+                   # These measure what concurrency does, not the abuse caps (see
+                   # test_order_abuse.py): 40 shoppers hold ~180 units, over the real default.
+                   BUNDLES_MAX_OPEN_ONLINE_ORDERS_PER_STORE=1000,
+                   BUNDLES_MAX_HELD_UNITS_PER_STORE=100000,
                    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
                    DEFAULT_FROM_EMAIL="orders@happytimeweed.com")
 class BurstTestCase(TransactionTestCase):
@@ -405,6 +409,47 @@ class DoubleClickRaceTests(BurstTestCase):
         emails, stamps = self._race(5, "1 cart, 5 simultaneous submits")
         self.assertEqual(stamps, 1, "one release, one audit stamp")
         self.assertEqual(emails, 1, "five tabs must still mean one confirmation")
+
+
+class LastUnitRaceTests(BurstTestCase):
+    """Six shoppers submit together for a shelf with two units left.
+
+    Stock was re-checked and the order released as two unlocked steps, so every racing
+    request read "2 free" before any of them wrote its hold and all six were confirmed.
+    Now the holds are re-read and the order written under one per-store lock
+    (`cart.lock_store`, a Postgres advisory lock), so exactly two get an order. Needs
+    real concurrent writers like every test here — and a real Postgres, since SQLite has
+    no such lock; `_fire` skips on in-memory SQLite.
+    """
+
+    def test_simultaneous_checkouts_for_the_last_two_units_confirm_exactly_two(self):
+        from django.core import mail
+
+        shoppers = []
+        for i in range(6):
+            s = Shopper(i, f"198.51.100.{i + 1}")
+            r = s.client.post("/custom-order/cart/add", {"loc": "yakima", "product_id": "1", "qty": 1})
+            self.assertEqual(r.status_code, 200)
+            s.token = s.client.cookies[cart_mod.COOKIE].value
+            s.basket = {"1": 1}
+            shoppers.append(s)
+
+        # The shelf shrinks only now: every cart above was built against deep stock.
+        scarce = patch("bundles.cart.pos_catalog.get_inventory",
+                       side_effect=lambda *a, **k: [live(product_id="1", name="Blue Dream 3.5g",
+                                                         brand="Athenry", price=25.0, qty=2)])
+        scarce.start()
+        self.addCleanup(scarce.stop)
+        mail.outbox = []
+        self._fire(shoppers)
+
+        placed = PhoneCartDraft.objects.filter(status=PhoneCartDraft.Status.RELEASED)
+        units = sum(int(x["quantity"]) for d in placed for x in d.lines)
+        self.assertEqual([s.error for s in shoppers if s.error], [])
+        self.assertEqual(units, 2, f"{units} units promised for 2 on the shelf")
+        self.assertEqual(placed.count(), 2)
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertEqual(Counter(s.status for s in shoppers), Counter({200: 2, 400: 4}))
 
 
 class BurstWithDutchieLatencyTests(BurstTestCase):

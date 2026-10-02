@@ -7,8 +7,21 @@ whole. Keys carry a keyed hash, never the raw value: the cache is no place for P
 """
 from __future__ import annotations
 
+from django.conf import settings
 from django.core.cache import cache
 from django.utils.crypto import salted_hmac
+
+
+def limit(name: str, default: int) -> int:
+    """A ceiling from settings, read at call time so a deploy or a test can move it.
+
+    A malformed value falls back to the default rather than raising — a typo in an env
+    var must not turn the checkout into a 500, and must not silently remove the cap.
+    """
+    try:
+        return max(int(getattr(settings, name, default)), 0)
+    except (TypeError, ValueError):
+        return default
 
 
 def _key(scope: str, value: str) -> str:

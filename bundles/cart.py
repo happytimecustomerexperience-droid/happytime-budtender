@@ -18,10 +18,12 @@ import logging
 import os
 import re
 import sys
+import zlib
 from datetime import timedelta
 
 from django.conf import settings
 from django.core.cache import cache
+from django.db import connection
 from django.utils import timezone
 
 from budtender.models import PhoneCartDraft
@@ -29,7 +31,7 @@ from dutchie.pos_register_client import PosRegisterClient
 from dutchie.stores import get_store
 from pos import catalog as pos_catalog
 
-from . import resolver
+from . import caps, resolver
 from .catalog import store_key_for
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,25 @@ def inventory_for(location_slug: str) -> list[dict]:
         return []
 
 
+def _holding(location_slug: str):
+    """Placed orders still holding stock at this store: RELEASED and not yet expired."""
+    return (PhoneCartDraft.objects
+            .filter(location_slug=location_slug, status=PhoneCartDraft.Status.RELEASED,
+                    expires_at__gt=timezone.now())
+            .only("lines"))
+
+
+def _units_by_product(draft) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for line in (draft.lines or []):
+        if not isinstance(line, dict):
+            continue
+        pid = str(line.get("product_id") or "")
+        if pid:
+            out[pid] = out.get(pid, 0) + max(int(_f(line.get("quantity"), 0)), 0)
+    return out
+
+
 def reserved_units(location_slug: str) -> dict[str, int]:
     """product_id -> units already spoken for at this store by placed orders.
 
@@ -77,21 +98,90 @@ def reserved_units(location_slug: str) -> dict[str, int]:
     A CLAIMED order is already in the budtender's hands and its stock left the shelf
     at the register, so it must NOT be counted again here.
     """
-    qs = (PhoneCartDraft.objects
-          .filter(location_slug=location_slug, status=PhoneCartDraft.Status.RELEASED,
-                  expires_at__gt=timezone.now())
-          .only("lines"))
-
     held: dict[str, int] = {}
-    for draft in qs:
-        for line in (draft.lines or []):
-            if not isinstance(line, dict):
-                continue
-            pid = str(line.get("product_id") or "")
-            if not pid:
-                continue
-            held[pid] = held.get(pid, 0) + max(int(_f(line.get("quantity"), 0)), 0)
+    for draft in _holding(location_slug):
+        for pid, qty in _units_by_product(draft).items():
+            held[pid] = held.get(pid, 0) + qty
     return held
+
+
+# ── how much of a store's shelf the public page may tie up ────────────────────
+# A placed order is the only thing that holds stock, and the only things standing
+# between a script and an empty shelf were a per-phone cap (dodged by inventing a
+# phone) and an IP throttle every shopper shares. These are counted from the DATABASE,
+# not a cache: they are limits on what exists, and a flushed cache must not reset them.
+MAX_OPEN_ONLINE_ORDERS_PER_STORE = 40
+MAX_HELD_UNITS_PER_STORE = 150
+MAX_ORDERS_PER_HOUR = 120
+
+
+def online_holds(location_slug: str) -> tuple[int, int]:
+    """(orders, units) held at this store by placed, unexpired, unclaimed ONLINE orders."""
+    orders = units = 0
+    for draft in _holding(location_slug).filter(source=PhoneCartDraft.Source.ONLINE):
+        orders += 1
+        units += sum(_units_by_product(draft).values())
+    return orders, units
+
+
+def placed_online_last_hour() -> int:
+    """Online orders placed site-wide in the last hour, whatever became of them.
+
+    Counted on `released_at` (stamped when the order is placed), not `created_at`: a cart
+    is minted when it is first touched and can be placed days later, so created_at would
+    let a script bank carts and release them all at once. Claimed and cancelled orders
+    count too — they were placed.
+    """
+    return PhoneCartDraft.objects.filter(
+        source=PhoneCartDraft.Source.ONLINE,
+        released_at__gte=timezone.now() - timedelta(hours=1)).count()
+
+
+def lock_store(location_slug: str) -> None:
+    """Serialise order placement for one store. Call inside `transaction.atomic()`.
+
+    Without it, N checkouts for the last two units all re-read the holds before any of
+    them has written its own, and all are confirmed. A transaction-scoped Postgres
+    advisory lock is used because no row exists per store to `select_for_update` (store
+    keys are choices on the draft, not a table); it is released at commit or rollback,
+    so a crashed request cannot leave a store locked. SQLite has no such lock — tests
+    there are sequential.
+    """
+    if connection.vendor != "postgresql":
+        return
+    # "bund" in the high bits so this cannot collide with another feature's lock id.
+    key = (0x626E6400 << 32) | zlib.crc32(f"bundles.release:{location_slug}".encode())
+    with connection.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", [key])
+
+
+def order_blocker(draft: PhoneCartDraft, inv: list[dict]) -> str:
+    """Why `draft` cannot be placed right now: "changed", "full", or "" when it can.
+
+    Run under `lock_store`, so what it reads is what the order is written against.
+
+      * "changed" — a line no longer fits once the holds are re-read (another order was
+        placed after this shopper's page was priced),
+      * "full"    — the store already has as many online orders or held units as the
+        page allows, or the whole site has placed its hourly quota.
+    """
+    held = reserved_units(draft.location_slug)
+    mine = 0
+    for line in (draft.lines or []):
+        if not isinstance(line, dict) or not line.get("in_stock", True):
+            continue
+        qty = int(_f(line.get("quantity"), 0))
+        live = resolver.find_live(inv, str(line.get("product_id") or ""))
+        if not live or qty > available_after_holds(live, held):
+            return "changed"
+        mine += qty
+
+    orders, units = online_holds(draft.location_slug)
+    if (orders >= caps.limit("BUNDLES_MAX_OPEN_ONLINE_ORDERS_PER_STORE", MAX_OPEN_ONLINE_ORDERS_PER_STORE)
+            or units + mine > caps.limit("BUNDLES_MAX_HELD_UNITS_PER_STORE", MAX_HELD_UNITS_PER_STORE)
+            or placed_online_last_hour() >= caps.limit("BUNDLES_MAX_ORDERS_PER_HOUR", MAX_ORDERS_PER_HOUR)):
+        return "full"
+    return ""
 
 
 def available_after_holds(item: dict, held: dict[str, int]) -> int:

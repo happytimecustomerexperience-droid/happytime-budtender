@@ -20,6 +20,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.cache import cache
+from django.db import transaction
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -422,10 +423,31 @@ EMAILS_PER_ADDRESS = 3
 CAP_WINDOW = 24 * 3600
 
 
+CONFIRMATION_EMAILS_PER_HOUR = 120
+_GMAIL = ("gmail.com", "googlemail.com")
+
+
+def _email_key(email: str) -> str:
+    """What one mailbox looks like to the per-address cap — never what is mailed to.
+
+    `victim+1@gmail.com`, `victim+2@gmail.com` and `v.ictim@gmail.com` all land in one
+    inbox, so counting the typed string let one address be mail-bombed from our own
+    sender. Lowercase, drop a `+tag` from the local part on every domain, and for Gmail
+    also drop dots (and fold googlemail.com into gmail.com). Dots stay meaningful
+    everywhere else. The address the confirmation is sent to is the one the shopper typed.
+    """
+    local, _, domain = email.strip().lower().rpartition("@")
+    domain = domain.rstrip(".")
+    local = local.split("+", 1)[0] or local
+    if domain in _GMAIL:
+        local, domain = local.replace(".", "") or local, "gmail.com"
+    return f"{local}@{domain}"
+
+
 def _take_order_caps(phone: str, email: str) -> bool:
     if not caps.take("order-phone", ORDERS_PER_PHONE, CAP_WINDOW, phone):
         return False
-    if email and not caps.take("order-email", EMAILS_PER_ADDRESS, CAP_WINDOW, email.lower()):
+    if email and not caps.take("order-email", EMAILS_PER_ADDRESS, CAP_WINDOW, _email_key(email)):
         caps.give_back("order-phone", phone)
         return False
     return True
@@ -434,7 +456,7 @@ def _take_order_caps(phone: str, email: str) -> bool:
 def _give_back_order_caps(phone: str, email: str) -> None:
     caps.give_back("order-phone", phone)
     if email:
-        caps.give_back("order-email", email.lower())
+        caps.give_back("order-email", _email_key(email))
 
 
 # A phone number in, a real person's NAME out, with no login in front of it. That
@@ -596,7 +618,8 @@ def checkout(request):
     # confirm=True: this is where the price stops being a quote. It lands in
     # draft.lines, the confirmation email and the POS queue, and is never
     # revalidated again before someone pays it.
-    ctx = cart_mod.reprice(draft, confirm=True)
+    inv = cart_mod.inventory_for(store)
+    ctx = cart_mod.reprice(draft, inv, confirm=True)
 
     if request.method == "GET":
         response = render(request, "bundles/checkout.html",
@@ -635,29 +658,28 @@ def checkout(request):
         errors["cart"] = (f"Online orders are capped at ${cap:.0f}. "
                           "Please remove a few items — or just come in and see us.")
 
-    if errors:
+    def _refuse(status, ctx):
         response = render(request, "bundles/checkout.html",
                           _shell(request, store, {
                               "cart_ctx": ctx, "totals": _totals(ctx, store), "errors": errors,
                               "form": {"first_name": first_name, "last_name": last_name,
                                        "phone": phone, "email": email}}),
-                          status=400)
+                          status=status)
         return _remember_store(cart_mod.attach_cookie(response, draft), store)
+
+    def _call_us():
+        info = store_info(store)
+        return f"{info['label']} at {info['phone']}" if info.get("phone") else info["label"]
+
+    if errors:
+        return _refuse(400, ctx)
 
     # Spent before anything is written or looked up, so an over-cap attempt costs us
     # nothing. One message for both caps: it should not say which value was counted.
     if not _take_order_caps(phone, email):
-        info = store_info(store)
-        call = f"{info['label']} at {info['phone']}" if info.get("phone") else info["label"]
         errors["cart"] = ("We can't take another online order for that phone number or "
-                          f"email right now. Please call {call} and we'll get you sorted.")
-        response = render(request, "bundles/checkout.html",
-                          _shell(request, store, {
-                              "cart_ctx": ctx, "totals": _totals(ctx, store), "errors": errors,
-                              "form": {"first_name": first_name, "last_name": last_name,
-                                       "phone": phone, "email": email}}),
-                          status=429)
-        return _remember_store(cart_mod.attach_cookie(response, draft), store)
+                          f"email right now. Please call {_call_us()} and we'll get you sorted.")
+        return _refuse(429, ctx)
 
     # A bundle is a coupon sent to ONE phone: the landing parked the link's `c` token on
     # phone_hash. A link forwarded to someone else — or a cart handed on — must not carry
@@ -701,24 +723,57 @@ def checkout(request):
     #
     # filter(status=OPEN) makes the release idempotent: the loser of a double-click
     # updates 0 rows and falls through to the same confirmation page.
-    released = PhoneCartDraft.objects.filter(
-        pk=draft.pk, status=PhoneCartDraft.Status.OPEN,
-    ).update(
-        pickup_name=draft.pickup_name, contact_phone=draft.contact_phone,
-        contact_email=draft.contact_email, phone_last4=draft.phone_last4,
-        phone_hash=draft.phone_hash, source=draft.source, status=draft.status,
-        released_at=draft.released_at, expires_at=draft.expires_at,
-        audit=draft.audit, dutchie_acct_id=draft.dutchie_acct_id,
-        customer_status=draft.customer_status, customer_name=draft.customer_name,
-        lines=draft.lines, quote=draft.quote, bundle_slug=draft.bundle_slug,
-        updated_at=timezone.now(),
-    )
+    #
+    # The holds are re-read and the order written under one per-store lock. The price
+    # check above ran before any of this, so by now other shoppers may have been placed:
+    # checking and releasing as two unlocked steps let N simultaneous checkouts for the
+    # last two units all be confirmed. The Dutchie customer lookup (customers.attach)
+    # stays outside it — nothing slow is held under the lock, and the confirmation email
+    # goes after the commit.
+    with transaction.atomic():
+        cart_mod.lock_store(store)
+        # A draft another tab already released is not re-judged: it falls through to the
+        # no-op UPDATE below and the same confirmation, as before.
+        still_open = PhoneCartDraft.objects.filter(
+            pk=draft.pk, status=PhoneCartDraft.Status.OPEN).exists()
+        blocker = cart_mod.order_blocker(draft, inv) if still_open else ""
+        released = 0 if blocker else PhoneCartDraft.objects.filter(
+            pk=draft.pk, status=PhoneCartDraft.Status.OPEN,
+        ).update(
+            pickup_name=draft.pickup_name, contact_phone=draft.contact_phone,
+            contact_email=draft.contact_email, phone_last4=draft.phone_last4,
+            phone_hash=draft.phone_hash, source=draft.source, status=draft.status,
+            released_at=draft.released_at, expires_at=draft.expires_at,
+            audit=draft.audit, dutchie_acct_id=draft.dutchie_acct_id,
+            customer_status=draft.customer_status, customer_name=draft.customer_name,
+            lines=draft.lines, quote=draft.quote, bundle_slug=draft.bundle_slug,
+            updated_at=timezone.now(),
+        )
+    if blocker:
+        # Nothing was held, so the shopper's budget is handed back and their cart is put
+        # back exactly as it was (the contact fields and bundle drop above were in memory).
+        _give_back_order_caps(phone, email)
+        draft.refresh_from_db()
+        ctx = cart_mod.reprice(draft, inv, confirm=True)
+        if blocker == "changed":
+            errors["cart"] = "Some items changed. Please review your cart."
+            return _refuse(400, ctx)
+        errors["cart"] = ("We can't take another online order right now. "
+                          f"Please call {_call_us()} and we'll get you sorted.")
+        return _refuse(429, ctx)
     if released:
         logger.info("online order %s placed at %s (%d lines, $%.2f)",
                     draft.draft_token, store, len(draft.lines), ctx["quote"]["total"])
         # Best-effort: the order is saved and already in the staff queue, so a mail
-        # failure must never surface to the shopper as a failed checkout.
-        emails.send_order_confirmation(draft, store_label(store), STORE_ADDRESS.get(store, ""))
+        # failure must never surface to the shopper as a failed checkout. A site-wide
+        # hourly ceiling on top of the per-address cap: a script cycling fresh addresses
+        # must not turn our sender into a mail cannon. Over it the order still stands.
+        if email and not caps.take("confirmation-emails", caps.limit(
+                "BUNDLES_MAX_CONFIRMATION_EMAILS_PER_HOUR", CONFIRMATION_EMAILS_PER_HOUR), 3600):
+            logger.warning("confirmation-email ceiling reached; order %s placed, no email sent",
+                           draft.draft_token)
+        else:
+            emails.send_order_confirmation(draft, store_label(store), STORE_ADDRESS.get(store, ""))
     else:
         # The impatient second click, or a second tab. Their order already exists —
         # show the same confirmation, but do not email or log it twice, or count it
