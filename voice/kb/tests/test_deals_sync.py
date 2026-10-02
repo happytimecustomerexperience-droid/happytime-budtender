@@ -188,7 +188,7 @@ def test_reseeding_keeps_dutchie_rows(feed, on):
     feed({"yakima": [deal(1, "30% off flower")], "mount-vernon": [], "pullman": []})
     deals_sync.sync_deals()
 
-    seed.seed_store_facts()  # runs on every deploy and wipes the other special rows
+    seed.seed_store_facts()  # runs on every deploy; it no longer touches special rows at all
 
     assert rows("yakima", label="Dutchie #1").exists()
 

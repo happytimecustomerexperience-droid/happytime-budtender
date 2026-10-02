@@ -505,9 +505,10 @@ def test_every_mapped_row_exists():
     assert m.FAQEntry.objects.filter(key__startswith="site-faq-").count() == 40
     assert m.FAQEntry.objects.filter(key__startswith="footer-").count() == 2
     assert m.PolicyDocument.objects.filter(category__slug="return_policy").count() == 1
-    assert m.StoreFact.objects.filter(kind="special").count() == len(seed.SPECIAL_ROWS)
-    for store in ("yakima", "mount-vernon", "pullman"):
-        assert m.StoreFact.objects.filter(kind="special", store=store).count() == 9  # July 2026 deals
+    # UPDATED 2026-10-01: specials are owner/Dutchie data and are no longer seeded (the seed runs
+    # at every boot and used to wipe the owner's deals and recreate July 2026's) — see
+    # test_seed_never_touches_specials below.
+    assert not m.StoreFact.objects.filter(kind="special").exists()
     assert m.StoreFact.objects.filter(kind="limit").count() == 5  # 4 limits + age/ID rule
     assert m.EducationDoc.objects.count() == 15  # 5 core + 10 distilled from /education/*
     assert m.BlogDoc.objects.count() == 3
@@ -889,21 +890,26 @@ def test_expired_special_is_never_spoken_and_a_current_one_is():
 
 
 @pytest.mark.django_db
-def test_seeded_specials_carry_their_window_and_no_date_prose():
-    """The July rows keep their dates as DATA. The spoken value carries no month name — a value
-    is what a caller hears, and a hardcoded month is wrong eleven months a year."""
+def test_seed_never_touches_specials():
+    """RENAMED + REWRITTEN 2026-10-01 (was test_seeded_specials_carry_their_window_and_no_date_prose,
+    which pinned the seeded July rows). The seed runs at every boot; it used to delete every
+    owner-typed special and recreate July 2026's deals, so each deploy wiped the owner's deals.
+    Specials are owner / Dutchie data now: an owner row survives a reseed untouched, and the seed
+    adds none of its own. The FAQ half below is unchanged."""
     import datetime
 
     from kb import seed
     from kb.models import StoreFact
 
+    owner = StoreFact.objects.create(
+        store="yakima", kind="special", label="Weekend deal", value="10% off Sundays.",
+        confirmed=True, valid_from=datetime.date.today(),
+    )
     seed.seed_all()
-    rows = StoreFact.objects.filter(kind="special")
-    assert rows.exists()
-    for row in rows:
-        assert row.valid_from == datetime.date(2026, 7, 1)
-        assert row.valid_to == datetime.date(2026, 7, 31)
-        assert "july" not in row.value.lower(), f"month name spoken in {row.label!r}"
+    seed.seed_all()
+    assert list(StoreFact.objects.filter(kind="special")) == [owner]
+    owner.refresh_from_db()
+    assert owner.value == "10% off Sundays." and owner.is_active
 
     specials_faq = m.FAQEntry.objects.get(key="specials")
     assert "%" not in specials_faq.answer, "deal percentages belong to the dated StoreFact rows"

@@ -13,7 +13,6 @@ provisional=True (verbatim house copy blocked by the Vercel wall — re-run seed
 
 from __future__ import annotations
 
-import datetime
 import json
 from pathlib import Path
 
@@ -447,7 +446,7 @@ def seed_return_policy() -> int:
     return 1
 
 
-# ── 3 + 4. Store facts + weekly specials (§8.3) ───────────────────────────────
+# ── 3 + 4. Store facts (§8.3; specials are owner data, not seeded) ───────────────────────────────
 
 # (store, kind, label, value, confirmed)
 STORE_FACT_ROWS = [
@@ -477,41 +476,10 @@ STORE_FACT_ROWS = [
     ("", "age", "Age requirement", "21+ with a valid government-issued photo ID.", True),
 ]
 
-# July 2026 monthly deals — per-store (store, label, value). Source of truth:
-# happytimeweed data/deals.json (July 1–31; synced 2026-07-14). Yakima and Mount
-# Vernon share percentages; Pullman runs 30% on edibles/drinks/wellness.
-# Natural key for update_or_create is (store, kind, label) — see seed_store_facts().
-#
-# 2026-09-01: the run dates moved OUT of the spoken value and into the row's own
-# ``valid_from``/``valid_to`` (``SPECIAL_WINDOW`` below). Two reasons, both defects this fixes:
-# a date baked into prose cannot be checked, so these deals were still being read out in
-# September; and the value is what a caller HEARS, so the month name was being spoken months
-# after it stopped being true. The label keeps "July:" — that is what the owner reads in the
-# dashboard list — and the label is never part of the spoken specials answer.
-SPECIAL_WINDOW = (datetime.date(2026, 7, 1), datetime.date(2026, 7, 31))
-_JULY_BASE = [
-    ("July: 30% off all flower", "30% off all flower — eighths, quarters, halves."),
-    ("July: 30% off concentrates", "30% off all concentrates — rosin, live resin, dabs, sauce."),
-    ("July: 25% off vape carts", "25% off vape cartridges."),
-    ("July: 25% off disposables", "25% off all-in-one disposable vapes."),
-    ("July: 20% off pre-rolls", "20% off flower pre-rolls."),
-    ("July: 20% off infused pre-rolls", "20% off infused pre-rolls."),
-]
-_JULY_EDIBLES_20 = [
-    ("July: 20% off edibles", "20% off edibles — gummies, chocolates, and more."),
-    ("July: 20% off drinks", "20% off cannabis-infused drinks."),
-    ("July: 20% off wellness products", "20% off wellness products — tinctures, topicals, and CBD."),
-]
-_JULY_EDIBLES_30 = [
-    ("July: 30% off edibles", "30% off edibles — gummies, chocolates, and more."),
-    ("July: 30% off drinks", "30% off cannabis-infused drinks."),
-    ("July: 30% off wellness products", "30% off wellness products — tinctures, topicals, and CBD."),
-]
-SPECIAL_ROWS: list[tuple[str, str, str]] = (
-    [("yakima", label, value) for label, value in _JULY_BASE + _JULY_EDIBLES_20]
-    + [("mount-vernon", label, value) for label, value in _JULY_BASE + _JULY_EDIBLES_20]
-    + [("pullman", label, value) for label, value in _JULY_BASE + _JULY_EDIBLES_30]
-)
+# Specials are NOT seeded (2026-10-01). Deals are owner data: typed on /dashboard/specials-hours/
+# or synced from Dutchie (kb.deals_sync, rows labelled "Dutchie #<id>"). This seed runs at every
+# boot, and it used to delete every non-Dutchie special and recreate July 2026's deals — so each
+# deploy wiped the deals the owner had typed, and put back a set whose window had long closed.
 
 
 # Vendor-facing facts the AI states on the no-answer leg (P3, ADR-015). KB-grounded so the spoken
@@ -565,26 +533,7 @@ def seed_store_facts() -> int:
             defaults={"value": value, "confirmed": confirmed, "is_active": True},
         )
         n += 1
-    # Wipe all existing special rows so stale weekly deals (Flower Monday, etc.) don't
-    # survive alongside the current monthly deals — then recreate from SPECIAL_ROWS. The
-    # "Dutchie #" rows belong to kb.deals_sync (every deploy runs this seed); wiping them would
-    # leave callers with no deals until the next sync.
-    m.StoreFact.objects.filter(kind="special").exclude(label__startswith="Dutchie #").delete()
-    valid_from, valid_to = SPECIAL_WINDOW
-    for store, label, value in SPECIAL_ROWS:
-        m.StoreFact.objects.create(
-            store=store,
-            kind="special",
-            label=label,
-            value=value,
-            confirmed=True,
-            weight=105,
-            is_active=True,
-            valid_from=valid_from,
-            valid_to=valid_to,
-        )
-        n += 1
-    return n
+    return n  # never touches kind="special" rows — see the note above VENDOR_FACT_ROWS
 
 
 def seed_vendor_facts() -> int:
