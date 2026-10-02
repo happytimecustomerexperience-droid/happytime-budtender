@@ -184,9 +184,15 @@ def test_text_chat_suggestions_pass_customer_hints(monkeypatch):
 
     suggest_call = [c for c in calls if c[0] == "suggest_products"][0]
     assert out["safe_next_action"] == "show_products"
-    assert suggest_call[2]["_caller_phone"] == "+15095551234"
+    # A typed number is the callback hint only (W5b): it never becomes ``_caller_phone`` (the
+    # taste-first switch) and no session token is forwarded to budtender's search.
+    assert suggest_call[2]["caller_number"] == "+15095551234"
+    assert "_caller_phone" not in suggest_call[2]
     assert suggest_call[2]["known"] is False
-    assert suggest_call[2]["session_token"] == "sess-1"
+    assert suggest_call[2]["recognition_resolved"] is True
+    assert suggest_call[2]["session_token"] is None
+    assert suggest_call[2]["call_id"] == "sess-1"
+    assert out["contact_hint"]["customer_phone"] == "+15095551234"
 
 
 def test_text_chat_suggestions_forward_structured_slots(monkeypatch):

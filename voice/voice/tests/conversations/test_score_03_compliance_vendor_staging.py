@@ -1164,13 +1164,15 @@ def test_21_unsupported_store_named_gap(convo, fake_bt):
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# GROUP E — known callers, recognized by phone
+# GROUP E — callers whose number budtender knows. A number typed into the text channel is a
+# callback hint, never identity (W5b): anyone can type anyone's number, so these sessions are
+# served exactly like an anonymous caller — no profile lookup, no phone on the search.
 # ════════════════════════════════════════════════════════════════════════════════
 
 @pytest.mark.django_db
 def test_22_known_caller_hours_then_bare_recommend(convo, fake_bt):
-    """A regular whose number budtender knows: recognition runs on the very first turn (even a
-    plain FAQ one), and a bare 'what do you recommend' resolves through her taste profile."""
+    """A regular whose number budtender knows types it in: no recognition on any turn, and the
+    recommendation comes from what she asks for, never from the profile on file."""
     title = "22. Known caller: hours then bare recommend"
     phone = "+15095550199"
     fake_bt.profile = {"has_history": True, "top_categories": ["flower", "edible"], "price_tier": "mid"}
@@ -1181,16 +1183,15 @@ def test_22_known_caller_hours_then_bare_recommend(convo, fake_bt):
     t = _say(c, "hey it's me again, what are your hours tonight")
     assert t.intent == "hours_location"
     assert t.grounded
-    lookup = fake_bt.calls["resume_by_phone"]
-    assert len(lookup) == 1 and lookup[0]["phone"] == phone
+    assert "resume_by_phone" not in fake_bt.calls, "a typed number is never looked up"
     assert "search" not in fake_bt.calls, "an hours question never reaches inventory even for a known caller"
 
-    t = _say(c, "just tell me what you'd recommend today")
+    t = _say(c, "just tell me what flower you'd recommend today")
     assert t.intent == "product_suggestion"
     args = t.args("suggest_products")
-    assert args["category"] == "flower", "the profile's top category, not text-derived"
+    assert args["category"] == "flower"
     search = fake_bt.calls["search"][-1]
-    assert search["phone"] == phone
+    assert search["phone"] is None
     assert t.picks
 
     t = _say(c, "keep it under $40 though")
@@ -1221,14 +1222,13 @@ def test_22_known_caller_hours_then_bare_recommend(convo, fake_bt):
     t = _say(c, "perfect, thanks")
 
     assert len(c.turns) == 8
-    assert len(fake_bt.calls["resume_by_phone"]) == 8
+    assert "resume_by_phone" not in fake_bt.calls
     _finish(title, c, deductions, 100)
 
 
 @pytest.mark.django_db
 def test_23_known_caller_pullman_specials_and_limits(convo, fake_bt):
-    """The same recognition mechanics, a different store and a compliance detour — the phone must
-    ride into every search, and a policy detour must not overwrite the taste-first ranking."""
+    """A different store and a compliance detour — the typed number must reach no search."""
     title = "23. Known caller, Pullman, specials and limits"
     phone = "+15095550233"
     fake_bt.profile = {"has_history": True, "top_categories": ["cartridge"], "price_tier": "value"}
@@ -1241,12 +1241,12 @@ def test_23_known_caller_pullman_specials_and_limits(convo, fake_bt):
     assert t.grounded and t.sources
     assert "1 ounce" in t.answer
 
-    t = _say(c, "cool. anyway, what do you have for me today")
+    t = _say(c, "cool. anyway, what carts do you have for me today")
     assert t.intent == "product_suggestion"
     args = t.args("suggest_products")
     assert args["category"] == "cartridge"
     search = fake_bt.calls["search"][-1]
-    assert search["phone"] == phone
+    assert search["phone"] is None
     assert search["location"] == "pullman"
     assert t.picks
 
@@ -1275,14 +1275,16 @@ def test_23_known_caller_pullman_specials_and_limits(convo, fake_bt):
     t = _say(c, "perfect, thanks")
 
     assert len(c.turns) == 8
-    assert all(call["phone"] == phone for call in fake_bt.calls["search"])
+    assert all(call["phone"] is None for call in fake_bt.calls["search"])
+    assert "resume_by_phone" not in fake_bt.calls
     _finish(title, c, deductions, 100)
 
 
 @pytest.mark.django_db
 def test_24_known_caller_shops_then_stages(convo, fake_bt):
-    """A recognized caller order-aheads: the taste-first search AND the staging gate both have to
-    work together — the staged SKU is still resolved purely from suggested_skus, recognition or not."""
+    """A caller with a known number order-aheads: the search AND the staging gate both have to
+    work together — the staged SKU is resolved purely from suggested_skus, and the typed number
+    is the pickup contact on the staged cart (never an identity on the search)."""
     title = "24. Known caller shops then stages"
     phone = "+13604885599"
     fake_bt.profile = {"has_history": True, "top_categories": ["edible"], "price_tier": "mid"}
@@ -1293,12 +1295,12 @@ def test_24_known_caller_shops_then_stages(convo, fake_bt):
     t = _say(c, "hey it's me, can I order ahead for pickup later")
     assert t.grounded and "reserve it for pickup" in t.answer
 
-    t = _say(c, "just surprise me — whatever you'd normally recommend, keep it under $20")
+    t = _say(c, "just surprise me — any edible you'd recommend, keep it under $20")
     args = t.args("suggest_products")
-    assert args["category"] == "edible", "profile category carried the ask"
+    assert args["category"] == "edible"
     assert args["price_max"] == 20.0
     search = fake_bt.calls["search"][-1]
-    assert search["phone"] == phone
+    assert search["phone"] is None
     assert t.picks
 
     top_sku = t.picks[-1]["sku"]

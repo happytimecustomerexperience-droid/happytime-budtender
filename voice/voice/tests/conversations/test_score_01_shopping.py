@@ -339,7 +339,8 @@ def test_04_size_led_known_caller(convo, fake_bt):
     args = t.args("suggest_products")
     assert args["category"] == "cartridge" and args["size"] == "1g"
     assert t.picks and all(p["sku"].startswith("CT-") for p in t.picks)
-    assert fake_bt.calls.get("resume_by_phone"), "a known caller's phone resolves through recognition"
+    # A typed number is a callback hint, never identity (W5b): text chat never resolves it.
+    assert not fake_bt.calls.get("resume_by_phone"), "text chat never looks a typed number up"
 
     t = say(c, scorer, 2, "something stronger")
     args = t.args("suggest_products")

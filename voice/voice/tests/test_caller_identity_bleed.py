@@ -48,8 +48,7 @@ def _stub_tools_and_recognition(monkeypatch):
     # Recognition resolves per-phone but carries NO history of its own — isolates the (now closed)
     # bleed to the client-supplied `history` array, not to any server-side profile mixing.
     monkeypatch.setattr(
-        chat.recognition,
-        "resolve_caller",
+        "voice.recognition.resolve_caller",
         lambda number, ctx: {
             "known": True,
             "profile_summary": {"has_history": False, "top_categories": [], "price_tier": ""},

@@ -85,8 +85,8 @@ def test_angry_wrong_item_thread(convo, fake_bt):
     assert t.answer.endswith(
         "Please share your details for the yakima team so they can contact you at +15095550147."
     ), "the spoken reply reads back the number staff will call"
-    assert fake_bt.calls["resume_by_phone"][-1] == {"phone": "+15095550147", "location": "yakima"}, (
-        "the raw number is normalized to E.164 and the store rides along to the profile lookup"
+    assert "resume_by_phone" not in fake_bt.calls, (
+        "a typed number is a callback hint, never an identity lookup (W5b)"
     )
 
     # 5. Mid-dispute, phrased without a trigger word.

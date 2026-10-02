@@ -208,7 +208,9 @@ def test_top1_matrix_scorebook(monkeypatch):
     assert escalation_empathy == escalations
     assert policy_safe_grounding >= 5
     assert suggestion_paths >= 12
-    assert seen_known is True
+    # W5b: a typed number is never an identity on the text channel — no suggestion path, even a
+    # "known_caller" scenario, may carry ``_caller_phone`` (the taste-first switch) to budtender.
+    assert seen_known is False
     assert seen_anon is True
 
     scorecard_path = os.environ.get("TOP1_SCORECARD_PATH")

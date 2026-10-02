@@ -50,7 +50,7 @@ import re
 import time
 from urllib.parse import quote
 
-from voice import capabilities, guardrails, recognition, vendor_flow
+from voice import capabilities, guardrails, vendor_flow
 from voice.safety_copy import (
     CANNOT_ANSWER_SAFELY,
     CRISIS,
@@ -2341,7 +2341,20 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         if greeting:
             return _plain_reply(greeting, store, phone, [], action="answer", intent="greeting_other")
 
-    ctx = {"store": store, "session_token": session_token, "channel": "text", "known": False}
+    # A typed number is a CONTACT hint (who staff call back), never proof of identity — anyone can
+    # type anyone's number. So text chat never resolves recognition: no budtender profile lookup, no
+    # ``_caller_phone`` and no budtender session token on the search (either one switches budtender
+    # to taste-first, with reasons like "your go-to {brand}" read off a stranger's purchase
+    # history). The ctx is exactly ``recognition.resolve_caller``'s anonymous result, pre-marked
+    # resolved so ``suggest.py``'s lazy resolver never does the lookup itself off ``caller_number``.
+    ctx = {
+        "store": store,
+        "channel": "text",
+        "known": False,
+        "session_token": None,
+        "recognition_resolved": True,
+        "profile_summary": {"has_history": False, "top_categories": [], "price_tier": ""},
+    }
     # Text chat has no Vapi call.id — reuse session_token consistently (the same key
     # ``_persist_trusted_turn``/``_load_trusted_history`` already use) so ``suggest.py``'s
     # ``_stamp_suggested`` and ``notify_vendor_callback`` both persist onto the SAME durable
@@ -2350,10 +2363,6 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         ctx["call_id"] = session_token
     if phone:
         ctx["caller_number"] = phone
-        ctx["_caller_phone"] = phone
-        ctx.update(recognition.resolve_caller(phone, ctx) or {})
-    else:
-        ctx["profile_summary"] = {"has_history": False, "top_categories": [], "price_tier": ""}
     escalation_now = _wants_human(message)
     # A dispute carries across turns, but a clean new product ask ENDS it — otherwise a caller who
     # complains and then says "anyway, got any gummies?" never reaches the shelf. Only the

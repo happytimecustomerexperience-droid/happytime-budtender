@@ -521,7 +521,7 @@ def test_the_mixed_long_call_known_caller_intent_and_pii_floor_hold(convo, fake_
     assert args["category"] == "flower"
     assert args["subcategory"] == "indica"
     assert args["price_max"] == 40.0
-    assert fake_bt.calls["resume_by_phone"], "a known caller's phone resolves through recognition"
+    assert "resume_by_phone" not in fake_bt.calls, "a typed number is never an identity lookup (W5b)"
 
     # 2) A policy question. FIXED 2026-09-17 (was a pinned GAP): "do I need my ID on me" used to
     #    land as an ungrounded miss even though the KB holds the ID-requirement answer (thread_09

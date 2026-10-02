@@ -144,13 +144,17 @@ def test_suggestions_forward_exclusions_and_profile_to_tool(monkeypatch):
     assert call[0] == "suggest_products"
     assert call[1]["category"] == "cartridge"
     assert call[1]["exclude_skus"] == ["OLD2", "OLD3"]
-    assert call[2]["_caller_phone"] == "+15095551212"
-    assert call[2]["session_token"] == "sess-42"
+    # A typed number is the callback hint only (W5b) — never the taste-first ``_caller_phone``.
+    assert call[2]["caller_number"] == "+15095551212"
+    assert "_caller_phone" not in call[2]
+    assert call[2]["session_token"] is None
+    assert call[2]["call_id"] == "sess-42"
     assert out["safe_next_action"] == "show_products"
     assert "strong match confidence" in out["answer"]
 
 
-def test_suggestions_resolve_profile_before_rank(monkeypatch):
+def test_suggestions_never_resolve_a_typed_number(monkeypatch):
+    """W5b: a resolver that WOULD mark this number known is never consulted on the text channel."""
     from voice import chat
 
     tool_results = []
@@ -160,8 +164,10 @@ def test_suggestions_resolve_profile_before_rank(monkeypatch):
         "spoken_summary": "I found options based on your profile.",
         "picks": [{"sku": "SKU_PROFILE", "name": "Blue Dream", "why_this": "matches your purchase history"}],
     }
+    resolved = []
 
     def fake_resolve(number, ctx, client=None):
+        resolved.append(number)
         ctx["recognition_resolved"] = True
         ctx["known"] = True
         ctx["session_token"] = "phone-backed-token"
@@ -181,9 +187,10 @@ def test_suggestions_resolve_profile_before_rank(monkeypatch):
     )
 
     suggest_ctx = tool_results[-1][2]
-    assert suggest_ctx["known"] is True
-    assert suggest_ctx["session_token"] == "phone-backed-token"
-    assert suggest_ctx["caller_phone_hash"] == "k" * 64
+    assert resolved == []
+    assert suggest_ctx["known"] is False
+    assert suggest_ctx["session_token"] is None
+    assert "caller_phone_hash" not in suggest_ctx
     assert out["safe_next_action"] == "show_products"
 
 
@@ -222,82 +229,16 @@ def test_ask_staff_includes_contact_context(monkeypatch):
     assert "team" in out["answer"]
 
 
-def test_profile_top_category_drives_recommendation(monkeypatch):
+# W5b: the text channel no longer reads a profile off a typed number, so these two pin the
+# ``_profile_top_category`` parser directly instead of through a resolved text-chat profile.
+def test_profile_top_category_reads_dict_entries():
     from voice import chat
 
-    tool_results = []
-    tool_results_map = _chat_fn(
-        monkeypatch,
-        tool_results,
-    )
-    tool_results_map["faq_lookup"] = lambda: {"grounded": False, "fallback": "no faq match"}
-    tool_results_map["suggest_products"] = lambda: {
-        "spoken_summary": "I found picks from your profile.",
-        "picks": [{"sku": "P1", "name": "Blue Dream", "why_this": "matches your habits"}],
-    }
-
-    def fake_resolve(number, ctx, client=None):
-        ctx["recognition_resolved"] = True
-        ctx["known"] = True
-        ctx["session_token"] = "phone-backed-token"
-        ctx["profile_summary"] = {
-            "has_history": True,
-            "top_categories": [
-                {"category": "flower", "share": 55},
-            ],
-            "price_tier": "mid",
-        }
-        ctx["caller_phone_hash"] = "k" * 64
-        return ctx
-
-    monkeypatch.setattr("voice.tools.suggest.recognition.resolve_caller", fake_resolve)
-
-    out = chat.answer_text_chat(
-        {
-            "message": "any recommendations for me",
-            "store": "yakima",
-            "customer_phone": "+15097770011",
-        }
-    )
-
-    suggest_call = tool_results[-1]
-    assert suggest_call[0] == "suggest_products"
-    assert suggest_call[1]["category"] == "flower"
-    assert out["safe_next_action"] == "show_products"
+    profile = {"has_history": True, "top_categories": [{"category": "flower", "share": 55}], "price_tier": "mid"}
+    assert chat._profile_top_category(profile) == "flower"
 
 
-def test_profile_top_category_accepts_tuple_profile_summary(monkeypatch):
+def test_profile_top_category_accepts_tuple_profile_summary():
     from voice import chat
 
-    tool_results = []
-    tool_results_map = _chat_fn(
-        monkeypatch,
-        tool_results,
-    )
-    tool_results_map["faq_lookup"] = lambda: {"grounded": False, "fallback": "no faq match"}
-    tool_results_map["suggest_products"] = lambda: {
-        "spoken_summary": "I found picks from your profile.",
-        "picks": [],
-    }
-
-    def fake_resolve(number, ctx, client=None):
-        ctx["recognition_resolved"] = True
-        ctx["known"] = True
-        ctx["session_token"] = "phone-backed-token"
-        ctx["profile_summary"] = {"top_categories": [("edible", 0.8), ("flower", 0.2)]}
-        ctx["caller_phone_hash"] = "k" * 64
-        return ctx
-
-    monkeypatch.setattr("voice.tools.suggest.recognition.resolve_caller", fake_resolve)
-
-    out = chat.answer_text_chat(
-        {
-            "message": "give me something good",
-            "store": "yakima",
-            "customer_phone": "+15097770011",
-        }
-    )
-
-    suggest_call = tool_results[-1]
-    assert suggest_call[1]["category"] == "edible"
-    assert out["safe_next_action"] == "ask_staff"
+    assert chat._profile_top_category({"top_categories": [("edible", 0.8), ("flower", 0.2)]}) == "edible"

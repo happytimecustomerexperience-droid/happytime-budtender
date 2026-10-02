@@ -148,8 +148,8 @@ def test_blocked_caller_is_served_without_ever_identifying_them(convo, fake_bt):
 @pytest.mark.django_db
 def test_junk_digits_are_rejected_until_a_real_number_lands(convo, fake_bt):
     """The same caller re-reads their number twice badly, then correctly — the parser is the gate."""
-    # This caller HAS shopped before; the only thing standing between them and taste-first
-    # ranking is whether _phone_hint accepts what they read out.
+    # This caller HAS shopped before, but a typed number is only ever the callback hint (W5b):
+    # _phone_hint gates what staff get to call back, and nothing reaches budtender's identity path.
     fake_bt.profile = {"has_history": True, "top_categories": ["flower"], "price_tier": "mid"}
     c = convo(store="pullman", phone="")
 
@@ -166,30 +166,30 @@ def test_junk_digits_are_rejected_until_a_real_number_lands(convo, fake_bt):
     assert t.intent == "greeting_other"
     assert fake_bt.calls == {}, "still nothing forwarded — the parser hasn't accepted anything yet"
 
-    # ── 3. Ten digits with punctuation — accepted, normalized, and the caller becomes known. ──
-    ask = "okay try this — (509) 555-0142. so what would you recommend?"
-    assert "flower" not in ask.lower(), "the category must come from the profile, not the words"
-    t = c.say(ask, phone="(509) 555-0142")
-    assert fake_bt.calls["resume_by_phone"] == [{"phone": "+15095550142", "location": "pullman"}]
-    assert t.intent == "product_suggestion", "the same open-ended ask that fell through while junk"
-    assert t.args("suggest_products")["category"] == "flower", "inferred from profile.top_categories"
+    # ── 3. Ten digits with punctuation — accepted and normalized as the CALLBACK number, but never
+    #       an identity: a typed number is no proof of who is typing (W5b). ──
+    t = c.say("okay try this — (509) 555-0142. so what flower would you recommend?", phone="(509) 555-0142")
+    assert t.raw["contact_hint"]["customer_phone"] == "+15095550142"
+    assert "resume_by_phone" not in fake_bt.calls, "a typed number is never looked up"
+    assert t.intent == "product_suggestion"
+    assert t.args("suggest_products")["category"] == "flower"
     assert t.picks
 
     call = _searches(fake_bt)[-1]
-    assert call["phone"] == "+15095550142", "a recognized caller's number IS forwarded (W_KNOWN)"
-    assert call["session_token"] == "sess-known-1"
+    assert call["phone"] is None, "a typed number never switches the search to taste-first"
+    assert call["session_token"] is None
 
-    # ── 4. Budget follow-up on the now-recognized line. ──
+    # ── 4. Budget follow-up on the same line. ──
     t = c.say("nice — anything like that under $30?", phone="(509) 555-0142")
     args = t.args("suggest_products")
     assert args["category"] == "flower"
     assert args["price_max"] == 30.0
     assert t.picks
-    assert _searches(fake_bt)[-1]["phone"] == "+15095550142"
+    assert _searches(fake_bt)[-1]["phone"] is None
     # Same fix as turn 2: otd() is identity now, so the pick that survives a "$30" filter is
     # quoted back at or under $30.
     assert t.picks[0]["price_otd"] <= 30.0
 
     assert len(c.turns) == 4
-    assert len(fake_bt.calls["resume_by_phone"]) == 2, "only the two turns with a real number"
+    assert "resume_by_phone" not in fake_bt.calls
     assert len(_searches(fake_bt)) == 2
