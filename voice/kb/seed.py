@@ -208,7 +208,10 @@ FAQ_ROWS = [
         "find what you're looking for. Just bring a valid government photo ID showing you're 21 or "
         "older.",
         "topic": "pickup",
-        "paraphrases": ["walk in", "shop in store", "come in", "do I need an appointment"],
+        "paraphrases": [
+            "walk in", "shop in store", "come in", "do I need an appointment",
+            "what happens when I walk in",
+        ],
     },
     {
         "key": "id-types",
@@ -218,7 +221,13 @@ FAQ_ROWS = [
         "enhanced driver's license. Temporary paper IDs can't be accepted, and everyone in your "
         "party needs ID.",
         "topic": "age",
-        "paraphrases": ["what ID", "do you take a passport", "expired ID", "military ID", "accepted ID"],
+        "paraphrases": [
+            "what ID", "do you take a passport", "expired ID", "military ID", "accepted ID",
+            "temporary license", "paper license", "temporary paper ID",
+            # Retrieval only: the row lists physical IDs and says nothing about a digital one, so
+            # "show my ID on my phone" hears that list instead of the store's phone number.
+            "ID on my phone", "digital ID",
+        ],
     },
     {
         "key": "stays-in-wa",
@@ -297,6 +306,7 @@ FAQ_ROWS = [
             "open on thanksgiving", "open on christmas", "open on labor day",
             "open on the 4th of july", "open on fourth of july", "open on new year's",
             "open on a holiday", "closed for the holiday", "holiday schedule",
+            "open on easter", "open on 4/20", "open on memorial day", "open on new year's eve",
         ],
     },
 ]
@@ -370,6 +380,15 @@ def seed_site_education() -> int:
     return len(rows)
 
 
+# The scraped site FAQ carries no alternative phrasings, so a question worded the caller's way
+# lost to a row that shared one word: "what's the starting pay for budtenders" was answered with the
+# tax-included row ("the price you pay").
+_SITE_FAQ_PARAPHRASES = {
+    # No "pay"/"make": those words are in every payment question and would rescue this row on one.
+    "site-faq-20": ["starting wage for budtenders", "budtender wages", "wages", "salary"],
+}
+
+
 def seed_site_faqs() -> int:
     try:
         rows = json.loads(_SITE_FAQ_PATH.read_text(encoding="utf-8"))
@@ -377,6 +396,7 @@ def seed_site_faqs() -> int:
         rows = []
     rows = rows + _FOOTER_FAQ_ROWS
     for r in rows:
+        r = {**r, "paraphrases": r.get("paraphrases") or _SITE_FAQ_PARAPHRASES.get(r["key"], [])}
         m.FAQEntry.objects.update_or_create(
             key=r["key"],
             defaults={

@@ -80,7 +80,9 @@ def _is_injection_query(text: str) -> bool:
 _PRIVACY_QUERY = re.compile(
     r"\bprivacy\b|"
     r"\bdo\s+you\s+do\s+with\s+my\b|"
-    r"\b(?:do|will|would)\s+you\s+(?:share|sell|keep|store|save|track)\b[^.?!]{0,30}\bmy\b|"
+    r"\b(?:do|will|would)\s+you\s+(?:share|sell|keep|store|save|track|scan|copy|record)\b[^.?!]{0,30}\bmy\b|"
+    # "do you scan my ID and keep a copy" grounded on the ID-types row — a different question.
+    r"\bkeep\s+a\s+copy\b|"
     r"\bmy\s+(?:personal\s+)?(?:information|info|data)\b|"
     r"\bopt\s+out\b",
     re.IGNORECASE,
@@ -237,6 +239,11 @@ def _specials_answer(store: str | None, query: str = "") -> dict:
         ],
         "store": store or "",
     }
+
+
+_KIND_QUERY = {
+    "address": "what is your address", "hours": "what are your hours", "phone": "what is your phone number",
+}
 
 
 def _has_privacy_policy() -> bool:
@@ -422,6 +429,21 @@ def faq_lookup(args: dict, ctx: dict) -> dict:
     # which one is true right now.
     if topic == "specials":
         return _specials_answer(store, query)
+
+    # "what's your address and phone number" names two of the hours_location rows; ranking can
+    # speak only one, so the other was silently dropped. Answer each named kind from its own row.
+    from kb import semantic
+
+    kinds = semantic.hours_location_kinds(query) if topic == "hours_location" else []
+    if len(kinds) > 1:
+        parts = [_grounded(_KIND_QUERY[kind], store, topic) for kind in kinds]
+        if all(parts):
+            return {
+                "answer": " ".join(p["answer"] for p in parts),
+                "grounded": True,
+                "sources": [s for p in parts for s in p["sources"]],
+                "store": store or "",
+            }
 
     result = _grounded(query, store, topic)
     if result is not None:

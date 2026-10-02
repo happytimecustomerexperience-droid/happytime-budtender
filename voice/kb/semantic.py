@@ -123,10 +123,15 @@ _HOURS_LOCATION_ASKS = (
 )
 
 
+def hours_location_kinds(query: str) -> list[str]:
+    """Every StoreFact kind (address / hours / phone) this hours_location query names."""
+    return [kind for kind, pattern in _HOURS_LOCATION_ASKS if pattern.search(query or "")]
+
+
 def _hours_location_kind(query: str) -> str:
     """The ONE StoreFact kind this hours_location query is about, or "" when it names none or
     more than one (ambiguous → don't narrow)."""
-    hits = [kind for kind, pattern in _HOURS_LOCATION_ASKS if pattern.search(query or "")]
+    hits = hours_location_kinds(query)
     return hits[0] if len(hits) == 1 else ""
 
 
@@ -260,6 +265,9 @@ _GENERIC_CONTENT_WORDS = frozenset(
         "happy",
         "bring", "brings", "bringing",
         "have", "has", "having",
+        # 2026-10-01: shopping filler. "got any blue dream" / "do you have any tinctures" cleared
+        # the floor on the specials row's "any deals" phrasing — a deals answer to a product ask.
+        "any", "got",
         "yakima", "pullman", "vernon", "mt", "mount",
     }
 )
