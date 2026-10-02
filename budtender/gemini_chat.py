@@ -13,6 +13,7 @@ import re
 import time
 
 import requests
+from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -92,19 +93,47 @@ def _voice_chat(messages, *, store: str = "") -> dict | None:
     return data
 
 
-_persona_cache: dict = {"value": None, "fetched_at": None, "failed_at": None}
-_persona_warned_at: float | None = None
+# The persona lives in Django's cache (Redis in prod), not a per-process dict: gunicorn runs
+# several workers, and a dashboard "refresh" nudge reaches only one of them. Three keys:
+#   fresh      the value, expires after HHT_PERSONA_TTL
+#   last-good  the same value, outliving the TTL — stale beats none while the voice host is down
+#   failed     back-off marker so an unreachable host costs one connect timeout per minute
+_PERSONA_FRESH = "budtender:persona:fresh:v1"
+_PERSONA_LAST_GOOD = "budtender:persona:last-good:v1"
+_PERSONA_FAILED = "budtender:persona:failed:v1"
+_PERSONA_LAST_GOOD_TTL = 7 * 24 * 3600
+_persona_warned_at: float | None = None   # per-process log throttle only, never data
+
+
+def _cache_get(key):
+    try:
+        return cache.get(key)
+    except Exception:  # noqa: BLE001 - a cache outage degrades to "miss", never an error
+        logger.warning("persona: cache read failed", exc_info=True)
+        return None
+
+
+def _cache_set(key, value, timeout) -> None:
+    try:
+        cache.set(key, value, timeout)
+    except Exception:  # noqa: BLE001
+        logger.warning("persona: cache write failed", exc_info=True)
 
 
 def invalidate_persona() -> None:
-    """Clear the cached persona so the next fetch_persona() hits the voice service."""
-    _persona_cache["value"] = None
-    _persona_cache["fetched_at"] = None
-    _persona_cache["failed_at"] = None
+    """Drop the shared persona so the next fetch_persona() hits the voice service.
+
+    The cache is shared, so this reaches every worker, not just the one that took the nudge.
+    """
+    for key in (_PERSONA_FRESH, _PERSONA_LAST_GOOD, _PERSONA_FAILED):
+        try:
+            cache.delete(key)
+        except Exception:  # noqa: BLE001
+            logger.warning("persona: cache delete failed", exc_info=True)
 
 
 def fetch_persona(*, force: bool = False) -> dict | None:
-    """Fetch the owner-editable persona from the voice service, with a TTL cache.
+    """Fetch the owner-editable persona from the voice service, with a shared TTL cache.
 
     On success, caches and returns {"ok", "written_system_instruction", "greeting",
     "updated_at"}. On failure, returns the last good cached value if any (stale is
@@ -114,15 +143,15 @@ def fetch_persona(*, force: bool = False) -> dict | None:
 
     ttl = int(os.environ.get("HHT_PERSONA_TTL", "600"))
     now = time.monotonic()
-    cached = _persona_cache["value"]
-    fetched_at = _persona_cache["fetched_at"]
-    if not force and cached is not None and fetched_at is not None and now - fetched_at < ttl:
-        return cached
-    # Back off after a failure so an unreachable voice host costs one connect timeout per
-    # minute, not one per chat turn.
-    failed_at = _persona_cache["failed_at"]
-    if not force and failed_at is not None and now - failed_at < int(os.environ.get("HHT_PERSONA_RETRY", "60")):
-        return cached
+    if not force:
+        fresh = _cache_get(_PERSONA_FRESH)
+        if fresh is not None:
+            return fresh
+        # Back off after a failure so an unreachable voice host costs one connect timeout per
+        # minute, not one per chat turn.
+        if _cache_get(_PERSONA_FAILED):
+            return _cache_get(_PERSONA_LAST_GOOD)
+    cached = _cache_get(_PERSONA_LAST_GOOD)
 
     base = os.environ.get("HHT_VOICE_BASE_URL", "").rstrip("/")
     token = os.environ.get("HHT_BACKEND_TOKEN", "").strip()
@@ -137,13 +166,13 @@ def fetch_persona(*, force: bool = False) -> dict | None:
         except (requests.RequestException, ValueError):
             data = None
         if isinstance(data, dict) and data.get("ok") and data.get("written_system_instruction"):
-            _persona_cache["value"] = data
-            _persona_cache["fetched_at"] = now
+            _cache_set(_PERSONA_FRESH, data, ttl)
+            _cache_set(_PERSONA_LAST_GOOD, data, _PERSONA_LAST_GOOD_TTL)
             _persona_warned_at = None
             logger.info("persona: using shared AgentPrompt (updated %s)", data.get("updated_at"))
             return data
 
-    _persona_cache["failed_at"] = now
+    _cache_set(_PERSONA_FAILED, 1, int(os.environ.get("HHT_PERSONA_RETRY", "60")))
     if cached is not None:
         return cached
     if _persona_warned_at is None or now - _persona_warned_at >= ttl:
