@@ -50,8 +50,15 @@ import re
 import time
 from urllib.parse import quote
 
-from voice import guardrails, recognition, vendor_flow
-from voice.safety_copy import CANNOT_ANSWER_SAFELY, CRISIS, DISPUTE, POISON_EMERGENCY, UNDER_21
+from voice import capabilities, guardrails, recognition, vendor_flow
+from voice.safety_copy import (
+    CANNOT_ANSWER_SAFELY,
+    CRISIS,
+    DISPUTE,
+    POISON_EMERGENCY,
+    TOOL_DISABLED,
+    UNDER_21,
+)
 from voice.tools import dispatch
 
 # A cart that leaks, clogs, died or gives no vapor is a DEFECT — the commonest way a dead cart is
@@ -1234,6 +1241,8 @@ def _pair_upsell_reply(sku: str, store: str, phone: str, ctx: dict, tool_results
     args = {"anchor_sku": sku, "store": store}
     result = dispatch("pair_upsell", args, ctx)
     tool_results = tool_results + [{"tool": "pair_upsell", "args": dict(args), "result": result}]
+    if result.get("disabled"):
+        return _disabled_reply(result, store, phone, tool_results, intent="product_suggestion")
     pair = result.get("pair") or {}
     if result.get("offer") and pair.get("name"):
         reason = str(result.get("reason_text") or "").strip()
@@ -1385,6 +1394,8 @@ def _stock_check_reply(
         tool_results = tool_results + [
             {"tool": "suggest_products", "args": dict(args), "result": suggest}
         ]
+        if suggest.get("disabled"):
+            return _disabled_reply(suggest, store, phone, tool_results, intent="product_suggestion")
         picks = suggest.get("picks") or []
     match = next((p for p in picks if _matches_name(name, p.get("name", ""))), None)
     if match is None:
@@ -1412,6 +1423,8 @@ def _stock_check_reply(
     tool_results = tool_results + [
         {"tool": "check_inventory", "args": dict(check_args), "result": check}
     ]
+    if check.get("disabled"):
+        return _disabled_reply(check, store, phone, tool_results, intent="product_suggestion")
     item = str(check.get("name") or match.get("name") or "that item")
     if check.get("in_stock"):
         # The only spoken value is the tool's own coarse stock band — never a figure this module
@@ -1559,6 +1572,8 @@ def _vendor_callback_reply(message: str, store: str, phone: str, ctx: dict, tool
     }
     result = dispatch("notify_vendor_callback", args, ctx)
     tool_results = tool_results + [{"tool": "notify_vendor_callback", "args": dict(args), "result": result}]
+    if result.get("disabled"):  # nothing was logged, so nothing may be promised
+        return _disabled_reply(result, store, phone, tool_results, intent="vendor_callback")
     answer = str(result.get("spoken") or "").strip() or (
         "Got it — I've let the team know and someone will follow up with you soon."
     )
@@ -1623,6 +1638,9 @@ def _stage_cart_reply(ctx: dict, store: str, phone: str, tool_results: list) -> 
     human — never stage a guessed item. ``stage_phone_cart`` takes no phone argument by design
     (``voice/tools/phone_cart.py`` injects it server-side from ``ctx['_caller_phone']``/
     ``ctx['caller_number']``) — that contract is untouched here."""
+    if not capabilities.tool_allowed("stage_phone_cart"):  # never ask for a number to hold nothing
+        return _disabled_reply({"fallback": TOOL_DISABLED}, store, phone, tool_results,
+                               intent="phone_cart_staged")
     sku = _last_suggested_sku(ctx.get("call_id") or ctx.get("session_token") or "")
     if sku and not phone:
         # ``stage_phone_cart`` injects the phone server-side from ctx, so dispatching with none on
@@ -2299,6 +2317,8 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             tool_results = tool_results + [
                 {"tool": "notify_staff_issue", "args": dict(staff_args), "result": staff_result}
             ]
+            if staff_result.get("disabled"):  # nothing reached the team, so don't say it did
+                return _disabled_reply(staff_result, store, phone, tool_results)
             # NEW COPY — REQUIRES OWNER APPROVAL.
             answer = (
                 "I can't set a back-in-stock alert myself, so I've passed this to the store team "
@@ -2540,6 +2560,8 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             suggest = dispatch("suggest_products", suggest_args, ctx)
             picks = _normalize_suggest_picks(suggest.get("picks"), "")
         tool_results.append({"tool": "suggest_products", "args": dict(suggest_args), "result": suggest})
+        if suggest.get("disabled"):  # switched off is not "nothing in stock"
+            return _disabled_reply(suggest, store, phone, tool_results, intent="product_suggestion")
         if picks:
             suggest = dict(suggest)
             suggest["picks"] = picks
@@ -2582,7 +2604,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     answer = fallback
     if escalation:
         answer = _escalation_answer(store, phone)
-    elif _requires_sources(message) and not faq.get("grounded"):
+    elif _requires_sources(message) and not faq.get("grounded") and not faq.get("disabled"):
         answer = f"I can't confirm that right now from the current knowledge base. {_staff_followup_hint(store, phone)}"
     return {
         "ok": True,

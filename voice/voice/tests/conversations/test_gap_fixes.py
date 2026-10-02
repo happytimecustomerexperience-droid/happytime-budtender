@@ -4,6 +4,7 @@ cannot carry — idioms that must NOT fire, quantities that are not ages, disabl
 from __future__ import annotations
 
 import datetime
+import re
 
 import pytest
 
@@ -136,3 +137,47 @@ def test_a_number_is_only_a_hold_when_the_agent_just_asked_for_one(convo):
     c.say("do you have a full gram cart under $40")
     t = c.say("my number is 509-555-0188, what are your hours")
     assert "stage_phone_cart" not in t.tools, "no hold was asked for, so a number is not a hold"
+
+
+# ── 7. a tool the owner switched off ─────────────────────────────────────────
+_NOT_IN_STOCK = re.compile(r"(?i)(can.?t find|not finding|isn.?t showing|not in stock|no matching|i.?ve let|passed this)")
+
+
+def _off(*tools):
+    from voice import capabilities
+
+    for tool in tools:
+        capabilities.set_enabled(f"tool.{tool}", False)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("tool,turns", [
+    ("suggest_products", ["got any indica flower"]),
+    ("suggest_products", ["is the Jetty Blue Dream cart in stock"]),
+    ("check_inventory", ["is the Jetty Blue Dream cart in stock"]),
+    ("pair_upsell", ["got any indica flower", "what would go well with that"]),
+    ("check_inventory", ["got any indica flower", "can I see the COA on that Blueberry OG"]),
+    ("stage_phone_cart", ["do you have a full gram cart under $40", "can you hold one for me"]),
+    ("notify_vendor_callback", ["hi I'm a sales rep with Cascade Crest, is your buyer available"]),
+    ("faq_lookup", ["what is your return policy"]),
+    ("faq_lookup", ["any specials today"]),
+])
+def test_disabled_tool_says_the_fallback_line(convo, tool, turns):
+    from voice.safety_copy import TOOL_DISABLED
+
+    c = convo(store="yakima")
+    for said in turns[:-1]:
+        c.say(said)
+    _off(tool)
+    t = c.say(turns[-1])
+    assert t.answer == TOOL_DISABLED, f"{tool}: {t.answer}"
+    assert not _NOT_IN_STOCK.search(t.answer) and not t.grounded
+
+
+@pytest.mark.django_db
+def test_disabled_staff_alert_never_claims_the_team_was_told(convo):
+    from voice.safety_copy import TOOL_DISABLED
+
+    _off("notify_staff_issue")
+    t = convo(phone="+15095550142").say("can you text me when the Jetty carts are back in stock")
+    assert t.answer == TOOL_DISABLED
