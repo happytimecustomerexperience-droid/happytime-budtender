@@ -182,14 +182,23 @@ def _is_valid_date(s) -> bool:
         return False
 
 
-def _finalize(fields: dict, source_text: str) -> dict:
-    """Add accts_name/age/over_21 and normalize into the public field dict."""
+def _finalize(fields: dict, source_text: str, *, dob_from_barcode: bool) -> dict:
+    """Add accts_name/age/over_21 and normalize into the public field dict.
+
+    ``dob_from_barcode`` says where the date of birth came from. A DOB an OCR+LLM pass
+    read off the front of the card is a model's guess, not the barcode: it can fail the
+    21+ gate but never pass it. Its over_21 is None — the state the POS shows as
+    "CHECK BY HAND" — so staff read the DOB printed on the card instead of trusting it.
+    """
     if not fields.get("accts_name"):
         fields["accts_name"] = " ".join(filter(None, [fields.get("first_name", ""), fields.get("last_name", "")]))
     birth_date = fields.get("birth_date")
     if birth_date and not _is_valid_date(birth_date):
         birth_date = None
     age = _compute_age(birth_date)
+    over_21 = age is not None and age >= 21
+    if over_21 and not dob_from_barcode:
+        over_21 = None
     return {
         "first_name": fields.get("first_name"),
         "last_name": fields.get("last_name"),
@@ -197,7 +206,7 @@ def _finalize(fields: dict, source_text: str) -> dict:
         "accts_name": fields.get("accts_name"),
         "birth_date": birth_date,
         "age": age,
-        "over_21": age is not None and age >= 21,
+        "over_21": over_21,
         # Separate from over_21 on purpose: an expired card is refused even for a
         # 40-year-old, and a budtender needs to be told WHICH rule stopped the sale.
         "id_expired": _is_expired(fields.get("id_expiration")),
@@ -223,7 +232,7 @@ def run_id_scan_payload(payload: str | None) -> dict:
         return {"error": "No payload provided"}
     fields = parse_aamva(payload.strip())
     if fields and (fields.get("first_name") or fields.get("last_name")):
-        return _finalize(fields, source_text=payload.strip())
+        return _finalize(fields, source_text=payload.strip(), dob_from_barcode=True)
     return {"error": "Couldn't parse ID payload"}
 
 
@@ -246,7 +255,7 @@ def run_id_scan(image_bytes_list: list[bytes]) -> dict:
         if payload:
             fields = parse_aamva(payload)
             if fields and (fields.get("first_name") or fields.get("last_name")):
-                return _finalize(fields, source_text=payload)
+                return _finalize(fields, source_text=payload, dob_from_barcode=True)
 
     # 2. Optional cloud fallback (front-only cards) — only if keys are configured.
     mistral_key = os.environ.get("MISTRAL_API_KEY")
@@ -258,7 +267,7 @@ def run_id_scan(image_bytes_list: list[bytes]) -> dict:
         if ocr_text and not ("(no text extracted)" in ocr_text and "(OCR failed" in ocr_text):
             try:
                 extracted = _extract_with_openai(ocr_text, openai_key)
-                return _finalize(extracted, source_text=ocr_text)
+                return _finalize(extracted, source_text=ocr_text, dob_from_barcode=False)
             except Exception as e:
                 logger.exception("OpenAI extraction failed: %s", e)
                 return {"error": f"LLM extraction failed: {e}"}
