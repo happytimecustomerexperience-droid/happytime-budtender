@@ -54,9 +54,24 @@ from voice import guardrails, recognition, vendor_flow
 from voice.safety_copy import CANNOT_ANSWER_SAFELY, CRISIS, DISPUTE, POISON_EMERGENCY, UNDER_21
 from voice.tools import dispatch
 
+# A cart that leaks, clogs, died or gives no vapor is a DEFECT — the commonest way a dead cart is
+# described, and none of it was dispute vocabulary, so "my cart is leaking" was read as a cart ask
+# and the caller was pitched a new one. Shared by the dispute, dispute-topic, defect and return
+# regexes below so all four agree on what a defect sounds like.
+_HARDWARE_FAILURE = (
+    r"leak(?:s|ed|ing|y)|clog(?:s|ged)|died\s+on\s+me|(?:went|is|was|it'?s)\s+dead|"
+    r"no\s+vapou?r|(?:stopped|quit)\s+working|won'?t\s+hit|not\s+hitting|doesn'?t\s+hit"
+)
+# "phone" means the STORE's phone only as "phone number" / "your phone": "show my ID on my phone",
+# "pay with my phone" and "nobody picks up the phone" were scoped to the store-phone row.
+_STORE_PHONE = r"phone\s*(?:number|#)|(?:your|the\s+store'?s?|store|shop)\s+phone"
+
 _HUMAN_RE = re.compile(
     r"\b("
     r"complain|complaint|refund|"
+    + _HARDWARE_FAILURE + r"|"
+    # Nobody answering the store's phone is a complaint, not a request for the number.
+    r"(?:nobody|no\s*one)\s+(?:ever\s+)?(?:picks?\s+up|answers?)\s+(?:the\s+|your\s+)?phone|"
     # "money back" / "busted" are how customers actually phrase a dispute. Without them the
     # category regex wins ("busted vape pen" → cartridge) and the caller gets upsold instead.
     r"money\s*back|busted|"
@@ -209,7 +224,7 @@ _SOURCE_REQUIRED_RE = re.compile(
 )
 _FAQ_FIRST_RE = re.compile(
     r"\b("
-    r"specials?|deals?|discounts?|sale|hours?|open|close|location|address|phone|"
+    r"specials?|deals?|discounts?|sale|hours?|open|close|location|address|" + _STORE_PHONE + r"|"
     r"returns?|refund|policy|age|wa|wac|legal|compliance|id|identification|"
     r"delivery|payment|order|defective|broken|won'?t\s+fire|doesn'?t\s+work|"
     # The payment row is one of the most-asked FAQs and nobody asks it with the word "payment" —
@@ -234,6 +249,7 @@ _DISPUTE_TOPIC_RE = re.compile(
     # same broken-product family and must be recognized as still describing the disputed item
     # (see ``_ends_dispute`` below), not treated as a bare product mention.
     r"defective|broken|busted|warranty|replacements?|replace|damaged|fail(?:ed|s)?|"
+    + _HARDWARE_FAILURE + r"|"
     # "expired" belongs with defective/damaged here: a caller who was sold out-of-date product is
     # asking the return-policy question, and the gate has to let that row be spoken.
     r"expired|expiration)\b",
@@ -1698,6 +1714,8 @@ def _stage_cart_reply(ctx: dict, store: str, phone: str, tool_results: list) -> 
 # phrasing on the floor, and it classified as no topic at all.
 _RETURN_RE = re.compile(
     r"\b(returns?|refund|exchange|money\s*back|return\s+policy|"
+    # a leaking/dead cart is the defective-exchange question (the returns row's WAC path)
+    + _HARDWARE_FAILURE + r"|"
     r"bring\s+(?:it|them|this|that|these)\s+back(?!\s+(?:home|with|across|over))|"
     r"take\s+(?:it|them|this|that)\s+back(?!\s+(?:home|with|across|over)))\b",
     re.I,
@@ -1707,7 +1725,14 @@ _HOURS_LOC_RE = re.compile(
     # "located" / "closed" were missing, so "where exactly are you located" classified as nothing
     # and retrieval answered it with whatever row ranked first.
     r"\b(hours?|open|opening|close|closing|closed|location|located|address|directions?|"
-    r"phone|parking|where\s+are)\b",
+    + _STORE_PHONE + r"|parking|where\s+are)\b",
+    re.I,
+)
+# "how many hours does an edible last" is a DURATION, not the store's hours; scoped to the
+# hours_location topic it could only ever be answered with the opening hours.
+_DURATION_RE = re.compile(
+    r"\bhow\s+(?:many|long)\s+hours?\b|\b(?:\d+|an?|one|two|three|few|several|couple(?:\s+of)?)\s+hours?\b|"
+    r"\bfor\s+hours\b|\bhours?\s+(?:later|ago|after|before)\b",
     re.I,
 )
 
@@ -1845,7 +1870,7 @@ def _faq_first(message: str) -> bool:
 
 
 def _faq_topic(message: str) -> str:
-    message = _faq_vocabulary(message)
+    message = _DURATION_RE.sub(" ", _faq_vocabulary(message))
     if _RETURN_RE.search(message or ""):
         return "return_policy"
     if _SPECIALS_RE.search(message or ""):
@@ -1864,7 +1889,7 @@ def faq_topic_fits(message: str, topic: str) -> bool:
     ``hours_location``; scoping retrieval to hours then hides the accepted-ID row. One rule for
     both channels: the words decide the topic, never the model's label alone."""
     rx = _TOPIC_VOCAB.get(topic)
-    return bool(rx and rx.search(message or ""))
+    return bool(rx and rx.search(_DURATION_RE.sub(" ", message or "")))
 
 
 def _intent_label(message: str, *, escalation: bool, product: bool) -> str:

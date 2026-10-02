@@ -62,6 +62,13 @@ FAQ_ROWS = [
             # row AND the tax-included row's "do I pay tax on top" paraphrase, a coincidental tie
             # this row must win outright, not by tiebreak luck.
             "can I pay with venmo", "apple pay", "plain credit card",
+            # 2026-10-01: "can I pay with my phone, like tap to pay" grounded on the store-PHONE row
+            # (its "phone number" phrasings share "phone"), and "do you take EBT or checks" on the
+            # interstate row. Both are payment questions; give them words of their own.
+            "can I pay with my phone", "tap to pay", "google pay", "contactless",
+            "do you take checks", "EBT",
+            # Spanish callers ask it in Spanish; the offline keyword path had no word to match.
+            "aceptan tarjeta de crédito", "aceptan efectivo", "tarjeta de débito",
         ],
     },
     {
