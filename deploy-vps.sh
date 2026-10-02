@@ -8,6 +8,11 @@ set -euo pipefail
 REPO="https://github.com/happytimecustomerexperience-droid/happytime-budtender.git"
 BRANCH="feat/pos-roles-queue"
 DIR="$HOME/happytime-budtender"
+# Production compose file ONLY. `docker compose` auto-merges a docker-compose.override.yml if one
+# exists, and a local-dev one (publishes "8000:8000") had sat untracked in the prod checkout since
+# May — every deploy re-opened gunicorn on 0.0.0.0:8000, bypassing Traefik's TLS and its path
+# allowlist (/admin and the POS were reachable over plain HTTP on the bare IP). Found 2026-10-01.
+export COMPOSE_FILE=docker-compose.yml
 
 echo "==> 1/5 Docker"
 if ! command -v docker >/dev/null 2>&1; then
