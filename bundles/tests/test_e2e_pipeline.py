@@ -234,13 +234,15 @@ class FullJourneyTests(TestCase):
         seen = set()
         for i, raw in enumerate(["5094206999", "509-420-6999", "(509) 420-6999",
                                  "+1 509 420 6999", "15094206999", "509.420.6999"]):
+            cache.clear()       # six orders for one number: the per-phone cap is not under test
             c = Client()
             with patch_inventory(), patch("bundles.customers.attach"):
                 c.get(self._link())
                 r = c.post(reverse("bundle_checkout"),
-                           {"loc": LOC, "first_name": "Sam", "last_name": f"Number{i}", "phone": raw})
+                           {"loc": LOC, "first_name": "Sam", "last_name": f"Number{'ABCDEF'[i]}",
+                            "phone": raw})
             self.assertEqual(r.status_code, 200, f"{raw} was rejected")
-            d = PhoneCartDraft.objects.filter(pickup_name=f"Sam Number{i}").first()
+            d = PhoneCartDraft.objects.filter(pickup_name=f"Sam Number{'ABCDEF'[i]}").first()
             self.assertIsNotNone(d, f"{raw} produced no order")
             self.assertEqual(d.phone_last4, "6999")
             seen.add(d.phone_hash)
@@ -261,6 +263,8 @@ class FullJourneyTests(TestCase):
             self._checkout()
             placed = self._draft()
             self.client.get(reverse("bundle_menu"), {"loc": LOC})
+            self.assertEqual(PhoneCartDraft.objects.count(), 1, "browsing makes no cart")
+            self.client.post(reverse("bundle_cart_add"), {"loc": LOC, "product_id": "1", "qty": 1})
         new = PhoneCartDraft.objects.exclude(pk=placed.pk).first()
         self.assertIsNotNone(new, "a new visit needs its own cart")
         self.assertEqual(new.status, PhoneCartDraft.Status.OPEN)

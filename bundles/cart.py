@@ -21,7 +21,7 @@ import sys
 from datetime import timedelta
 
 from django.conf import settings
-from django.db.models import Q
+from django.core.cache import cache
 from django.utils import timezone
 
 from budtender.models import PhoneCartDraft
@@ -43,16 +43,11 @@ MAX_QTY = 12
 # Carts are abandoned constantly; don't leave them claimable forever.
 OPEN_TTL_DAYS = 30
 
-# How long an untouched cart keeps holding stock for its shopper.
-#
-# Without this, nothing sat between "in someone's cart" and "on the shelf": twenty
-# shoppers were each given a confirmed order for a product with two units on hand.
-# Now a line in a cart reserves its units — but only while the cart is being used.
-# Any render or mutation bumps `updated_at` (auto_now), so browsing reactivates the
-# hold; walk away for RESERVE_MINUTES and the units go back on the shelf for
-# everyone else, while the CART ITSELF survives for the full 30 days of retention.
-# Coming back and refreshing re-reserves whatever is still there.
-RESERVE_MINUTES = 15
+# Price confirmations are shared across shoppers for this long. Every checkout page,
+# bundle landing and add-to-cart re-checks each line against the register, and the
+# cart cookie is free to mint — without the cache one visitor could aim thousands of
+# Dutchie calls at the register's API key.
+PRICE_CHECK_TTL = 60
 
 
 def _f(v, d=0.0):
@@ -70,28 +65,22 @@ def inventory_for(location_slug: str) -> list[dict]:
         return []
 
 
-def reserved_units(location_slug: str, exclude_token: str = "") -> dict[str, int]:
-    """product_id -> units already spoken for at this store, by OTHER shoppers.
+def reserved_units(location_slug: str) -> dict[str, int]:
+    """product_id -> units already spoken for at this store by placed orders.
 
-    Two things hold stock:
-      * an OPEN cart touched within RESERVE_MINUTES — someone is shopping right now;
-      * a RELEASED order that has not expired — someone is driving in to collect it.
+    Only a RELEASED order that has not expired holds stock: someone submitted
+    checkout with a phone number and is driving in to collect it. A cart being
+    browsed holds nothing — the cookie is free to mint, so a hold per cart let one
+    visitor strip the shelf of everything. The shopper's own cart is OPEN, so it is
+    never counted against itself.
 
     A CLAIMED order is already in the budtender's hands and its stock left the shelf
     at the register, so it must NOT be counted again here.
-
-    `exclude_token` is the current shopper's own cart. Without it they would be
-    charged for their own reservation and watch the shelf count drop as they add.
     """
-    now = timezone.now()
-    fresh = now - timedelta(minutes=RESERVE_MINUTES)
     qs = (PhoneCartDraft.objects
-          .filter(location_slug=location_slug)
-          .filter(Q(status=PhoneCartDraft.Status.OPEN, updated_at__gte=fresh)
-                  | Q(status=PhoneCartDraft.Status.RELEASED, expires_at__gt=now))
+          .filter(location_slug=location_slug, status=PhoneCartDraft.Status.RELEASED,
+                  expires_at__gt=timezone.now())
           .only("lines"))
-    if exclude_token:
-        qs = qs.exclude(draft_token=exclude_token)
 
     held: dict[str, int] = {}
     for draft in qs:
@@ -131,6 +120,11 @@ def confirm_live_price(location_slug: str, item: dict) -> float | None:
     serial = str(item.get("SerialNo") or "").strip()
     if not serial:
         return None
+    # Only answers are cached — "couldn't ask" is not a price and must be retried.
+    key = f"bundle:pricecheck:{store_key_for(location_slug)}:{serial}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
     try:
         store = get_store(store_key_for(location_slug))
         got = PosRegisterClient.parse_price_check(PosRegisterClient(store).price_check(serial))
@@ -139,7 +133,10 @@ def confirm_live_price(location_slug: str, item: dict) -> float | None:
                        serial, exc_info=True)
         return None
     # 0.00 is a real answer (samples exist); only None means "no answer".
-    return got.get("price")
+    price = got.get("price")
+    if price is not None:
+        cache.set(key, price, PRICE_CHECK_TTL)
+    return price
 
 
 def get_cart(request, location_slug: str, *, create: bool = False) -> PhoneCartDraft | None:
@@ -147,6 +144,9 @@ def get_cart(request, location_slug: str, *, create: bool = False) -> PhoneCartD
 
     Scoped by store on purpose: a Yakima cart must not follow someone to the
     Pullman page and quote them product that store doesn't carry.
+
+    `create=True` only where a cart is actually being built (a verified bundle link,
+    a real add-to-cart). Browsing GETs pass nothing, so a crawler mints no rows.
     """
     # Exact match or nothing. The cookie IS the access control, so normalising it
     # (the old .strip()) meant " <token>" and "<token>\x00" both resolved to the
@@ -172,12 +172,13 @@ def get_cart(request, location_slug: str, *, create: bool = False) -> PhoneCartD
     return draft
 
 
-def attach_cookie(response, draft: PhoneCartDraft):
-    response.set_cookie(
-        COOKIE, draft.draft_token, max_age=COOKIE_MAX_AGE,
-        httponly=True, samesite="Lax",
-        secure=not getattr(settings, "DEBUG", False),
-    )
+def attach_cookie(response, draft: PhoneCartDraft | None):
+    if draft is not None:       # no cart yet, no cookie
+        response.set_cookie(
+            COOKIE, draft.draft_token, max_age=COOKIE_MAX_AGE,
+            httponly=True, samesite="Lax",
+            secure=not getattr(settings, "DEBUG", False),
+        )
     return response
 
 
@@ -224,9 +225,9 @@ def reprice(draft: PhoneCartDraft, inventory: list[dict] | None = None,
     Bounded by MAX_LINES, so at most 30 calls.
     """
     inv = inventory if inventory is not None else inventory_for(draft.location_slug)
-    # What everyone ELSE is holding right now. Clamping against raw shelf quantity
+    # What placed orders are holding right now. Clamping against raw shelf quantity
     # was what let twenty shoppers each be confirmed for two units.
-    held = reserved_units(draft.location_slug, exclude_token=draft.draft_token)
+    held = reserved_units(draft.location_slug)
     lines, subtotal, issues = [], 0.0, 0
     for raw in (draft.lines or []):
         if not isinstance(raw, dict):
@@ -292,20 +293,31 @@ def reprice(draft: PhoneCartDraft, inventory: list[dict] | None = None,
     }
 
 
+def availability(location_slug: str, product_id: str, inv: list[dict]) -> tuple[dict | None, int]:
+    """(live row, units a shopper could take right now); (None, 0) if it can't be sold.
+
+    What is left once placed, unexpired orders are counted. Adding to a cart only ever
+    CHECKS this — the units are reserved when the order is placed, not before.
+    """
+    live = resolver.find_live(inv, product_id)
+    if not live or not resolver.in_stock(live):
+        return None, 0
+    return live, available_after_holds(live, reserved_units(location_slug))
+
+
+def empty_ctx() -> dict:
+    """The render context for a shopper who has no cart yet."""
+    return {"cart": None, "lines": [], "quote": {}, "count": 0, "issues": 0}
+
+
 def add(draft: PhoneCartDraft, product_id: str, qty: int = 1,
         inventory: list[dict] | None = None) -> tuple[bool, str]:
     """Add or increment a line. Returns (ok, error_code)."""
     inv = inventory if inventory is not None else inventory_for(draft.location_slug)
-    live = resolver.find_live(inv, product_id)
-    if not live or not resolver.in_stock(live):
-        return False, "not_in_stock"
-
-    # What is left once everyone else's live carts and unclaimed orders are counted.
     # CLAMP rather than refuse: asking for 20 when 5 are free should give you 5, which
     # is the contract the rest of the cart already follows (reprice caps, it doesn't
     # drop). Only a genuinely empty shelf is a refusal.
-    held = reserved_units(draft.location_slug, exclude_token=draft.draft_token)
-    spare = available_after_holds(live, held)
+    live, spare = availability(draft.location_slug, product_id, inv)
     if spare <= 0:
         return False, "not_in_stock"
 
@@ -343,11 +355,17 @@ def remove(draft: PhoneCartDraft, product_id: str) -> None:
     set_qty(draft, product_id, 0)
 
 
-def seed_from_bundle(draft: PhoneCartDraft, resolved: dict, bundle_slug: str) -> None:
+def seed_from_bundle(draft: PhoneCartDraft, resolved: dict, bundle_slug: str,
+                     recipient: str = "") -> None:
     """Put an emailed bundle's resolved lines into an empty cart.
 
     Only seeds when the cart is empty — a returning shopper's own cart must never
     be overwritten by re-opening the email.
+
+    An empty `bundle_slug` seeds the lines without the offer (an expired link).
+    `recipient` is the link's `c` token — the phone the link was sent to. It rides on
+    `phone_hash` until checkout replaces it with the token of the phone actually
+    given, and checkout only honours the bundle when the two agree.
     """
     # Claim the bundle even when we don't seed. A shopper who added something
     # before opening the email still came from that bundle, and without the slug
@@ -356,7 +374,8 @@ def seed_from_bundle(draft: PhoneCartDraft, resolved: dict, bundle_slug: str) ->
     # the offer silently evaporates.
     if not draft.bundle_slug and bundle_slug:
         draft.bundle_slug = bundle_slug
-        draft.save(update_fields=["bundle_slug", "updated_at"])
+        draft.phone_hash = recipient
+        draft.save(update_fields=["bundle_slug", "phone_hash", "updated_at"])
 
     if draft.lines:
         return
@@ -369,8 +388,9 @@ def seed_from_bundle(draft: PhoneCartDraft, resolved: dict, bundle_slug: str) ->
     if not lines:
         return
     draft.lines = lines
-    draft.bundle_slug = bundle_slug
-    draft.save(update_fields=["lines", "bundle_slug", "updated_at"])
+    if bundle_slug:
+        draft.bundle_slug, draft.phone_hash = bundle_slug, recipient
+    draft.save(update_fields=["lines", "bundle_slug", "phone_hash", "updated_at"])
 
 
 def _line_for_public(pub: dict, qty: int) -> dict:

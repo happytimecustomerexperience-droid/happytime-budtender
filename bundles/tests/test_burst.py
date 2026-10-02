@@ -39,6 +39,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
+from django.core.cache import cache
 from django.db import connection
 from django.test import Client, TransactionTestCase, override_settings
 
@@ -84,7 +85,10 @@ class Shopper:
         # and destroy the measurement. Take the 500 as a status code instead.
         self.client = Client(raise_request_exception=False, REMOTE_ADDR=ip)
         self.phone = f"509420{i:04d}"
-        self.first, self.last = "Burst", f"Shopper{i:02d}"
+        # Letters, not digits: the checkout keeps only letters in a name (finding W5a-3),
+        # so a numbered name would no longer round-trip and the crossover check would
+        # report every order as someone else's.
+        self.first, self.last = "Burst", f"Shopper{chr(65 + i // 26)}{chr(65 + i % 26)}"
         self.email = f"burst{i:02d}@example.invalid"
         self.basket = basket_for(i)
         self.token = ""          # draft_token of the cart, captured after building it
@@ -108,6 +112,11 @@ class BurstTestCase(TransactionTestCase):
     databases = {"default"}
 
     def setUp(self):
+        # LocMemCache is process-global and every class here reuses the same shopper
+        # phones/emails, so the per-phone and per-email order caps (24 h) carry over
+        # from one test to the next and start refusing the fourth class to run.
+        cache.clear()
+        self.addCleanup(cache.clear)
         # Fresh inventory list per call, the way the Redis-backed snapshot deserialises
         # a new object for every request — so no thread can mutate another's rows.
         self.inv = patch("bundles.cart.pos_catalog.get_inventory",

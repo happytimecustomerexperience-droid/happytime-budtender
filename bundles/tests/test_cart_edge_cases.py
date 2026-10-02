@@ -108,6 +108,7 @@ class CartLifecycleTests(CartTestCase):
 
     def test_two_requests_in_a_row_share_one_cart_over_http(self):
         # The cookie is what makes this true; the view attaches it on every response.
+        self._add("1")
         with self._patch_inv():
             self.client.get("/custom-order/cart?loc=yakima")
             self.client.get("/custom-order/cart?loc=yakima")
@@ -125,7 +126,7 @@ class CartLifecycleTests(CartTestCase):
         self.assertNotIn("Blue Dream", body)
         yakima = PhoneCartDraft.objects.get(location_slug="yakima")
         self.assertEqual([x["product_id"] for x in yakima.lines], ["1"])
-        self.assertEqual(PhoneCartDraft.objects.count(), 2)
+        self.assertEqual(PhoneCartDraft.objects.count(), 1)   # looking at Pullman made none
 
     def test_the_same_cookie_at_another_store_gets_a_different_draft(self):
         draft = cart_mod.get_cart(self._request(), "yakima", create=True)
@@ -133,29 +134,44 @@ class CartLifecycleTests(CartTestCase):
         self.assertNotEqual(draft.pk, other.pk)
         self.assertEqual(other.location_slug, "pullman")
 
-    def test_switching_store_and_back_orphans_the_original_cart(self):
-        # BUG (reported): the cookie holds ONE token, so the second store's cart
-        # overwrites it. Coming back to Yakima can no longer find the Yakima cart —
-        # it silently builds a third one and the shopper's items are gone.
+    def test_switching_store_and_back_keeps_the_original_cart(self):
+        # The cookie holds ONE token. Browsing the Pullman menu used to mint a Pullman
+        # cart and overwrite it, so coming back to Yakima built a third cart and the
+        # shopper's items were gone. A GET makes no cart now, so the cookie is untouched.
         self._add("1", loc="yakima")
-        original = PhoneCartDraft.objects.get(location_slug="yakima")
         with self._patch_inv():
             self.client.get("/custom-order/menu?loc=pullman")
             body = self.client.get("/custom-order/cart?loc=yakima").content.decode()
-        self.assertNotIn("Blue Dream", body)                     # items are not shown
-        self.assertIn("Your cart is empty", body)
-        self.assertEqual(PhoneCartDraft.objects.filter(location_slug="yakima").count(), 2)
-        original.refresh_from_db()
-        self.assertEqual(len(original.lines), 1)                 # still on disk, unreachable
+        self.assertIn("Blue Dream", body)
+        self.assertEqual(PhoneCartDraft.objects.count(), 1)
 
-    def test_every_cookieless_visit_writes_a_new_draft_row(self):
-        # BUG (reported): the public GETs create=True unconditionally and carry no
-        # rate limit, so a crawler mints one PhoneCartDraft per request.
-        for _ in range(4):
+    def test_cookieless_get_visits_write_no_draft_row(self):
+        # Finding W5a-2: the public GETs used to create=True unconditionally, so a
+        # crawler minted one PhoneCartDraft per request.
+        for path in ("/custom-order/menu?loc=yakima", "/custom-order/cart?loc=yakima",
+                     "/custom-order/checkout?loc=yakima"):
+            for _ in range(3):
+                self.client.cookies.clear()
+                with self._patch_inv():
+                    r = self.client.get(path)
+                self.assertEqual(r.status_code, 200)
+                self.assertNotIn(cart_mod.COOKIE, r.cookies)
+        self.assertEqual(PhoneCartDraft.objects.count(), 0)
+
+    def test_cookieless_cart_writes_that_change_nothing_make_no_row(self):
+        for path, data in (("/custom-order/cart/update", {"product_id": "1", "qty": 3}),
+                           ("/custom-order/cart/remove", {"product_id": "1"}),
+                           ("/custom-order/cart/add", {"product_id": "not-a-product"})):
             self.client.cookies.clear()
             with self._patch_inv():
-                self.client.get("/custom-order/menu?loc=yakima")
-        self.assertEqual(PhoneCartDraft.objects.count(), 4)
+                r = self.client.post(path, {"loc": "yakima", **data})
+            self.assertEqual(r.status_code, 200)
+        self.assertEqual(PhoneCartDraft.objects.count(), 0)
+
+    def test_the_first_real_add_creates_the_cart_and_sets_the_cookie(self):
+        r = self._add("1")
+        self.assertEqual(PhoneCartDraft.objects.count(), 1)
+        self.assertEqual(r.cookies[cart_mod.COOKIE].value, PhoneCartDraft.objects.get().draft_token)
 
 
 # ── 2. add() ─────────────────────────────────────────────────────────────────
@@ -722,7 +738,7 @@ class EmptyAndDegradedTests(CartTestCase):
                                  {"loc": "yakima", "product_id": "1", "qty": 1})
         self.assertEqual(r.status_code, 200)
         self.assertIn("sold out", r.content.decode().lower())
-        self.assertEqual(PhoneCartDraft.objects.get().lines, [])
+        self.assertEqual(PhoneCartDraft.objects.count(), 0)   # a refused add mints no cart
 
     def test_checkout_does_not_500_when_the_register_is_down(self):
         self._add("1")

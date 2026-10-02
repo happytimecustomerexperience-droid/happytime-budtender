@@ -106,6 +106,14 @@ def customer_token(phone: str) -> str:
     return hmac.new(_secret(), f"cust:{digits}".encode(), hashlib.sha256).hexdigest()[:32]
 
 
+def is_recipient(token: str, phone: str) -> bool:
+    """Is `token` (a link's `c`) the handle for `phone`? False when nothing can be verified."""
+    try:
+        return hmac.compare_digest(str(token).encode(), customer_token(phone).encode())
+    except BundleUrlError:      # no secret configured
+        return False
+
+
 @dataclass
 class BundleRequest:
     """A verified bundle link."""
@@ -163,6 +171,15 @@ def parse(query_params, *, now: int | None = None) -> BundleRequest:
     sig = (getlist("sig") or [""])[0]
     if not sig:
         raise BundleUrlError("missing signature")
+    # canonical() joins `k=v` with `&` and escapes nothing, so a value carrying its
+    # own `&exp=…` signs identically to a separate param: `c=X&exp=N` with the real
+    # `exp` deleted verifies, then parses with no expiry at all. The signer lives in
+    # another repo and the canonical form is pinned, so refuse the ambiguity here.
+    # No legitimate field (slug, store, `sku:qty`, token, unix time) contains either.
+    if any("&" in v or "=" in v
+           for value in params.values()
+           for v in (value if isinstance(value, list) else [value])):
+        raise BundleUrlError("bad signature")
     if not hmac.compare_digest(sig, sign(params)):
         raise BundleUrlError("bad signature")
 

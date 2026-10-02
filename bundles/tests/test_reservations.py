@@ -1,14 +1,15 @@
-"""Stock a shopper is holding is stock nobody else can be promised.
+"""Stock is promised when an order is PLACED, not when a cart is built.
 
-The defect this closes, measured before the fix: twenty shoppers each got a confirmed
-order AND a confirmation email for a product with two units on hand — "UNITS PROMISED:
-20 vs 2 physically on hand". Eighteen people would have driven in for nothing.
+The first defect, measured before any fix: twenty shoppers each got a confirmed order
+AND a confirmation email for a product with two units on hand — "UNITS PROMISED: 20 vs
+2 physically on hand". Eighteen people would have driven in for nothing.
 
-The hold is deliberately soft. A cart holds its units only while it is being used;
-`updated_at` is `auto_now`, so any render or mutation renews it. Walk away for
-RESERVE_MINUTES and the units return to the shelf for everyone else — but the CART
-survives its full 30 days, so coming back and refreshing re-reserves whatever is
-still there. That is the "don't trap inventory for more than 15 minutes" rule.
+The fix for that held units for every cart touched in the last 15 minutes. That turned
+out to be a weapon: the cart cookie is free to mint, so one visitor could open cart after
+cart and strip the whole shelf from real shoppers (finding W5a-2). So adding to a cart now
+only CHECKS availability. The units are reserved when the shopper submits checkout with a
+phone number — the RELEASED order holds them for DRAFT_TTL_HOURS — and checkout
+re-validates stock and refuses what is gone.
 
 Nothing here touches the network: inventory is patched and the register client is
 stubbed by the shared base class.
@@ -16,11 +17,13 @@ stubbed by the shared base class.
 from datetime import timedelta
 from unittest.mock import patch
 
+from django.core.cache import cache
 from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
 from budtender.models import PhoneCartDraft
 from bundles import cart as cart_mod
+from bundles import views
 from bundles.tests.test_resolver import live
 
 CACHES_LOCMEM = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
@@ -34,13 +37,16 @@ def floor(qty=2):
 @override_settings(CACHES=CACHES_LOCMEM)
 class ReservationTests(TestCase):
     def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
         pos = patch("bundles.customers._client")
         self.pos = pos.start()
         self.addCleanup(pos.stop)
         self.pos.return_value.guest_search.return_value = {"Data": []}
+        self.phones = (f"50955{n:05d}" for n in range(100000))
 
     def _shopper(self, qty=2):
-        """A browser with its own cart cookie."""
+        """A browser with its own cart cookie holding one unit."""
         c = Client()
         with patch("bundles.cart.pos_catalog.get_inventory", return_value=floor(qty)):
             c.post("/custom-order/cart/add", {"loc": "yakima", "product_id": "1", "qty": 1})
@@ -51,67 +57,78 @@ class ReservationTests(TestCase):
             return client.post("/custom-order/cart/add",
                                {"loc": "yakima", "product_id": "1", "qty": n})
 
-    # ── the original defect ──────────────────────────────────────────────────
-    def test_twenty_shoppers_cannot_all_hold_the_last_two_units(self):
+    def _check_out(self, client, qty=2):
+        with patch("bundles.cart.pos_catalog.get_inventory", return_value=floor(qty)):
+            return client.post("/custom-order/checkout", {
+                "loc": "yakima", "first_name": "Sam", "last_name": "Reyes",
+                "phone": next(self.phones)})
+
+    def _draft(self, client):
+        return PhoneCartDraft.objects.get(draft_token=client.cookies[cart_mod.COOKIE].value)
+
+    # ── adding to a cart reserves nothing (finding W5a-2) ────────────────────
+    def test_twenty_shoppers_can_all_put_the_last_two_units_in_a_cart(self):
+        # The old behaviour capped this at two carts; one visitor could then take them all.
         clients = [self._shopper() for _ in range(20)]
-        holding = [c for c in clients
-                   if PhoneCartDraft.objects.filter(
-                       draft_token=c.cookies[cart_mod.COOKIE].value).first().lines]
-        self.assertEqual(len(holding), 2,
-                         f"{len(holding)} shoppers hold a product with 2 on the shelf")
+        holding = [c for c in clients if self._draft(c).lines]
+        self.assertEqual(len(holding), 20)
+        self.assertEqual(cart_mod.reserved_units("yakima"), {})
+
+    def test_a_cart_that_was_just_touched_still_holds_nothing(self):
+        c = self._shopper()
+        self.assertEqual(self._draft(c).status, PhoneCartDraft.Status.OPEN)
+        self.assertEqual(cart_mod.reserved_units("yakima"), {})
+
+    def test_one_visitor_cannot_strip_the_shelf_with_cookieless_adds(self):
+        for _ in range(30):
+            self._shopper(qty=12)
+        real = Client()
+        r = self._add(real, qty=12, n=12)
+        self.assertEqual(self._draft(real).lines[0]["quantity"], 12)
+        self.assertNotIn("sold out", r.content.decode().lower())
+
+    # ── ...the order does, and checkout re-validates ─────────────────────────
+    def test_twenty_shoppers_cannot_all_check_out_the_last_two_units(self):
+        clients = [self._shopper() for _ in range(20)]
+        statuses = [self._check_out(c).status_code for c in clients]
+        placed = PhoneCartDraft.objects.filter(status=PhoneCartDraft.Status.RELEASED)
+        self.assertEqual(placed.count(), 2,
+                         f"{placed.count()} orders were confirmed for 2 units on the shelf")
+        self.assertEqual(statuses.count(200), 2)
+        self.assertEqual(statuses.count(400), 18)       # the "just sold out" path
+        # The losers keep their carts: nothing is lost, they can swap the item.
+        self.assertEqual(PhoneCartDraft.objects.filter(
+            status=PhoneCartDraft.Status.OPEN).count(), 18)
+
+    def test_a_refused_checkout_says_the_cart_changed_and_places_nothing(self):
+        first, second, late = (self._shopper() for _ in range(3))
+        self._check_out(first)
+        self._check_out(second)
+        r = self._check_out(late)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('<span class="a">sold out</span>', r.content.decode())
+        self.assertEqual(self._draft(late).status, PhoneCartDraft.Status.OPEN)
+
+    def test_a_placed_order_keeps_holding_for_the_usual_window(self):
+        c = self._shopper()
+        self._check_out(c)
+        order = PhoneCartDraft.objects.get(status=PhoneCartDraft.Status.RELEASED)
+        self.assertAlmostEqual(
+            (order.expires_at - order.released_at).total_seconds(),
+            views.DRAFT_TTL_HOURS * 3600, delta=60)
+        self.assertEqual(cart_mod.reserved_units("yakima").get("1"), 1)
 
     def test_the_third_shopper_is_told_it_is_gone_not_given_a_false_order(self):
-        self._shopper(); self._shopper()
+        for _ in range(2):
+            self._check_out(self._shopper())
+        before = PhoneCartDraft.objects.count()
         third = Client()
         r = self._add(third)
-        self.assertEqual(PhoneCartDraft.objects.get(
-            draft_token=third.cookies[cart_mod.COOKIE].value).lines, [])
-        self.assertNotEqual(r.status_code, 500)
-
-    # ── the hold is soft ─────────────────────────────────────────────────────
-    def test_an_abandoned_cart_stops_holding_after_the_window(self):
-        first = self._shopper()
-        token = first.cookies[cart_mod.COOKIE].value
-        # They wandered off. auto_now means we have to write the past explicitly.
-        PhoneCartDraft.objects.filter(draft_token=token).update(
-            updated_at=timezone.now() - timedelta(minutes=cart_mod.RESERVE_MINUTES + 1))
-
-        second = Client()
-        self._add(second)
-        self.assertTrue(PhoneCartDraft.objects.get(
-            draft_token=second.cookies[cart_mod.COOKIE].value).lines,
-            "a stale cart is still trapping the shelf")
-
-    def test_the_cart_itself_survives_the_reservation_lapsing(self):
-        # Retention is the whole reason the cart is a 30-day cookie. Losing the hold
-        # must not lose the cart.
-        first = self._shopper()
-        token = first.cookies[cart_mod.COOKIE].value
-        PhoneCartDraft.objects.filter(draft_token=token).update(
-            updated_at=timezone.now() - timedelta(hours=6))
-        draft = PhoneCartDraft.objects.get(draft_token=token)
-        self.assertEqual(draft.status, PhoneCartDraft.Status.OPEN)
-        self.assertTrue(draft.lines)
-
-    def test_coming_back_and_refreshing_re_reserves(self):
-        first = self._shopper()
-        token = first.cookies[cart_mod.COOKIE].value
-        PhoneCartDraft.objects.filter(draft_token=token).update(
-            updated_at=timezone.now() - timedelta(hours=6))
-        # A refresh of their own cart bumps updated_at via reprice's save.
-        with patch("bundles.cart.pos_catalog.get_inventory", return_value=floor(2)):
-            first.get("/custom-order/cart?loc=yakima")
-        held = cart_mod.reserved_units("yakima")
-        self.assertEqual(held.get("1"), 1, "refreshing did not renew the hold")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("sold out", r.content.decode().lower())
+        self.assertEqual(PhoneCartDraft.objects.count(), before)    # no cart minted for it
 
     # ── who counts ───────────────────────────────────────────────────────────
-    def test_a_shopper_is_not_charged_for_their_own_hold(self):
-        # Otherwise the shelf count drops as they add, and they get blocked by
-        # themselves at half the real stock.
-        c = self._shopper(qty=2)
-        token = c.cookies[cart_mod.COOKIE].value
-        self.assertEqual(cart_mod.reserved_units("yakima", exclude_token=token), {})
-
     def test_a_released_order_still_holds_until_it_expires(self):
         # They are driving in to collect it — the unit is not on the shelf.
         c = self._shopper()
@@ -119,6 +136,13 @@ class ReservationTests(TestCase):
             status=PhoneCartDraft.Status.RELEASED,
             expires_at=timezone.now() + timedelta(hours=4))
         self.assertEqual(cart_mod.reserved_units("yakima").get("1"), 1)
+
+    def test_an_expired_order_stops_holding(self):
+        c = self._shopper()
+        PhoneCartDraft.objects.filter(draft_token=c.cookies[cart_mod.COOKIE].value).update(
+            status=PhoneCartDraft.Status.RELEASED,
+            expires_at=timezone.now() - timedelta(minutes=1))
+        self.assertEqual(cart_mod.reserved_units("yakima"), {})
 
     def test_a_claimed_order_stops_holding(self):
         # The budtender has it; the stock left the shelf at the register. Counting it
@@ -131,25 +155,25 @@ class ReservationTests(TestCase):
     def test_holds_do_not_leak_across_stores(self):
         c = self._shopper()
         PhoneCartDraft.objects.filter(draft_token=c.cookies[cart_mod.COOKIE].value).update(
-            location_slug="pullman")
+            status=PhoneCartDraft.Status.RELEASED,
+            expires_at=timezone.now() + timedelta(hours=4), location_slug="pullman")
         self.assertEqual(cart_mod.reserved_units("yakima"), {})
 
-    # ── the checkout re-check ────────────────────────────────────────────────
+    # ── the cart-side re-check ───────────────────────────────────────────────
     def test_a_cart_whose_stock_was_taken_is_flagged_before_checkout(self):
-        """Held at add time, gone by checkout — the shopper must be told.
+        """In the cart at add time, gone by checkout — the shopper must be told.
 
         `resolver.MIN_STOCK` is a module constant, not a setting, so a floor of 1 is
         never sellable at all; this uses 2 on the shelf and lets someone else's
         released order take both.
         """
         mine = self._shopper(qty=2)
-        token = mine.cookies[cart_mod.COOKIE].value
         PhoneCartDraft.objects.create(
             location_slug="yakima", status=PhoneCartDraft.Status.RELEASED,
             expires_at=timezone.now() + timedelta(hours=4),
             lines=[{"product_id": "1", "name": "Last Two 3.5g", "quantity": 2}])
 
-        draft = PhoneCartDraft.objects.get(draft_token=token)
+        draft = self._draft(mine)
         self.assertTrue(draft.lines, "the shopper never got the line to begin with")
         with patch("bundles.cart.pos_catalog.get_inventory", return_value=floor(2)):
             ctx = cart_mod.reprice(draft)

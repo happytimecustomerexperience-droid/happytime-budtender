@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.cache import cache
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -31,7 +33,7 @@ from pos_core.ratelimit import _client_ip, rate_limit
 
 from . import cart as cart_mod
 from . import loyalty as loyalty_mod
-from . import calibration, customers, emails, resolver, signing, tax
+from . import caps, calibration, customers, emails, resolver, signing, tax
 from .catalog import (STORE_ADDRESS, all_stores, get_bundle, store_info,
                       store_key_for, store_label)
 
@@ -147,6 +149,11 @@ def _shell(request, store: str, ctx: dict) -> dict:
 
 # ── the emailed bundle ───────────────────────────────────────────────────────
 @require_GET
+# The one GET that makes a cart (it needs a validly signed link, but a replayed link
+# mints a row per cookieless hit), so it is throttled. Site-wide, not per person —
+# through the Vercel rewrite every shopper shares one IP bucket — and set well above
+# what a campaign send's click burst looks like: this is the revenue path.
+@rate_limit("bundle-landing", limit=600, window=60)
 def landing(request):
     """GET /custom-order?b=&loc=&i=&exp=&sig= — the emailed bundle, live-resolved.
 
@@ -182,7 +189,10 @@ def landing(request):
     lines = [line.as_dict() for line in result["lines"]]
 
     draft = cart_mod.get_cart(request, req.store, create=True)
-    cart_mod.seed_from_bundle(draft, result, bundle.slug)
+    # An expired link still fills the cart, but is not the offer any more: claiming the
+    # bundle on it would let a link from last year keep taking 30% off.
+    cart_mod.seed_from_bundle(draft, result, "" if req.expired else bundle.slug,
+                              recipient=req.customer_token)
     cart_ctx = cart_mod.reprice(draft, inventory, confirm=True)
 
     # The emailed link IS the order: the products are already chosen and priced from
@@ -217,13 +227,14 @@ def menu(request):
     store = _store_from(request)
     inventory = cart_mod.inventory_for(store)
     sellable = _in_stock(inventory)
-    draft = cart_mod.get_cart(request, store, create=True)
+    # No create: browsing makes no cart. The row appears on the first add-to-cart.
+    draft = cart_mod.get_cart(request, store)
     # NOT confirm=True. This is pure browsing — an earlier automated edit matched
     # this call along with landing()'s (identical source line) and confirmed every
     # cart line's price on every menu page load. That would fire a price-check per
     # line each time someone opens the menu with items already in their cart, which
     # is exactly the register load the browse/checkout split exists to avoid.
-    cart_ctx = cart_mod.reprice(draft, inventory)
+    cart_ctx = cart_mod.reprice(draft, inventory) if draft else cart_mod.empty_ctx()
 
     response = render(request, "bundles/menu.html", _shell(request, store, {
         "cats": pos_catalog.categories(sellable),
@@ -270,7 +281,30 @@ def results(request):
     return render(request, "bundles/_results.html", ctx)
 
 
+LAB_TTL = 60
+
+
+def _lab_cached(store: str, batch_id):
+    """One Dutchie lab request per batch per minute, however many people ask.
+
+    A lab result changes when a new COA is posted, not by the second. `lab_result`
+    never raises and returns None for both "no lab data" and "couldn't ask", so a
+    None is cached too — briefly, which is the point: it is what keeps a flood of
+    requests off the register while it is struggling.
+    """
+    key = f"bundle:lab:{store_key_for(store)}:{batch_id}"
+    hit = cache.get(key)
+    if hit is not None:
+        return hit["result"]
+    result = dutchie_lab.lab_result(store_key_for(store), batch_id)
+    cache.set(key, {"result": result}, LAB_TTL)
+    return result
+
+
 @require_GET
+# Site-wide, not per person (see the checkout limiter below). Every call that misses the
+# cache costs one request on the register's API key, so this is the ceiling on that.
+@rate_limit("bundle-lab", limit=120, window=60)
 def product_lab(request, product_id):
     """GET /custom-order/lab/<product_id> — potency (THCA + Total) and terpenes.
 
@@ -290,7 +324,7 @@ def product_lab(request, product_id):
     if live:
         batch_id = live.get("BatchId")
         try:
-            result = dutchie_lab.lab_result(store_key_for(store), batch_id)
+            result = _lab_cached(store, batch_id)
         except Exception:
             logger.warning("lab lookup failed for product %s", product_id, exc_info=True)
     return render(request, "bundles/_lab.html", {
@@ -300,7 +334,8 @@ def product_lab(request, product_id):
 
 # ── cart ─────────────────────────────────────────────────────────────────────
 def _cart_response(request, store: str, draft, *, error: str = "", status: int = 200):
-    ctx = cart_mod.reprice(draft)
+    """`draft` is None for a shopper with no cart yet — shown empty, and given no cookie."""
+    ctx = cart_mod.reprice(draft) if draft else cart_mod.empty_ctx()
     ctx["error"] = error
     response = render(request, "bundles/_cart.html", _shell(request, store, {"cart_ctx": ctx}),
                       status=status)
@@ -310,18 +345,24 @@ def _cart_response(request, store: str, draft, *, error: str = "", status: int =
 @require_GET
 def cart_view(request):
     store = _store_from(request)
-    draft = cart_mod.get_cart(request, store, create=True)
-    return _cart_response(request, store, draft)
+    return _cart_response(request, store, cart_mod.get_cart(request, store))
 
 
 @require_POST
 @rate_limit("bundle-cart", limit=240, window=60)
 def cart_add(request):
     store = _store_from(request)
-    draft = cart_mod.get_cart(request, store, create=True)
     pid = str(request.POST.get("product_id") or "").strip()[:64]
     qty = min(max(_int(request.POST.get("qty"), 1) or 1, 1), cart_mod.MAX_QTY)
-    ok, err = cart_mod.add(draft, pid, qty)
+    inventory = cart_mod.inventory_for(store)
+    draft = cart_mod.get_cart(request, store)
+    if draft is None:
+        # Nothing is reserved by adding, so a cart only needs to exist once there is a
+        # real, available product to put in it — a bare POST must not mint a row.
+        if not cart_mod.availability(store, pid, inventory)[1]:
+            return _cart_response(request, store, None, error="That just sold out.")
+        draft = cart_mod.get_cart(request, store, create=True)
+    ok, err = cart_mod.add(draft, pid, qty, inventory)
     message = {"not_in_stock": "That just sold out.",
                "cart_full": "Your cart is full."}.get(err, "")
     return _cart_response(request, store, draft, error=message)
@@ -331,9 +372,10 @@ def cart_add(request):
 @rate_limit("bundle-cart", limit=240, window=60)
 def cart_update(request):
     store = _store_from(request)
-    draft = cart_mod.get_cart(request, store, create=True)
-    pid = str(request.POST.get("product_id") or "").strip()[:64]
-    cart_mod.set_qty(draft, pid, min(max(_int(request.POST.get("qty"), 0) or 0, 0), cart_mod.MAX_QTY))
+    draft = cart_mod.get_cart(request, store)
+    if draft is not None:
+        pid = str(request.POST.get("product_id") or "").strip()[:64]
+        cart_mod.set_qty(draft, pid, min(max(_int(request.POST.get("qty"), 0) or 0, 0), cart_mod.MAX_QTY))
     return _cart_response(request, store, draft)
 
 
@@ -341,8 +383,9 @@ def cart_update(request):
 @rate_limit("bundle-cart", limit=240, window=60)
 def cart_remove(request):
     store = _store_from(request)
-    draft = cart_mod.get_cart(request, store, create=True)
-    cart_mod.remove(draft, str(request.POST.get("product_id") or "").strip()[:64])
+    draft = cart_mod.get_cart(request, store)
+    if draft is not None:
+        cart_mod.remove(draft, str(request.POST.get("product_id") or "").strip()[:64])
     return _cart_response(request, store, draft)
 
 
@@ -354,6 +397,46 @@ def _clean_phone(raw: str) -> str:
     return digits
 
 
+def _clean_name(raw: str) -> str:
+    """Letters, spaces, apostrophe, hyphen and period — at most 40. A name, not a message.
+
+    It is printed as "Hi {name}" in an email to an address the shopper typed (which may
+    not be theirs) and on the staff queue, so anything else — a URL, a phone number, a
+    sentence of prose — is a way to send our email, from our address, with someone
+    else's words in it. Everything outside the set is dropped, not rejected.
+    """
+    kept = "".join(" " if ch.isspace() else ch
+                   for ch in _CONTROL_RE.sub("", str(raw or "")[:200])
+                   if ch.isspace() or ch in "'’.-" or unicodedata.category(ch)[0] in "LM")
+    # A period is for "Jr." and "J. R.", not for "www.evil.com", which a mail client would
+    # turn into a link: one only survives when no letter follows it.
+    kept = re.sub(r"\.(?=[^\W\d_])", " ", kept)
+    kept = " ".join(kept.split())[:40]
+    return kept if any(ch.isalpha() for ch in kept) else ""
+
+
+# Order spam and mail-bombing both ride on free inputs: a phone number and an email
+# address nobody checks. Keyed on the value itself (hashed), never on IP — see caps.py.
+ORDERS_PER_PHONE = 3
+EMAILS_PER_ADDRESS = 3
+CAP_WINDOW = 24 * 3600
+
+
+def _take_order_caps(phone: str, email: str) -> bool:
+    if not caps.take("order-phone", ORDERS_PER_PHONE, CAP_WINDOW, phone):
+        return False
+    if email and not caps.take("order-email", EMAILS_PER_ADDRESS, CAP_WINDOW, email.lower()):
+        caps.give_back("order-phone", phone)
+        return False
+    return True
+
+
+def _give_back_order_caps(phone: str, email: str) -> None:
+    caps.give_back("order-phone", phone)
+    if email:
+        caps.give_back("order-email", email.lower())
+
+
 # A phone number in, a real person's NAME out, with no login in front of it. That
 # is a PII oracle, so the throttle is the control that matters, not a nicety:
 #   * 5/minute stops a burst,
@@ -361,8 +444,16 @@ def _clean_phone(raw: str) -> str:
 #     what an enumeration script actually looks like.
 # Both scopes are separate from bundle-checkout on purpose: an abuser burning the
 # lookup budget must not also lock real shoppers out of placing orders.
+#
+# Those two key on client IP, and through the Vercel rewrite every shopper shares one,
+# so they cannot tell a script from the crowd. `lookup_customer` therefore also counts
+# per PHONE (probing one number repeatedly) and across ALL callers (sweeping a range of
+# numbers from many IPs), and what it answers is deliberately thin: found/new plus a
+# first initial, never a name.
 LOOKUP_PER_MINUTE = 5
 LOOKUP_PER_HOUR = 30
+LOOKUP_PER_PHONE_HOUR = 5
+LOOKUP_ALL_HOUR = 300
 
 
 @require_http_methods(["GET", "POST"])
@@ -408,7 +499,7 @@ def lookup_customer(request):
     NEW one should be told they're new rather than left wondering. So the answer
     carries a `state`:
 
-      * `found`      — we know this number; the name comes back with it,
+      * `found`      — we know this number; only the first name's initial comes back,
       * `new`        — Dutchie answered and has nobody; a profile gets created when
                        the order is placed, and the page says so (owner, 2026-08-10),
       * `unknown`    — we could not ask. NOT the same as `new`.
@@ -426,12 +517,17 @@ def lookup_customer(request):
 
     NOTE the allowlist at the bottom. `lookup_by_phone` hands back an AcctId too,
     and the Dutchie guest row behind it carries DOB, address, email and points.
-    Only the two name fields are ever named in a response — never a dict passed
-    through, so growing the tuple upstream cannot silently widen this endpoint.
+    Only the initial is ever named in a response — never a dict passed through, so
+    growing the tuple upstream cannot silently widen this endpoint. The page lives
+    behind no login: a full name for any phone number is a lookup oracle, an initial
+    is enough to say "welcome back".
     """
     phone = _clean_phone(request.POST.get("phone"))
     if len(phone) != 10:
         return JsonResponse({"found": False, "state": "unknown"})
+    if not (caps.take("lookup-phone", LOOKUP_PER_PHONE_HOUR, 3600, phone)
+            and caps.take("lookup-all", LOOKUP_ALL_HOUR, 3600)):
+        return JsonResponse({"found": False, "state": "unknown"}, status=429)
 
     store = _store_from(request)
     try:
@@ -448,7 +544,7 @@ def lookup_customer(request):
         # A clean answer from Dutchie: nobody has this number.
         return JsonResponse({"found": False, "state": "new"})
     matched = status == PhoneCartDraft.Customer.MATCHED
-    first, last = customers.split_name(name) if matched else ("", "")
+    first = customers.split_name(name)[0] if matched else ""
     # Last 4 only, same as `phone_last4` in the staff queue: enough to reconcile a
     # complaint against a real order, not enough to reconstitute the number from logs.
     logger.info("customer lookup at %s from %s for ...%s (%s)",
@@ -458,8 +554,7 @@ def lookup_customer(request):
         # empty boxes — worse than not asking. `unknown`, never `new`: we clearly
         # have somebody, so promising them a fresh profile would be a lie.
         return JsonResponse({"found": False, "state": "unknown"})
-    return JsonResponse({"found": True, "state": "found",
-                         "first_name": first, "last_name": last})
+    return JsonResponse({"found": True, "state": "found", "initial": f"{first[0].upper()}."})
 
 
 @require_http_methods(["GET", "POST"])
@@ -480,6 +575,10 @@ def lookup_customer(request):
 # ponytail: per-shopper throttling needs the proxy chain sorted out (trusting the
 # FIRST hop is spoofable); raise this again or fix the chain if abuse ever shows up.
 @rate_limit("bundle-checkout", limit=300, window=3600, methods=("POST",))
+# Every method, including GET: rendering the form reprices the whole cart against the
+# register (up to MAX_LINES price checks), so a page view is not free. Short window,
+# site-wide ceiling for the same shared-IP reason as above.
+@rate_limit("bundle-checkout-page", limit=120, window=60)
 def checkout(request):
     """GET renders the form; POST places the order as a released PhoneCartDraft.
 
@@ -507,8 +606,9 @@ def checkout(request):
     def _clean(field, limit):
         return _CONTROL_RE.sub("", str(request.POST.get(field) or "")).strip()[:limit]
 
-    first_name, last_name = _clean("first_name", 60), _clean("last_name", 60)
-    name = f"{first_name} {last_name}".strip()[:120]
+    first_name = _clean_name(request.POST.get("first_name"))
+    last_name = _clean_name(request.POST.get("last_name"))
+    name = f"{first_name} {last_name}".strip()[:40]
     phone = _clean_phone(request.POST.get("phone"))
     email = _clean("email", 254)
 
@@ -543,6 +643,32 @@ def checkout(request):
                                        "phone": phone, "email": email}}),
                           status=400)
         return _remember_store(cart_mod.attach_cookie(response, draft), store)
+
+    # Spent before anything is written or looked up, so an over-cap attempt costs us
+    # nothing. One message for both caps: it should not say which value was counted.
+    if not _take_order_caps(phone, email):
+        info = store_info(store)
+        call = f"{info['label']} at {info['phone']}" if info.get("phone") else info["label"]
+        errors["cart"] = ("We can't take another online order for that phone number or "
+                          f"email right now. Please call {call} and we'll get you sorted.")
+        response = render(request, "bundles/checkout.html",
+                          _shell(request, store, {
+                              "cart_ctx": ctx, "totals": _totals(ctx, store), "errors": errors,
+                              "form": {"first_name": first_name, "last_name": last_name,
+                                       "phone": phone, "email": email}}),
+                          status=429)
+        return _remember_store(cart_mod.attach_cookie(response, draft), store)
+
+    # A bundle is a coupon sent to ONE phone: the landing parked the link's `c` token on
+    # phone_hash. A link forwarded to someone else — or a cart handed on — must not carry
+    # the offer to a different number, so price normally. A link sent with no `c`
+    # (anonymous send) names no recipient and is honoured as before.
+    bundle_dropped = bool(draft.bundle_slug and draft.phone_hash
+                          and not signing.is_recipient(draft.phone_hash, phone))
+    if bundle_dropped:
+        draft.bundle_slug = ""
+        for key in ("bundle", "bundle_name", "bundle_discount_pct"):
+            ctx["quote"].pop(key, None)       # the same dict as draft.quote
 
     draft.pickup_name = name
     draft.contact_phone = phone
@@ -584,7 +710,8 @@ def checkout(request):
         released_at=draft.released_at, expires_at=draft.expires_at,
         audit=draft.audit, dutchie_acct_id=draft.dutchie_acct_id,
         customer_status=draft.customer_status, customer_name=draft.customer_name,
-        lines=draft.lines, quote=draft.quote, updated_at=timezone.now(),
+        lines=draft.lines, quote=draft.quote, bundle_slug=draft.bundle_slug,
+        updated_at=timezone.now(),
     )
     if released:
         logger.info("online order %s placed at %s (%d lines, $%.2f)",
@@ -594,13 +721,16 @@ def checkout(request):
         emails.send_order_confirmation(draft, store_label(store), STORE_ADDRESS.get(store, ""))
     else:
         # The impatient second click, or a second tab. Their order already exists —
-        # show the same confirmation, but do not email or log it twice.
+        # show the same confirmation, but do not email or log it twice, or count it
+        # twice against the caps.
+        _give_back_order_caps(phone, email)
         logger.info("online order %s already released — ignoring duplicate submit",
                     draft.draft_token)
 
     request.session["htco_success"] = draft.draft_token
     response = render(request, "bundles/success.html", _shell(request, store, {
         "order": draft, "cart_ctx": ctx, "draft_ttl": DRAFT_TTL_HOURS,
+        "bundle_dropped": bundle_dropped,
     }))
     # The cart is now an order — clear the cookie so a refresh starts a fresh cart
     # instead of letting the shopper edit a cart staff is already picking.

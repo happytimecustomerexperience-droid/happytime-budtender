@@ -65,16 +65,24 @@ class CustomerLookupTests(TestCase):
     def _post(self, phone="5095551212", **extra):
         return self.client.post(URL, {"phone": phone, **extra})
 
+    @staticmethod
+    def _phone(i):
+        """A different valid number each time, so the IP throttles are what's measured —
+        the per-phone cap would otherwise trip first on a repeated one."""
+        return f"509555{i:04d}"
+
     # ── the happy path ───────────────────────────────────────────────────────
     def test_the_route_is_wired_under_its_name(self):
         self.assertEqual(reverse("bundle_lookup_customer"), URL)
 
-    def test_a_known_number_comes_back_with_the_name(self):
+    def test_a_known_number_comes_back_with_only_a_first_initial(self):
+        # Finding W5a-5: phone in, first AND last name out, no login — a directory.
         self.lookup.return_value = MATCH
         r = self._post()
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.json(), {"found": True, "state": "found",
-                                    "first_name": "Sam", "last_name": "Reyes"})
+        self.assertEqual(r.json(), {"found": True, "state": "found", "initial": "S."})
+        for name in ("Sam", "Reyes"):
+            self.assertNotIn(name, r.content.decode())
 
     def test_an_unknown_number_is_told_it_is_new(self):
         # Owner, 2026-08-10: a first-time shopper should know a profile is coming,
@@ -103,8 +111,7 @@ class CustomerLookupTests(TestCase):
         # Pinned EXACTLY. If someone later returns the raw Dutchie guest row, this
         # is the test that stops the DOB, the email and the address going public.
         self.lookup.return_value = MATCH
-        self.assertEqual(set(self._post().json()),
-                         {"found", "state", "first_name", "last_name"})
+        self.assertEqual(set(self._post().json()), {"found", "state", "initial"})
         cache.clear()
         self.lookup.return_value = NO_MATCH
         self.assertEqual(set(self._post().json()), {"found", "state"})
@@ -120,11 +127,10 @@ class CustomerLookupTests(TestCase):
         # fresh profile would be a lie that ends in a duplicate record.
         self.assertEqual(self._post().json(), {"found": False, "state": "unknown"})
 
-    def test_a_single_token_name_still_fills_what_it_knows(self):
-        self.lookup.return_value = ("acct-canary-8814", "Cher", PhoneCartDraft.Customer.MATCHED)
+    def test_a_single_token_name_still_gets_its_initial(self):
+        self.lookup.return_value = ("acct-canary-8814", "cher", PhoneCartDraft.Customer.MATCHED)
         self.assertEqual(self._post().json(),
-                         {"found": True, "state": "found",
-                          "first_name": "Cher", "last_name": ""})
+                         {"found": True, "state": "found", "initial": "C."})
 
     # ── failure is indistinguishable from "no account" ───────────────────────
     def test_dutchie_raising_is_a_200_and_a_no_match(self):
@@ -181,7 +187,8 @@ class CustomerLookupTests(TestCase):
     def test_the_per_minute_throttle_engages_at_its_limit(self):
         clock = [FROZEN]
         with self._frozen(clock):
-            codes = [self._post().status_code for _ in range(views.LOOKUP_PER_MINUTE + 1)]
+            codes = [self._post(self._phone(i)).status_code
+                     for i in range(views.LOOKUP_PER_MINUTE + 1)]
         self.assertEqual(codes[:views.LOOKUP_PER_MINUTE], [200] * views.LOOKUP_PER_MINUTE)
         self.assertEqual(codes[-1], 429)
 
@@ -191,8 +198,8 @@ class CustomerLookupTests(TestCase):
         clock = [FROZEN]
         codes = []
         with self._frozen(clock):
-            for _ in range(views.LOOKUP_PER_HOUR + 1):
-                codes.append(self._post().status_code)
+            for i in range(views.LOOKUP_PER_HOUR + 1):
+                codes.append(self._post(self._phone(i)).status_code)
                 clock[0] += 61   # a fresh minute bucket every time
         self.assertEqual(codes[:views.LOOKUP_PER_HOUR], [200] * views.LOOKUP_PER_HOUR)
         self.assertEqual(codes[-1], 429)
@@ -200,10 +207,10 @@ class CustomerLookupTests(TestCase):
     def test_a_throttled_lookup_never_reaches_dutchie(self):
         clock = [FROZEN]
         with self._frozen(clock):
-            for _ in range(views.LOOKUP_PER_MINUTE):
-                self._post()
+            for i in range(views.LOOKUP_PER_MINUTE):
+                self._post(self._phone(i))
             self.lookup.reset_mock()
-            r = self._post()
+            r = self._post(self._phone(99))
         self.assertEqual(r.status_code, 429)
         self.assertFalse(self.lookup.called)
 
@@ -211,12 +218,47 @@ class CustomerLookupTests(TestCase):
         # Traefik APPENDS the real client IP, so the LAST hop is the trustworthy
         # one. Rotating a client-supplied first hop must not open a fresh bucket.
         clock = [FROZEN]
-        body = {"phone": "5095551212"}
         with self._frozen(clock):
             for i in range(views.LOOKUP_PER_MINUTE):
-                self.client.post(URL, body, HTTP_X_FORWARDED_FOR=f"9.9.9.{i}, 127.0.0.1")
-            r = self.client.post(URL, body, HTTP_X_FORWARDED_FOR="9.9.9.99, 127.0.0.1")
+                self.client.post(URL, {"phone": self._phone(i)},
+                                 HTTP_X_FORWARDED_FOR=f"9.9.9.{i}, 127.0.0.1")
+            r = self.client.post(URL, {"phone": self._phone(99)},
+                                 HTTP_X_FORWARDED_FOR="9.9.9.99, 127.0.0.1")
         self.assertEqual(r.status_code, 429)
+
+    def _from_new_ip(self, i, phone):
+        # Through the Vercel rewrite every shopper shares an IP, and a real attacker
+        # does not: rotating the (last, trusted) hop sidesteps both per-IP buckets, so
+        # whatever stops this is the control that does not depend on the IP.
+        return self.client.post(URL, {"phone": phone}, HTTP_X_FORWARDED_FOR=f"9.9.{i // 250}.{i % 250}")
+
+    def test_one_number_cannot_be_probed_over_and_over_from_many_ips(self):
+        self.lookup.return_value = MATCH
+        codes = [self._from_new_ip(i, "5095551212").status_code
+                 for i in range(views.LOOKUP_PER_PHONE_HOUR + 1)]
+        self.assertEqual(codes[:views.LOOKUP_PER_PHONE_HOUR], [200] * views.LOOKUP_PER_PHONE_HOUR)
+        self.assertEqual(codes[-1], 429)
+
+    def test_a_throttled_per_phone_lookup_answers_nothing_and_never_asks_dutchie(self):
+        self.lookup.return_value = MATCH
+        for i in range(views.LOOKUP_PER_PHONE_HOUR):
+            self._from_new_ip(i, "5095551212")
+        self.lookup.reset_mock()
+        r = self._from_new_ip(99, "5095551212")
+        self.assertEqual(r.status_code, 429)
+        self.assertEqual(r.json(), {"found": False, "state": "unknown"})
+        self.assertFalse(self.lookup.called)
+
+    def test_the_per_phone_cap_is_per_phone(self):
+        for i in range(views.LOOKUP_PER_PHONE_HOUR):
+            self._from_new_ip(i, "5095551212")
+        self.assertEqual(self._from_new_ip(99, "5095559999").status_code, 200)
+
+    def test_a_sweep_across_many_numbers_and_ips_hits_the_global_ceiling(self):
+        codes = [self._from_new_ip(i, self._phone(i)).status_code
+                 for i in range(views.LOOKUP_ALL_HOUR + 1)]
+        self.assertEqual(codes.count(200), views.LOOKUP_ALL_HOUR)
+        self.assertEqual(codes[-1], 429)
 
     def test_the_lookup_throttle_does_not_lock_a_shopper_out_of_checkout(self):
         # Separate scopes: burning the lookup budget must not cost a real shopper

@@ -295,6 +295,7 @@ class PhoneNormalisationTests(CheckoutFlowTestCase):
         seen_phone, seen_hash, seen_last4, searched = set(), set(), set(), []
         for raw in PHONE_VARIANTS:
             with self.subTest(phone=raw):
+                cache.clear()     # five orders for one number: the per-phone cap is not under test
                 self._add("1")
                 r = self._checkout(phone=raw)
                 self.assertEqual(r.status_code, 200, f"{raw!r} was refused")

@@ -47,6 +47,8 @@
     {% if cart_ctx.quote.bundle_name %}
     Mention your <strong>{{ cart_ctx.quote.bundle_name }}</strong> so your
     {{ cart_ctx.quote.bundle_discount_pct }}% discount is applied.
+    {% elif bundle_dropped %}
+    Your bundle offer was sent to a different phone number, so it isn't on this order.
     {% endif %}
     Bring valid ID — you must be 21+. Payment happens in store.
   </div>

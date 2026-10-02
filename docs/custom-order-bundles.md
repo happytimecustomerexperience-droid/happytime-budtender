@@ -239,8 +239,8 @@ https://budtender-api.happytimeweed.com/custom-order/
 | `b` | ✅ | slug | `roll-relax` \| `vape-munch` \| `weekend`. Selects discount depth + slot rules. |
 | `loc` | ✅ | slug | `yakima` \| `mount-vernon` \| `pullman`. Drives which inventory is queried **and is printed on the page**. |
 | `i` | ✅ | `<sku>:<qty>` | Repeated. `sku` = Dutchie **`product_id`** preferred (integer, e.g. `3483543`); a `sku` string also resolves. `qty` is an integer ≥ 1. Order is preserved and defines slot order. |
-| `c` | ⬜ | opaque | HMAC-SHA256 of the E.164 phone, truncated to 32 hex chars, keyed by `BUNDLE_URL_SECRET`. **Never the raw phone.** Enables personalised substitution ranking from `CustomerProfile`. Omit for anonymous sends. |
-| `exp` | ✅ | unix seconds | Link expiry. Recommend `send_time + 14 days`. Past expiry the page still renders but the bundle badge reads "this offer has ended". |
+| `c` | ⬜ | opaque | HMAC-SHA256 of the E.164 phone, truncated to 32 hex chars, keyed by `BUNDLE_URL_SECRET`. **Never the raw phone.** Enables personalised substitution ranking from `CustomerProfile`. **Also binds the offer to that phone:** checkout honours the bundle only when the phone given matches `c`; any other number is priced normally. Omit for anonymous sends — those carry no recipient, so anyone holding the link can use the offer. |
+| `exp` | ✅ | unix seconds | Link expiry. Recommend `send_time + 14 days`. Past expiry the page still renders and still fills the cart, says "this offer has ended", and does **not** apply the bundle. |
 | `sig` | ✅ | hex | HMAC-SHA256 over the canonical query string (see below), keyed by `BUNDLE_URL_SECRET`. |
 
 ### Why `sig` is not optional
@@ -256,6 +256,8 @@ b=roll-relax&c=a3f9…&exp=1755302400&i=3483543:1&i=3554685:2&loc=yakima
 ```
 
 Repeated `i` values sort lexicographically among themselves. Signature = `hmac_sha256(BUNDLE_URL_SECRET, canonical).hexdigest()`.
+
+Nothing is escaped, so the verifier (`signing.parse`) rejects any value containing `&` or `=` — otherwise `c=X&exp=N` with the real `exp` deleted signs identically and yields a link that never expires. The signer must never emit one; a slug, store, `sku:qty`, token or unix time never needs either.
 
 ### Worked example
 

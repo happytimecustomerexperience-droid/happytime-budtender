@@ -9,7 +9,7 @@
       <h1>{{ store_label }}</h1>
       <p class="addr">{{ store_address }}</p>
     </div>
-    <div class="badge"><span class="pct">{{ bundle.discount_pct }}%</span><span class="off">off</span></div>
+    {% if not expired %}<div class="badge"><span class="pct">{{ bundle.discount_pct }}%</span><span class="off">off</span></div>{% endif %}
   </header>
 
   <h2 class="bname">{{ bundle.name }}</h2>
@@ -63,15 +63,15 @@
 
   <div class="totals">
     <div class="row"><span>Subtotal</span><span>${{ result.subtotal|floatformat:2 }}</span></div>
-    <div class="row disc"><span>Bundle discount ({{ bundle.discount_pct }}%)</span><span>−${{ result.discount|floatformat:2 }}</span></div>
-    <div class="row grand"><span>Your price</span><span>${{ result.total|floatformat:2 }}</span></div>
+    {% if not expired %}<div class="row disc"><span>Bundle discount ({{ bundle.discount_pct }}%)</span><span>−${{ result.discount|floatformat:2 }}</span></div>{% endif %}
+    <div class="row grand"><span>Your price</span><span>${% if expired %}{{ result.subtotal|floatformat:2 }}{% else %}{{ result.total|floatformat:2 }}{% endif %}</span></div>
     {% comment %}
       Tax-inclusive pricing: Dutchie's own checkout for this account reports
       taxInclusivePricing:true and its ORDER TOTAL equals the sum of menu prices. So
       this is the money. The previous line promised a recalculation in store, which
       set shoppers up to expect a bigger number than they will pay.
     {% endcomment %}
-    <p class="fineprint">All taxes included{% if totals.tax_included %} — about ${{ totals.tax_included|floatformat:2 }} of your cart is tax{% endif %}. The {{ bundle.discount_pct }}% comes off at the register — mention your bundle to the budtender.</p>
+    <p class="fineprint">All taxes included{% if totals.tax_included %} — about ${{ totals.tax_included|floatformat:2 }} of your cart is tax{% endif %}.{% if not expired %} The {{ bundle.discount_pct }}% comes off at the register — mention your bundle to the budtender.{% endif %}</p>
   </div>
 
   {% comment %}

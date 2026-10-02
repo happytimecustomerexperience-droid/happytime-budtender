@@ -60,11 +60,19 @@ class MenuTests(StorefrontTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("Happy Time — Yakima", r.content.decode())
 
-    def test_menu_sets_a_cart_cookie_for_retention(self):
+    def test_menu_makes_no_cart_and_sets_no_cookie_until_something_is_added(self):
         with self._patch_inv():
             r = self.client.get("/custom-order/menu?loc=yakima")
+        self.assertNotIn(cart_mod.COOKIE, r.cookies)
+        self.assertEqual(PhoneCartDraft.objects.count(), 0)
+
+    def test_the_first_add_sets_the_retention_cookie(self):
+        r = self._add("1")
         self.assertIn(cart_mod.COOKIE, r.cookies)
         self.assertTrue(r.cookies[cart_mod.COOKIE]["httponly"])
+        with self._patch_inv():
+            r = self.client.get("/custom-order/menu?loc=yakima")
+        self.assertIn(cart_mod.COOKIE, r.cookies)     # and every page after it renews it
 
     def test_results_returns_in_stock_products_only(self):
         inv = [live(product_id="1", name="Gone", qty=0), live(product_id="2", name="Here", qty=5)]
@@ -126,7 +134,7 @@ class CartTests(StorefrontTestCase):
     def test_out_of_stock_add_is_refused(self):
         r = self._add("999")
         self.assertIn("sold out", r.content.decode().lower())
-        self.assertFalse(PhoneCartDraft.objects.get().lines)
+        self.assertEqual(PhoneCartDraft.objects.count(), 0)     # and no empty cart minted
 
     def test_update_quantity_and_remove(self):
         self._add("1")
@@ -170,6 +178,8 @@ class CartTests(StorefrontTestCase):
         self._add("1", loc="yakima")
         with self._patch_inv():
             self.client.get("/custom-order/menu?loc=pullman")
+        self.assertEqual(PhoneCartDraft.objects.count(), 1)     # looking made no cart
+        self._add("1", loc="pullman")
         # A second, separate cart — a Yakima cart must not follow you to Pullman.
         self.assertEqual(PhoneCartDraft.objects.count(), 2)
 

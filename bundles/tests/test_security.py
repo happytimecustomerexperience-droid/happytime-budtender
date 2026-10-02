@@ -584,8 +584,7 @@ class CartIsolationTests(PublicSurfaceTestCase):
     def test_the_cart_cookie_is_httponly_secure_and_samesite(self):
         # HttpOnly keeps XSS from reading the cart token; Lax keeps a cross-site
         # POST from mutating someone's cart.
-        with self._patch_inv():
-            r = self.client.get("/custom-order/menu?loc=yakima")
+        r = self._add("1")        # a cart (and its cookie) exists from the first add
         cookie = r.cookies[cart_mod.COOKIE]
         self.assertTrue(cookie["httponly"])
         self.assertTrue(cookie["secure"])
@@ -715,7 +714,7 @@ class InputAbuseTests(PublicSurfaceTestCase):
                                  {"loc": "yakima", "product_id": "900", "qty": 1})
         self.assertEqual(r.status_code, 200)
         self.assertIn("sold out", r.content.decode().lower())
-        self.assertEqual(PhoneCartDraft.objects.get().lines, [])
+        self.assertEqual(PhoneCartDraft.objects.count(), 0)   # refused: no cart minted
 
     def test_a_bogus_store_narrows_to_the_default_it_never_widens(self):
         # `_store_from` defaults an unknown `loc` to Yakima. Prove the fallback is
@@ -724,6 +723,10 @@ class InputAbuseTests(PublicSurfaceTestCase):
             r = self.client.post("/custom-order/cart/add",
                                  {"loc": "pullman/../", "product_id": "900", "qty": 1})
         self.assertIn("sold out", r.content.decode().lower())
+        self.assertEqual(PhoneCartDraft.objects.count(), 0)
+        with self._patch_stores():
+            self.client.post("/custom-order/cart/add",
+                             {"loc": "pullman/../", "product_id": "1", "qty": 1})
         self.assertEqual(PhoneCartDraft.objects.get().location_slug, "yakima")
 
     # ── XSS ──────────────────────────────────────────────────────────────────
@@ -736,7 +739,10 @@ class InputAbuseTests(PublicSurfaceTestCase):
         body = r.content.decode()
         self.assertEqual(r.status_code, 400)
         self.assertNotIn("<script>alert(1)</script>", body)
-        self.assertIn("&lt;script&gt;", body)
+        # Names keep letters only (finding W5a-3), so the markup is gone before it is
+        # ever echoed — and what is left is still escaped by the template.
+        self.assertNotIn("<script", body.split('name="first_name"')[1][:80])
+        self.assertIn('value="scriptalertscript"', body)
 
     def test_xss_in_the_pickup_name_comes_back_escaped_on_the_success_page(self):
         self._add("1")
@@ -747,7 +753,9 @@ class InputAbuseTests(PublicSurfaceTestCase):
         body = r.content.decode()
         self.assertContains(r, "Order placed")
         self.assertNotIn("<img src=x onerror=alert(1)>", body)
-        self.assertIn("&lt;img", body)
+        # Letters only (finding W5a-3): the markup never reaches the page at all.
+        self.assertNotIn("&lt;img", body)
+        self.assertIn("img srcx onerroralert", body)
 
     def test_xss_in_a_search_filter_comes_back_escaped(self):
         with self._patch_inv():
@@ -919,7 +927,6 @@ class RateLimitTests(PublicSurfaceTestCase):
 
     def test_the_checkout_throttle_still_engages_on_submits(self):
         # Still a real ceiling — just a store-wide abuse one, on POSTs only.
-        from bundles import views as bviews
         self._add("1")
         with self._frozen(), self._patch_inv():
             codes = []

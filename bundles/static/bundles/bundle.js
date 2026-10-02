@@ -148,22 +148,17 @@
   });
 
   // ── customer lookup ────────────────────────────────────────────────────────
-  // Someone who has bought here before shouldn't retype the name Dutchie already
-  // has. This is a convenience and nothing more, so it obeys three rules:
+  // Tell someone who has bought here before that we know them. This is a convenience
+  // and nothing more, so it obeys two rules:
   //   1. it NEVER blocks the submit — in flight, failed and "no account" all look
   //      the same, and the form works with this whole block deleted;
-  //   2. the fields stay editable and required, so a wrong match is correctable;
-  //   3. it never overwrites something the shopper typed themselves.
+  //   2. it never fills in the form. The server answers with a first INITIAL only —
+  //      the lookup has no login in front of it, and a full name for any phone number
+  //      would make it a directory — so the shopper types their own name.
   var orderForm = document.querySelector(".orderform[data-lookup-url]");
   if (orderForm) {
     var phoneInput = orderForm.querySelector('input[name="phone"]');
     var statusEl = orderForm.querySelector(".lookup");
-    var firstEl = orderForm.querySelector('input[name="first_name"]');
-    var lastEl = orderForm.querySelector('input[name="last_name"]');
-    // What WE put in each box. Anything else in there was typed by a person and
-    // is never touched — but our own guess stays replaceable, so correcting a
-    // mistyped phone number also corrects the name it pulled in.
-    var autofilled = {};
     var lastLooked = "";
     var seq = 0;
 
@@ -172,13 +167,6 @@
       statusEl.className = "lookup" + (state ? " " + state : "");
       statusEl.textContent = text;
       statusEl.hidden = !text;
-    }
-
-    function fill(el, value) {
-      if (!el) return;
-      if (el.value && el.value !== autofilled[el.name]) return;
-      el.value = value || "";
-      autofilled[el.name] = el.value;
     }
 
     function tenDigits(raw) {
@@ -219,12 +207,9 @@
         .then(function (data) {
           if (mine !== seq) return;   // a newer number is already in flight
           if (data && data.found) {
-            fill(firstEl, data.first_name);
-            fill(lastEl, data.last_name);
-            setStatus("ok", "We found your profile — check it's right.");
+            setStatus("ok", "Welcome back" + (data.initial ? ", " + data.initial : "") +
+                            " — we found your profile.");
           } else {
-            fill(firstEl, "");
-            fill(lastEl, "");
             // "new" is a CLEAN no from the register, so we can promise a profile.
             // Anything else means we could not ask, and staying quiet is the honest
             // answer — telling a returning customer they're new is how you end up
