@@ -289,7 +289,10 @@ if not DEBUG:
     # Never run production with the dev secret.
     if SECRET_KEY == "dev-insecure-change-me":
         raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set in production (DEBUG=0).")
-    # The phone-hash pepper must differ from the secret key (returning-caller PII).
+    # The phone-hash pepper must be a real secret (the default is public in this repo) and must
+    # differ from the secret key (returning-caller PII).
+    if PHONE_HASH_PEPPER in ("", "dev-pepper-change-me"):
+        raise ImproperlyConfigured("PHONE_HASH_PEPPER must be set to a non-default value in production (DEBUG=0).")
     if PHONE_HASH_PEPPER == SECRET_KEY:
         raise ImproperlyConfigured(
             "PHONE_HASH_PEPPER must differ from DJANGO_SECRET_KEY in production (DEBUG=0)."
