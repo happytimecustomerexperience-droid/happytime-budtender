@@ -154,6 +154,17 @@ class ChatReplyTests(TestCase):
         self.assertEqual((reply, source, intent), (self.FLOOR_YAKIMA, "fallback", ""))
         genai_client.assert_not_called()
 
+    def test_check_gemini_command_reports_the_floor_when_the_brain_is_not_configured(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        out = StringIO()
+        with patch.dict(os.environ, {"HHT_VOICE_BASE_URL": "", "HHT_BACKEND_TOKEN": ""}):
+            call_command("check_gemini", stdout=out)
+        self.assertIn("FLOOR", out.getvalue())
+        self.assertIn("voice=NOT SET", out.getvalue())
+
     def test_floor_reply_for_an_unknown_store_has_no_phone(self):
         self.assertEqual(gemini_chat._floor_reply("nowhere"), self.FLOOR)
         self.assertEqual(gemini_chat._floor_reply(""), self.FLOOR)
