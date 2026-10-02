@@ -117,6 +117,33 @@ def run_post_call(voice_call_id: int) -> None:
     dispatch_alerts(voice_call_id)
 
 
+@shared_task(name="voice.transfer_heads_up", ignore_result=True)
+def transfer_heads_up(message: dict, call_store: str) -> str:
+    """The staff "who is calling" note for one ``forwarding`` status-update (``crm.transfer_notice``
+    — idempotent on the AlertDelivery ledger, never raises)."""
+    from crm import transfer_notice
+
+    return transfer_notice.heads_up(message, call_store=call_store)
+
+
+def queue_transfer_heads_up(message: dict, call_store: str) -> None:
+    """Hand the heads-up to the queue so the webhook answers Vapi at once: it does a customer lookup
+    and up to three channel POSTs (5 s timeouts each), which must not hold a gunicorn worker while
+    other calls are live. Same gating + broker-down fallback as ``run_post_call``. Nothing is
+    queued while the switch is off — the payload carries the caller's number."""
+    from voice import capabilities
+
+    if not capabilities.is_enabled("call.sms_on_transfer"):
+        return
+    if _use_celery():
+        try:
+            transfer_heads_up.delay(message, call_store)
+            return
+        except Exception:  # noqa: BLE001 — broker down → inline, never drop the note
+            logger.warning("celery enqueue failed for a transfer heads-up; running inline", exc_info=True)
+    transfer_heads_up(message, call_store)
+
+
 # ── root-notify nudge (P6 instant-refresh chain; kb/signals.py) ──────────────────
 @shared_task(name="voice.notify_budtender", ignore_result=True)
 def notify_budtender(kind: str) -> bool:

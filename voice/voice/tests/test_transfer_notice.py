@@ -436,3 +436,22 @@ def test_known_customer_says_unknown_whenever_nobody_actually_looked(monkeypatch
     assert asked() == "unknown"  # a lookup error is unknown, never "no"
     monkeypatch.setattr("voice.recognition.resolve_caller", lambda n, c, client=None: {**c, "known": False})
     assert asked() == "no"
+
+
+# ── off the request path ─────────────────────────────────────────────────────────────────────────
+
+
+def test_with_the_queue_on_the_webhook_only_enqueues_and_sends_nothing_itself(client, http, settings, monkeypatch):
+    from voice import tasks
+
+    queued = []
+    monkeypatch.setattr(tasks.transfer_heads_up, "delay", lambda *a: queued.append(a))
+    settings.HHT_USE_CELERY = True
+    send(client, forwarding())
+    assert queued == [], "nothing is queued while the switch is off (the payload carries the number)"
+    on()
+    send(client, forwarding())
+    assert len(queued) == 1 and queued[0][0]["call"]["id"] == CALL_ID
+    assert http.calls == [] and not AlertDelivery.objects.exists()
+    tasks.transfer_heads_up(*queued[0])  # what the worker then runs
+    assert len(http.pushes()) == 1

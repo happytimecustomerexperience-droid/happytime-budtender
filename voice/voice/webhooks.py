@@ -287,9 +287,9 @@ def handle_status_update(message: dict) -> JsonResponse:
     transcript = message.get("transcript")
     role = message.get("role", "")
     if message.get("status") == "forwarding":
-        from crm import transfer_notice
+        from voice import tasks
 
-        transfer_notice.heads_up(message, call_store=_resolve_store(message))  # never raises
+        tasks.queue_transfer_heads_up(message, _resolve_store(message))  # never raises
     elif call_id and transcript:
         store = _resolve_store(message)
         vc, _ = VoiceCall.objects.get_or_create(call_id=call_id, defaults={"store": store})
