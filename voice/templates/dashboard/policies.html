@@ -101,6 +101,9 @@
 <script>
 (function () {
   const csrf = document.querySelector('[name=csrfmiddlewaretoken]').value;
+  // Answers carry Dutchie product names and scraped page titles verbatim — never raw HTML.
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const input = document.getElementById('policy-test-message');
   const policyIdField = document.getElementById('policy-test-policy-id');
   const resultBox = document.getElementById('policy-test-result');
@@ -126,7 +129,7 @@
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (!data.ok) {
-          resultBox.innerHTML = '<div class="note-red"><div>' + (data.error || 'test failed') + '</div></div>';
+          resultBox.innerHTML = '<div class="note-red"><div>' + esc(data.error || 'test failed') + '</div></div>';
           return;
         }
         let verdict = '';
@@ -136,12 +139,12 @@
           verdict = '<p><span class="badge amber">Your policy was NOT cited</span></p>';
         }
         const sources = (data.sources || []).map(function (s) {
-          return '<li>[' + s.kind + '] ' + s.title + '</li>';
+          return '<li>[' + esc(s.kind) + '] ' + esc(s.title) + '</li>';
         }).join('');
         resultBox.innerHTML =
           verdict +
           '<p><strong>Grounded:</strong> ' + (data.grounded ? 'yes' : 'no') + '</p>' +
-          '<p><strong>Answer:</strong> ' + data.answer + '</p>' +
+          '<p><strong>Answer:</strong> ' + esc(data.answer) + '</p>' +
           '<p><strong>Sources cited:</strong></p><ul>' + (sources || '<li class="muted">none</li>') + '</ul>';
         policyIdField.value = '';
       })

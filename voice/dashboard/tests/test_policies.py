@@ -156,3 +156,18 @@ def test_test_box_never_mutates_an_existing_session(staff_client):
     assert "real-session-1" in call_ids
     # a distinct session_token was used for the test turn (not "real-session-1", not reused)
     assert len(call_ids) >= 1
+
+
+@pytest.mark.django_db
+def test_test_box_escapes_every_server_string_before_innerhtml(staff_client):
+    """W5b fix 8: answers carry Dutchie product names and scraped page titles verbatim, and the test
+    box wrote ``data.answer`` / ``s.title`` straight into ``innerHTML`` — stored XSS on staff."""
+    import re
+
+    body = staff_client.get(reverse("dash-policies")).content.decode()
+    script = body[body.index('id="policy-test-result"'):]  # the test box and its script
+    assert "const esc = " in script
+    raw = re.findall(r"\+\s*(?:data\.(?:answer|error)|s\.(?:title|kind))\b", script)
+    assert raw == [], f"server strings concatenated into HTML unescaped: {raw}"
+    for expr in ("esc(data.answer)", "esc(s.title)", "esc(s.kind)", "esc(data.error"):
+        assert expr in script
