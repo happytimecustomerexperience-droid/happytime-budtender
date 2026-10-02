@@ -77,6 +77,9 @@ urlpatterns = [
     path(
         "vendor-callbacks/<int:pk>/update", views.vendor_callback_update, name="dash-vendor-update"
     ),
+    # what the bots may do (voice/voice/capabilities.py)
+    path("capabilities/", views.capabilities_page, name="dash-capabilities"),
+    path("capabilities/toggle", views.capability_toggle, name="dash-capability-toggle"),
     # publish to Vapi
     path("publish/", views.publish_page, name="dash-publish"),
     path("publish/run", views.publish_vapi, name="dash-publish-run"),

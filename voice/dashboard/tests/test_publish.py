@@ -213,3 +213,70 @@ def test_auto_publish_is_noop_when_disabled(db):
 
     p = AgentPrompt.objects.create(role="faq", body="x", is_active=True)
     assert publish.auto_publish_on_save(p) == ""
+
+
+# ── capabilities switchboard + honest publish results ─────────────────────────
+@pytest.mark.django_db
+def test_capability_switch_publishes_only_when_auto_publish_is_on(fake_vapi, full_squad, settings):
+    """Flipping a tool switch re-publishes every phone member (its toolIds change) when the
+    "Publish prompt edits to the phone instantly" switch is on — and pushes nothing when it is off."""
+    from dashboard import publish
+    from voice import capabilities as caps
+    from voice.models import VapiObject
+
+    settings.HHT_AUTO_PUBLISH = True
+    publish.publish_all()
+    budtender = full_squad.objects.get(role="budtender")
+    pair_id = VapiObject.objects.get(kind="tool", name="pair_upsell").vapi_id
+    assert pair_id in fake_vapi.assistants[budtender.vapi_assistant_id]["model"]["toolIds"]
+
+    fake_vapi.patches = 0
+    row = caps.set_enabled("tool.pair_upsell", False, by="owner")
+    assert fake_vapi.patches >= 1
+    assert pair_id not in fake_vapi.assistants[budtender.vapi_assistant_id]["model"]["toolIds"]
+    assert "budtender: published to Vapi" in row.publish_note
+
+    caps.set_enabled("auto.publish_on_save", False)
+    fake_vapi.patches = 0
+    row = caps.set_enabled("tool.pair_upsell", True)
+    assert fake_vapi.patches == 0 and row.publish_note == ""
+    budtender.body += " (edited while auto-publish is off)"
+    budtender.save()
+    assert fake_vapi.patches == 0 and budtender.publish_note == ""
+
+
+@pytest.mark.django_db
+def test_inactive_member_is_left_unchanged_not_published_blank(fake_vapi, full_squad, settings):
+    from dashboard import publish
+    from voice import constants as C
+    from voice import provision
+
+    settings.HHT_AUTO_PUBLISH = True
+    publish.publish_all()
+    faq = full_squad.objects.get(role="faq")
+    fake_vapi.patches = 0
+    faq.is_active = False
+    faq.save()  # the save signal auto-publishes
+    assert fake_vapi.patches == 0
+    assert faq.publish_note == f"saved — not published ({provision.INACTIVE})"
+    live = fake_vapi.assistants[faq.vapi_assistant_id]["model"]["messages"][0]["content"]
+    assert "Ground every figure in the KB." in live  # the live prompt was not blanked
+    assert provision.INACTIVE in publish.publish_assistant(faq).warnings
+    report = provision.provision_all(dry_run=False)
+    faq_result = next(r for r in report.results if r.name == C.P0_ASSISTANT_NAME)
+    assert faq_result.action == "skipped" and fake_vapi.patches == 0
+
+
+@pytest.mark.django_db
+def test_written_persona_is_never_published_as_a_vapi_assistant(fake_vapi, full_squad, settings):
+    from dashboard import publish
+    from kb.models import AgentPrompt
+
+    settings.HHT_AUTO_PUBLISH = True
+    fake_vapi.creates = 0
+    written = AgentPrompt.objects.create(role="written", body="Website persona.", is_active=True)
+    assert fake_vapi.creates == 0
+    assert all(a.get("name") != "written" for a in fake_vapi.assistants.values())
+    assert "not a phone member" in written.publish_note
+    assert publish.publish_assistant(written).action == "skipped"
+    assert all(r.role != "written" for r in publish.publish_all())

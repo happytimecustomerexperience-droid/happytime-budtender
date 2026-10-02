@@ -108,13 +108,18 @@ def publish_assistant(prompt) -> PublishResult:
     from kb.models import AgentPrompt
 
     result = PublishResult(object="assistant", role=prompt.role)
+    if prompt.role not in MEMBER_ROLES:  # the "written" website persona is never a Vapi assistant
+        result.action = "skipped"
+        result.warnings = ["not a phone member — website chat only, never published to Vapi"]
+        return result
     try:
         _ensure_bound_tools(prompt)  # provision any tool newly bound from the dashboard (P6)
         payload, warnings = build_assistant_payload(prompt)
         result.warnings = list(warnings)
 
-        # Never PATCH a dangling toolId — a tool not yet provisioned → skip this assistant (G4).
-        if any(w.startswith("tool not provisioned") for w in warnings):
+        # Never PATCH a dangling toolId — a tool not yet provisioned → skip this assistant (G4) —
+        # and never PATCH a switched-off (inactive) member with a blank prompt.
+        if any(w.startswith(("tool not provisioned", provision.INACTIVE)) for w in warnings):
             result.action = "skipped"
             return result
 
@@ -229,24 +234,33 @@ def auto_publish_on_save(prompt) -> str:
     """Push one assistant + the squad to Vapi right after a dashboard save (P6 "instant sync"), so
     an edit reflects in the live agent immediately. Returns a short status string for the save toast.
 
-    No-ops (returns "") when ``HHT_AUTO_PUBLISH`` is off or Vapi isn't configured — the DB row is
-    already live for any server-side logic; the Vapi push is just deferred to the manual Publish
-    button. Never raises (``publish_*`` already capture ``VapiError`` per object); the zero-drift
-    hash makes a no-edit re-save a cheap no-op (zero PATCH)."""
-    if not getattr(settings, "HHT_AUTO_PUBLISH", False) or not vapi.configured():
+    Returns "" (not published) when the owner's "Publish prompt edits to the phone instantly"
+    switch is off or the ``HHT_AUTO_PUBLISH`` env master kill-switch is off — the DB row is already
+    live for any server-side logic; the Vapi push waits for the manual Publish button. Never raises
+    (``publish_*`` already capture ``VapiError`` per object); the zero-drift hash makes a no-edit
+    re-save a cheap no-op (zero PATCH)."""
+    from voice import capabilities
+
+    if not getattr(settings, "HHT_AUTO_PUBLISH", False):
         return ""
+    if not capabilities.is_enabled("auto.publish_on_save"):
+        return ""
+    if not vapi.configured():
+        return "saved — not published (Vapi is not configured)"
     try:
         r = publish_assistant(prompt)
         squad = publish_squad()
     except Exception as exc:  # noqa: BLE001 — a publish hiccup must never break the save response
-        return f"auto-publish error: {exc}"
+        return f"saved — publish failed: {exc}"
     if r.action == "error":
-        return f"saved — Vapi publish error: {r.error}"
+        return f"saved — publish failed: {r.error}"
+    if squad.action == "error":
+        return f"saved — publish failed: squad: {squad.error}"
     if r.action == "skipped":
-        return f"saved — Vapi publish skipped ({'; '.join(r.warnings) or 'unprovisioned'})"
+        return f"saved — not published ({'; '.join(r.warnings) or 'unprovisioned'})"
     if r.action == "nodrift" and squad.action in ("nodrift", "skipped"):
-        return "saved — already live in Vapi (no change)"
+        return "published — already live in Vapi (no change)"
     bits = [f"assistant {r.action}"]
     if squad.action not in ("nodrift", "skipped"):
         bits.append(f"squad {squad.action}")
-    return "pushed to Vapi: " + ", ".join(bits)
+    return "published to Vapi: " + ", ".join(bits)

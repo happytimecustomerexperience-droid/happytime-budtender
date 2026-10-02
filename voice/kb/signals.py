@@ -5,6 +5,10 @@ downstream system follows automatically (no separate "reindex" or "publish" step
 * ``AgentPrompt`` save → ``dashboard.publish.auto_publish_on_save`` (the single call site — this
   used to also be called directly from ``dashboard/views.py``; that direct call is removed so a
   save publishes exactly once regardless of path) + nudge root's ``POST /api/v1/persona/refresh``.
+  The publish status is left on ``instance.publish_note`` for the save toast.
+* ``BotCapability`` save (a switch on /dashboard/capabilities/) → the same publish for every
+  active phone member (a switch changes their toolIds / transfer tool) + the persona nudge. The
+  joined status is left on ``instance.publish_note``.
 
 Both root nudges are best-effort (queued via Celery when wired, else inline — see
 ``voice.tasks.dispatch_budtender_notify``) and never raise into the save.
@@ -19,6 +23,7 @@ import contextlib
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
+from dashboard.models import BotCapability
 from kb.models import AgentPrompt, StoreFact
 
 _suppress_depth = 0
@@ -62,5 +67,26 @@ def _agent_prompt_saved(sender, instance, **kwargs):
     from dashboard.publish import auto_publish_on_save
     from voice import tasks
 
-    auto_publish_on_save(instance)
+    instance.publish_note = auto_publish_on_save(instance)
+    tasks.dispatch_budtender_notify("persona")
+
+
+@receiver(post_save, sender=BotCapability)
+def _capability_saved(sender, instance, **kwargs):
+    if _suppress_depth:
+        return
+    from django.core.cache import cache
+
+    from dashboard.publish import MEMBER_ROLES, auto_publish_on_save
+    from voice import capabilities, tasks
+
+    # set_enabled clears the switch cache only after this save returns — clear it now, or the
+    # publish below would read the old switch states.
+    cache.delete(capabilities._CACHE_KEY)
+    notes = []
+    for prompt in AgentPrompt.objects.filter(is_active=True, role__in=MEMBER_ROLES):
+        note = auto_publish_on_save(prompt)
+        if note:
+            notes.append(f"{prompt.role}: {note}")
+    instance.publish_note = "; ".join(notes)
     tasks.dispatch_budtender_notify("persona")

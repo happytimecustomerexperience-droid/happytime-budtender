@@ -227,11 +227,17 @@ def _top_product_asks(qs, limit: int = 10) -> list[dict]:
 
 
 # ── Agents editor (port agent_config/agent_save/agent_detail + voice fields) ───
-def _agent_card_ctx(prompt, *, saved=False, error=""):
+def _publish_note(note: str) -> str:
+    """The save toast from the save signal's actual publish status ("" = auto-publish is off)."""
+    return note or "saved — not published (auto-publish off) — press Publish to update the phone"
+
+
+def _agent_card_ctx(prompt, *, saved=False, error="", note=""):
     return {
         "p": prompt,
         "saved": saved,
         "error": error,
+        "note": note,
         "transfer_keys": ["", "YAKIMA", "MTVERNON", "PULLMAN"],
     }
 
@@ -327,21 +333,22 @@ def agent_save(request, pk: int):
     p.max_output_tokens = _num("max_output_tokens", int, lo=1, hi=65536, default=None)
     p.is_active = request.POST.get("is_active") == "on"
 
+    note = ""
     if not errors:
         # AgentPrompt's post_save signal (kb/signals.py) auto-publishes to Vapi and nudges root's
         # persona cache — the ONE place a save publishes, from any path (dashboard/admin/shell).
+        # It leaves what actually happened on ``p.publish_note``.
         p.save()
+        note = _publish_note(getattr(p, "publish_note", ""))
     resp = render(
         request,
         "dashboard/_agent_card.html",
-        _agent_card_ctx(p, saved=not errors, error="; ".join(errors)),
+        _agent_card_ctx(p, saved=not errors, error="; ".join(errors), note=note),
     )
     if errors:
         resp["HX-Trigger"] = _toast("error", "; ".join(errors))
     else:
-        # Auto-publish on by default (HHT_AUTO_PUBLISH) → the edit reaches Vapi instantly via the
-        # post_save signal; when off/unconfigured the row is still live server-side.
-        resp["HX-Trigger"] = _toast("success", f"{p.role} updated — saved, auto-publish runs on save ✓")
+        resp["HX-Trigger"] = _toast("error" if "failed" in note else "success", f"{p.role}: {note}")
     return resp
 
 
@@ -1312,6 +1319,7 @@ def vendor_callback_update(request, pk: int):
 
     cb = get_object_or_404(VendorCallback, pk=pk)
     action = request.POST.get("action", "")
+    kind = "success"
     if action == "contacted":
         cb.mark_contacted()
         msg = "Marked contacted."
@@ -1319,13 +1327,29 @@ def vendor_callback_update(request, pk: int):
         cb.mark_closed()
         msg = "Marked closed."
     elif action == "realert" and cb.voice_call_id:
-        dispatch(cb.voice_call)
-        msg = "Staff alert re-sent."
+        from crm.models import AlertDelivery
+
+        # dispatch is idempotent: a sink that already delivered answers "success" without
+        # sending again — say so instead of claiming a re-send.
+        sent = set(
+            AlertDelivery.objects.filter(voice_call=cb.voice_call, status="success")
+            .values_list("sink", flat=True)
+        )
+        results = dispatch(cb.voice_call)
+        msg = "Staff alert — " + ", ".join(
+            f"{sink}: {'already sent' if sink in sent else status}"
+            for sink, status in results.items()
+            if sink != "db"
+        )
+        kind = "error" if "failed" in results.values() else "success"
     else:
         msg = "No change."
-    resp = redirect("dash-vendor-queue")
-    resp["HX-Trigger"] = _toast("success", msg)
-    return resp
+    from django.contrib import messages
+
+    # A plain form post + redirect (vendor_queue.html) — a message survives it; an HX-Trigger
+    # header on the 302 never reached the page.
+    messages.add_message(request, messages.ERROR if kind == "error" else messages.SUCCESS, msg)
+    return redirect("dash-vendor-queue")
 
 
 # ── Publish to Vapi ────────────────────────────────────────────────────────────
@@ -1333,10 +1357,21 @@ def vendor_callback_update(request, pk: int):
 @ensure_csrf_cookie
 def publish_page(request):
     """The publish landing — per-object state + the Publish-all / Publish-this buttons."""
+    from django.conf import settings
+
     from kb.models import AgentPrompt
+    from voice import capabilities
 
     prompts = AgentPrompt.objects.order_by("role")
-    return render(request, "dashboard/publish.html", {"prompts": prompts})
+    return render(
+        request,
+        "dashboard/publish.html",
+        {
+            "prompts": prompts,
+            "auto_publish_switch": capabilities.is_enabled("auto.publish_on_save"),
+            "auto_publish_env": bool(getattr(settings, "HHT_AUTO_PUBLISH", False)),
+        },
+    )
 
 
 @staff_member_required
@@ -1360,3 +1395,65 @@ def publish_assistant_one(request, pk: int):
     p = get_object_or_404(AgentPrompt, pk=pk)
     results = [publish.publish_assistant(p).to_dict(), publish.publish_squad().to_dict()]
     return render(request, "dashboard/_publish_result.html", {"results": results})
+
+
+# ── Capabilities (what the bots may do — voice/voice/capabilities.py) ─────────
+@staff_member_required
+def capabilities_page(request):
+    """Every declared switch, grouped, plus who can use which tool right now."""
+    from kb.models import AgentPrompt
+    from voice import capabilities as caps
+    from voice.provision import _tool_names_for_role
+
+    from .models import BotCapability
+    from .publish import MEMBER_ROLES
+
+    on = caps.states()
+    rows = {r.key: r for r in BotCapability.objects.all()}
+    groups: dict[str, list[dict]] = {}
+    for c in caps.CAPABILITIES:
+        groups.setdefault(c.group, []).append({"c": c, "on": on[c.key], "row": rows.get(c.key)})
+
+    prompts = {p.role: p for p in AgentPrompt.objects.filter(role__in=MEMBER_ROLES)}
+    members = []
+    for role in MEMBER_ROLES:  # the phone members and the tools provision attaches to each
+        p = prompts.get(role)
+        tools = [{"name": n, "on": caps.tool_allowed(n)} for n in _tool_names_for_role(role, p)]
+        if role in ("vendor", "escalation"):
+            tools.append({"name": "transfer call", "on": on["call.transfer"]})
+        members.append(
+            {"name": f"Phone · {p.get_role_display() if p else role}", "on": bool(p and p.is_active), "tools": tools}
+        )
+    members.append(  # the website chat can reach every switched tool (voice/chat.py)
+        {
+            "name": "Website chat",
+            "on": on["channel.website_chat"],
+            "tools": [{"name": c.tool, "on": on[c.key]} for c in caps.CAPABILITIES if c.tool],
+        }
+    )
+    return render(
+        request, "dashboard/capabilities.html", {"groups": groups.items(), "members": members}
+    )
+
+
+@staff_member_required
+@require_POST
+def capability_toggle(request):
+    from django.contrib import messages
+
+    from voice import capabilities as caps
+
+    c = caps.BY_KEY.get(request.POST.get("key", ""))
+    if c is None:
+        return HttpResponseBadRequest("unknown capability")
+    enabled = request.POST.get("enabled") == "on"
+    row = caps.set_enabled(c.key, enabled, by=request.user.get_username())
+    # The BotCapability save signal (kb/signals.py) publishes when auto-publish is on and leaves
+    # what happened on ``row.publish_note``. Only tool switches and transfers change the phone.
+    if c.tool or c.key == "call.transfer":
+        note = getattr(row, "publish_note", "") or "saved — press Publish to update the phone"
+    else:
+        note = "saved — live now"
+    level = messages.ERROR if "failed" in note else messages.SUCCESS
+    messages.add_message(request, level, f"{c.label}: turned {'on' if enabled else 'off'} — {note}")
+    return redirect("dash-capabilities")

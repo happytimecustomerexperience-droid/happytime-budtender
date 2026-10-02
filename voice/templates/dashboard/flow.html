@@ -8,6 +8,7 @@
   <div class="row between" style="margin-bottom:12px">
     <div>
       <h1>Flow canvas</h1>
+      <p style="max-width:680px;margin:0 0 4px" data-testid="flow-doc-only"><strong>Documentation of the call flow — editing it does not change routing.</strong></p>
       <p class="muted" style="max-width:680px">Drag to arrange. Click a step to view/edit its agent settings. Click an arrow to see the transition trigger. This canvas <strong>documents</strong> the Squad — the routing topology is code-owned.</p>
     </div>
     <div class="row">
@@ -20,7 +21,7 @@
 
   <div class="note-green">
     <span>🟢</span>
-    <p>Agent steps edit the live <code>AgentPrompt</code> rows (live server-side; published to Vapi from the Publish page). The hard safety guardrails stay enforced in code and the required Squad transitions are re-asserted on Publish — they <strong>cannot be removed here</strong>.</p>
+    <p>Agent steps edit the live <code>AgentPrompt</code> rows (saving one publishes it to the phone only when auto-publish is on — the toast says what happened). The hard safety guardrails stay enforced in code and the required Squad transitions are re-asserted on Publish — they <strong>cannot be removed here</strong>.</p>
   </div>
 
   <!-- palette -->
@@ -300,8 +301,10 @@
         if (a.is_active) fd.set("is_active", "on");
         try {
           const r = await fetch(`/dashboard/agents/${a.pk}/save`, { method: "POST", headers: { "X-CSRFToken": CSRF }, body: fd });
-          if (r.ok) { this.toast(`${a.display} updated — live server-side; Publish to push to Vapi ✓`); }
-          else { this.toast("Agent save failed", "error"); }
+          // agent_save answers 200 even when it rejected the edit; its HX-Trigger toast says which.
+          const t = (JSON.parse(r.headers.get("HX-Trigger") || "{}").toast) || {};
+          if (r.ok && t.type !== "error") { this.toast(t.message || `${a.display} saved`); }
+          else { this.toast(t.message || "Agent save failed", "error"); }
         } catch (e) { this.toast("Agent save failed", "error"); }
       },
     };

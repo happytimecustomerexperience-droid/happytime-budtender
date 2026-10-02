@@ -4,6 +4,12 @@
 <h1>Publish to Vapi</h1>
 <p class="muted">Maps each assistant → <code>PATCH /assistant/{id}</code> and the Squad shape → <code>PATCH /squad/{id}</code>. GET-then-PATCH, idempotent — a re-publish with no edits is zero-drift. The Squad destinations come from code, so a canvas edit can never delete a required transition.</p>
 
+<div class="card" data-testid="auto-publish-state">
+  <p style="margin:0">Publish on save: switch <span class="badge {% if auto_publish_switch %}green{% else %}slate{% endif %}">{{ auto_publish_switch|yesno:"on,off" }}</span>
+  (<a href="{% url 'dash-capabilities' %}">Capabilities</a>) · <code>HHT_AUTO_PUBLISH</code> master switch <span class="badge {% if auto_publish_env %}green{% else %}slate{% endif %}">{{ auto_publish_env|yesno:"on,off" }}</span></p>
+  <p class="muted" style="margin:4px 0 0">{% if auto_publish_switch and auto_publish_env %}Saving a prompt or flipping a switch updates the phone within seconds.{% else %}Saves do <strong>not</strong> reach the phone until you press Publish all.{% endif %}</p>
+</div>
+
 <div class="card">
   <table>
     <tr><th>Role</th><th>Vapi id</th><th>Last published</th></tr>

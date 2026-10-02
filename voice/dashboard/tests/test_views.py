@@ -61,7 +61,9 @@ def test_agent_save_persists_voice_fields(client_staff, budtender_prompt):
     assert budtender_prompt.tool_names == ["suggest_products", "check_inventory", "pair_upsell"]
     assert budtender_prompt.transfer_number_key == "YAKIMA"
     assert budtender_prompt.temperature == 0.4
-    assert b"auto-publish runs on save" in resp["HX-Trigger"].encode()
+    # HHT_AUTO_PUBLISH is off under pytest → the toast says it did NOT publish (never "published").
+    assert "not published (auto-publish off)" in resp["HX-Trigger"]
+    assert b"not published (auto-publish off)" in resp.content
 
 
 @pytest.mark.django_db
@@ -682,3 +684,95 @@ def test_agent_config_page_shows_the_written_role(client_staff):
 
     assert resp.status_code == 200
     assert b"Website chat (written)" in resp.content
+
+
+# ── capabilities page (/dashboard/capabilities/) ─────────────────────────────
+@pytest.mark.django_db
+def test_capabilities_page_renders_every_switch_and_who_can_do_what(client_staff):
+    from voice import capabilities as caps
+
+    resp = client_staff.get(reverse("dash-capabilities"))
+    assert resp.status_code == 200
+    for c in caps.CAPABILITIES:
+        assert f'data-testid="cap-row-{c.key}"'.encode() in resp.content
+    assert b"Who can do what" in resp.content and b"Website chat" in resp.content
+
+
+@pytest.mark.django_db
+def test_capability_toggle_flips_the_switch_and_records_who(client_staff):
+    from dashboard.models import BotCapability
+    from voice import capabilities as caps
+
+    resp = client_staff.post(
+        reverse("dash-capability-toggle"), {"key": "tool.pair_upsell", "enabled": "off"}, follow=True
+    )
+    assert resp.status_code == 200
+    assert caps.is_enabled("tool.pair_upsell") is False
+    assert BotCapability.objects.get(key="tool.pair_upsell").updated_by == "boss"
+    # HHT_AUTO_PUBLISH is off under pytest → the flash says nothing reached the phone.
+    assert b"press Publish to update the phone" in resp.content
+    assert b"line-through" in resp.content  # pair_upsell greyed in "Who can do what"
+    bad = client_staff.post(reverse("dash-capability-toggle"), {"key": "tool.nope", "enabled": "on"})
+    assert bad.status_code == 400
+
+
+@pytest.mark.django_db
+def test_capability_toggle_is_staff_only_and_csrf_checked(staff):
+    from django.test import Client
+
+    from voice import capabilities as caps
+
+    url, data = reverse("dash-capability-toggle"), {"key": "tool.pair_upsell", "enabled": "off"}
+    assert Client().get(reverse("dash-capabilities")).status_code == 302
+    assert Client().post(url, data).status_code == 302
+    clerk = Client()
+    clerk.force_login(User.objects.create_user("clerk", password="x"))  # logged in, not staff
+    assert clerk.post(url, data).status_code == 302
+    no_token = Client(enforce_csrf_checks=True)
+    no_token.force_login(staff)
+    assert no_token.post(url, data).status_code == 403
+    assert caps.is_enabled("tool.pair_upsell") is True  # none of them flipped it
+
+
+# ── dashboard honesty fixes ───────────────────────────────────────────────────
+@pytest.mark.django_db
+def test_stale_blank_outcome_call_is_not_shown_as_live():
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from dashboard import monitor
+    from voice.models import VoiceCall
+
+    fresh = VoiceCall.objects.create(call_id="live-1")
+    stale = VoiceCall.objects.create(call_id="stale-1")
+    VoiceCall.objects.filter(pk=stale.pk).update(created_at=timezone.now() - timedelta(hours=3))
+    assert list(monitor.live_calls()) == [fresh]
+
+
+@pytest.mark.django_db
+def test_flow_and_publish_pages_say_what_they_really_do(client_staff):
+    flow = client_staff.get(reverse("dash-flow")).content
+    assert b"editing it does not change routing" in flow
+    pub = client_staff.get(reverse("dash-publish")).content
+    assert b"HHT_AUTO_PUBLISH" in pub
+    assert b"do <strong>not</strong> reach the phone" in pub  # env switch is off under pytest
+
+
+@pytest.mark.django_db
+def test_vendor_realert_reports_what_dispatch_returned(client_staff, monkeypatch):
+    from crm import sinks
+    from crm.models import AlertDelivery, VendorCallback
+    from voice.models import VoiceCall
+
+    vc = VoiceCall.objects.create(call_id="realert-1", store="yakima", outcome="vendor_callback")
+    cb = VendorCallback.objects.create(vapi_call_id="realert-1", store="yakima", voice_call=vc)
+    AlertDelivery.objects.create(voice_call=vc, sink="email", status="success")
+    monkeypatch.setattr(
+        sinks, "dispatch", lambda _vc: {"db": "success", "email": "success", "n8n": "failed"}
+    )
+    resp = client_staff.post(
+        reverse("dash-vendor-update", args=[cb.pk]), {"action": "realert"}, follow=True
+    )
+    assert b"email: already sent" in resp.content and b"n8n: failed" in resp.content
+    assert b"re-sent" not in resp.content

@@ -203,15 +203,17 @@ def tool_allowed(tool_name: str) -> bool:
     return True if key is None else is_enabled(key)
 
 
-def set_enabled(key: str, enabled: bool, *, by: str = "") -> None:
-    """Persist one switch and drop the cache so every worker sees it on the next request."""
+def set_enabled(key: str, enabled: bool, *, by: str = ""):
+    """Persist one switch and drop the cache so every worker sees it on the next request. Returns
+    the saved ``BotCapability`` row (its ``publish_note`` says what the save signal published)."""
     if key not in BY_KEY:
         raise KeyError(key)
     from django.core.cache import cache
 
     from dashboard.models import BotCapability
 
-    BotCapability.objects.update_or_create(
+    row, _ = BotCapability.objects.update_or_create(
         key=key, defaults={"enabled": bool(enabled), "updated_by": (by or "")[:150]}
     )
     cache.delete(_CACHE_KEY)
+    return row

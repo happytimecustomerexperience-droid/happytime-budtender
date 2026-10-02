@@ -106,6 +106,7 @@ def one_faq_row(db):
         "dash-publish",
         "dash-analytics",
         "dash-specials-hours",
+        "dash-capabilities",
     ],
 )
 def test_get_route_renders_200(client_staff, name):

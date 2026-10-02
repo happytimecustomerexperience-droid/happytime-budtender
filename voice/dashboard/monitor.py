@@ -7,10 +7,15 @@ construction: ``VoiceCall`` carries no product cost/margin field.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
+from django.utils import timezone
+
 from voice.models import VoiceCall
 
-# in-flight = a call we logged but whose end-of-call-report (which stamps an outcome) hasn't landed.
-_IN_FLIGHT_Q = {"outcome": ""}
+# in-flight = a call we logged in the last 2 hours whose end-of-call-report (which stamps an
+# outcome) hasn't landed. Older blank-outcome rows lost their report — they are not live.
+_LIVE_WINDOW = timedelta(hours=2)
 
 # outcome → (label, badge-color-key) for the UI; neutral fallback for an unknown/blank outcome.
 _OUTCOME_BADGE = {
@@ -29,8 +34,10 @@ def call_outcome_badge(outcome: str) -> tuple[str, str]:
 
 
 def live_calls(limit: int = 25):
-    """In-flight calls — logged but no outcome stamped yet (the eocr hasn't classified them)."""
-    return VoiceCall.objects.filter(**_IN_FLIGHT_Q).order_by("-created_at")[:limit]
+    """In-flight calls — logged in the last 2 hours with no outcome stamped yet (the eocr hasn't
+    classified them)."""
+    since = timezone.now() - _LIVE_WINDOW
+    return VoiceCall.objects.filter(outcome="", created_at__gte=since).order_by("-created_at")[:limit]
 
 
 def recent_calls(limit: int = 25):
