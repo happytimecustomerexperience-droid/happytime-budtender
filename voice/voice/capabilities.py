@@ -5,7 +5,8 @@ which channels it touches, and its default. The on/off state lives in ``dashboar
 rows; a key with no row uses its declared default, so a fresh install behaves as before.
 
 Code asks ``is_enabled(key)`` (or ``tool_allowed(name)`` for a tool) and nothing else decides.
-An unknown key, or a database that cannot be read, answers False (fail closed) and logs it.
+An unknown key, or a database that cannot be read, answers False (fail closed) and logs it —
+except the three ``alerts.*`` delivery switches, which read ON when unreadable (see ``_ALERT_KEYS``).
 ``test_capabilities.py::test_every_capability_is_enforced`` fails if a key is declared here but no
 code outside this module checks it — a switch that changes nothing is worse than no switch.
 """
@@ -173,19 +174,32 @@ TOOL_KEY: dict[str, str] = {c.tool: c.key for c in CAPABILITIES if c.tool}
 _CACHE_KEY = "capabilities:v1"
 _CACHE_SECONDS = 30
 
+# The staff-alert delivery switches. Unlike every other key, an UNREADABLE state reads ON for these:
+# an outage of the cache or database must not hide a staff alert, and a delivery recorded "skipped"
+# is never retried. Only an explicit OFF row the owner saved turns them off.
+_ALERT_KEYS = frozenset({"alerts.email", "alerts.slack", "alerts.n8n"})
+
 
 def states() -> dict[str, bool]:
-    """``{key: enabled}`` for every declared capability (cached briefly; cleared on every save)."""
+    """``{key: enabled}`` for every declared capability (cached briefly; cleared on every save).
+    The cache is only a speed-up: when it cannot be read or written the table is read instead."""
     from django.core.cache import cache
 
-    cached = cache.get(_CACHE_KEY)
+    try:
+        cached = cache.get(_CACHE_KEY)
+    except Exception:  # noqa: BLE001 — a cache outage must not hide the owner's saved switches
+        logger.warning("capabilities cache unreadable — reading the table", exc_info=True)
+        cached = None
     if isinstance(cached, dict):
         return cached
     from dashboard.models import BotCapability
 
     rows = dict(BotCapability.objects.values_list("key", "enabled"))
     out = {c.key: bool(rows.get(c.key, c.default)) for c in CAPABILITIES}
-    cache.set(_CACHE_KEY, out, _CACHE_SECONDS)
+    try:
+        cache.set(_CACHE_KEY, out, _CACHE_SECONDS)
+    except Exception:  # noqa: BLE001
+        logger.warning("capabilities cache unwritable", exc_info=True)
     return out
 
 
@@ -195,7 +209,10 @@ def is_enabled(key: str) -> bool:
         return False
     try:
         return states()[key]
-    except Exception:  # noqa: BLE001 — an unreadable switchboard must not turn things ON
+    except Exception:  # noqa: BLE001 — see _ALERT_KEYS: alerts fail open, everything else fails closed
+        if key in _ALERT_KEYS:
+            logger.exception("capability state unreadable — %s treated as ON (a staff alert must not be hidden)", key)
+            return True
         logger.exception("capability state unreadable — %s treated as OFF", key)
         return False
 

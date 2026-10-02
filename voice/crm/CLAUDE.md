@@ -22,7 +22,16 @@ Run from `voice/` with `HHT_TEST_SQLITE=1 DJANGO_DEBUG=1 ALLOW_NON_EU_RESIDENCY=
   notice writes no row, so it never counts against a cap.
 - The caller's number is used in-request (last 4 digits, known-customer lookup) and never stored.
 - Real SMS is unavailable to a cannabis retailer. "Text staff" = Pushover push + Slack + email.
-- A new outbound channel obeys its own `alerts.*` switch and has a mocked-`urlopen` test.
+- A new outbound channel obeys its own `alerts.*` switch and has a mocked-`urlopen` test. The
+  `alerts.*` switches read ON when the switchboard is unreadable (an outage must not hide an alert);
+  an explicit OFF row still wins.
+- **Website-chat alerts** (`s-…` ids) are capped per visitor IP first (`HHT_TEXT_ALERT_CAP_PER_VISITOR_HOUR`,
+  default 2; the IP comes from the website's `X-HHT-Client-IP` via `sinks.visitor_ip`, set by
+  `voice.api.text_chat`), then per store as a backstop (`HHT_TEXT_ALERT_CAP_PER_STORE_HOUR`, default 20;
+  `config/settings.py` may still set it from `.env`). The first alert the backstop holds in a store-hour
+  sends ONE roll-up email. A phone call is never capped.
+- Visitor text reaches staff through `sinks.defang` (email, Slack, the transfer note). The n8n webhook
+  goes through `sinks.post_webhook` only: public addresses, https, no redirects.
 
 ## Gotchas
 - `AlertDelivery.sink` is `max_length=24`: `xfer:` + a count, or + the timestamp digits (<= 19).

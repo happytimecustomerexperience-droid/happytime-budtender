@@ -102,14 +102,15 @@ def first_name(messages) -> str:
 
 
 def clean_summary(text) -> str:
-    """What the caller wants, as one short plain line: URLs and phone-like digit runs removed, PII
-    and cost/margin wording scrubbed with the shared guardrails, ASCII only, at most ``SUMMARY_MAX``."""
+    """What the caller wants, as one short plain line: common URLs and phone-like digit runs removed,
+    any other link made inert (``sinks.defang`` — the TLD list above cannot know every TLD), PII and
+    cost/margin wording scrubbed with the shared guardrails, ASCII only, at most ``SUMMARY_MAX``."""
     text = _URL_RE.sub(" ", str(text or ""))
     text = _DIGIT_RUN_RE.sub(lambda m: " " if sum(c.isdigit() for c in m.group()) >= 7 else m.group(), text)
     text = guardrails.redact_pii(text)
     if isinstance(guardrails.scrub_leak(text), dict):  # a cost/margin word anywhere → drop the lot
         return ""
-    text = _ascii(text)[:SUMMARY_MAX].rstrip(" ,;:-.!?")
+    text = _ascii(sinks.defang(text))[:SUMMARY_MAX].rstrip(" ,;:-.!?")
     return text
 
 

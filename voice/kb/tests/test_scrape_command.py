@@ -1,8 +1,9 @@
 """``manage.py scrape_happytime_site`` exit status.
 
 The nightly maintenance step is judged by this exit code. A fetch that fails (the site answering
-HTTP 429) used to print an error line and exit 0, so a night of nothing read as "ok". Offline:
-the fetch, the reindex and the Vapi mirror are all stubbed.
+HTTP 429) used to print an error line and exit 0, so a night of nothing read as "ok"; a BLOCKED run
+(validation refused the write) did the same. Offline: the fetch, the reindex and the Vapi mirror are
+all stubbed.
 """
 
 from __future__ import annotations
@@ -67,8 +68,10 @@ def test_scrape_exits_zero_when_the_site_is_fetched_and_nothing_changed(monkeypa
 
 
 @pytest.mark.django_db
-def test_blocked_scrape_keeps_its_existing_exit_status(monkeypatch, offline):
-    """Validation refusing a write is not a fetch failure: unchanged behaviour, exit 0."""
+def test_blocked_scrape_exits_non_zero_with_the_reasons(monkeypatch, offline):
+    """Validation refusing a write (injected text on the site, a bad row) stops every nightly refresh
+    until someone looks, so it must read FAIL on the Health page, not ok: exit non-zero, reasons in
+    the message. Nothing was saved."""
     poisoned = site_scrape.Page(
         url="https://happytimeweed.com/faq",
         title="FAQ",
@@ -77,6 +80,9 @@ def test_blocked_scrape_keeps_its_existing_exit_status(monkeypatch, offline):
     )
     monkeypatch.setattr(site_scrape, "fetch_pages", lambda paths=None: [poisoned])
 
-    call_command("scrape_happytime_site", "--no-publish", stdout=StringIO())  # does not raise
+    with pytest.raises(CommandError) as err:
+        call_command("scrape_happytime_site", "--no-publish", stdout=StringIO())
 
-    assert SiteScrapeRun.objects.get().status == "blocked"
+    run = SiteScrapeRun.objects.get()
+    assert run.status == "blocked" and run.validation_errors
+    assert "blocked" in str(err.value).lower() and run.validation_errors[0][:40] in str(err.value)

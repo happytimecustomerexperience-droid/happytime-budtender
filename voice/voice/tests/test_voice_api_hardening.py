@@ -42,7 +42,7 @@ def _chat(client, body=None, *, token=WEBSITE_TOKEN, ip=None, raw=None):
 
 @pytest.mark.parametrize(
     "session",
-    ["s-mfx1abc2-k3j9x0qz", "s-a-b", "S_long-Token_123", "a" * 64],
+    ["s-mfx1abc2-k3j9x0qz", "s-a-b", "s-abcdefghijk-abcdefgh", "s-0-0"],  # the website's exact shape
 )
 def test_website_shaped_session_ids_are_accepted(client, session):
     assert _chat(client, {"message": "hi", "session_token": session}).status_code == 200
@@ -51,6 +51,21 @@ def test_website_shaped_session_ids_are_accepted(client, session):
 @pytest.mark.parametrize(
     "session",
     [
+        # W9-3: not the website's shape. ``crm.sinks`` calls anything not ``s-…`` a phone call (never
+        # alert-capped, labelled "voice"), and a Vapi-shaped id would address a real call's record.
+        "abcde12345",
+        "7f3b2c1e-1111-2222-3333-444455556666",
+        "S_long-Token_123",
+        "a" * 64,
+        "s-ABC-def",  # the website mints lower-case base36
+        "s-abcdefghijkl-abc",  # 12 chars in the time part (max 11)
+        "s-abc-abcdefghi",  # 9 chars in the random part (max 8)
+        "s--abc",
+        "s-abc-",
+        "s-abc-def-ghi",
+        "s-abc_def-ghi",
+        "s-abc-def\n",  # a trailing newline must not slip past an anchor
+        " s-abc-def",
         "a" * 65,  # past VoiceCall.call_id max_length — the write failed silently
         "s-" + "x" * 98,
         "s-abc def",
@@ -72,6 +87,8 @@ def test_bad_or_test_prefixed_session_ids_are_rejected(client, _tokens, session)
 
 def test_session_id_alias_is_validated_too_and_absent_is_allowed(client, _tokens):
     assert _chat(client, {"message": "hi", "session_id": "pg-abcdef"}).status_code == 400
+    assert _chat(client, {"message": "hi", "session_id": "abcde12345"}).status_code == 400
+    assert _chat(client, {"message": "hi", "session_id": "s-mfx1abc2-k3j9x0qz"}).status_code == 200
     assert _chat(client, {"message": "hi"}).status_code == 200, "root's calls send no session id"
 
 

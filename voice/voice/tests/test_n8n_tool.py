@@ -24,8 +24,7 @@ def test_notify_n8n_degrades_when_unconfigured(settings):
 
 
 def test_notify_n8n_posts_event(settings, monkeypatch):
-    import urllib.request
-
+    from crm import sinks
     from voice.tools.n8n import notify_n8n
 
     settings.N8N_WEBHOOK_URL = "https://n8n.example/webhook/x"
@@ -41,7 +40,7 @@ def test_notify_n8n_posts_event(settings, monkeypatch):
         sent["body"] = json.loads(req.data.decode())
         return _Resp()
 
-    monkeypatch.setattr(urllib.request, "urlopen", _fake)
+    monkeypatch.setattr(sinks._OPENER, "open", _fake)  # the n8n POST's one outbound seam
     out = notify_n8n(
         {"event_type": "callback_request", "summary": "wants a callback", "store": "pullman"},
         {"call_id": "c9", "store": "pullman"},
@@ -58,8 +57,7 @@ def test_notify_n8n_posts_event(settings, monkeypatch):
 
 def test_notify_n8n_masks_phone_in_summary(settings, monkeypatch):
     """A phone the model put in the summary is masked before the payload leaves for n8n."""
-    import urllib.request
-
+    from crm import sinks
     from voice.tools.n8n import notify_n8n
 
     settings.N8N_WEBHOOK_URL = "https://n8n.example/webhook/x"
@@ -70,7 +68,7 @@ def test_notify_n8n_masks_phone_in_summary(settings, monkeypatch):
         def __enter__(self): return self
         def __exit__(self, *a): return False
 
-    monkeypatch.setattr(urllib.request, "urlopen",
+    monkeypatch.setattr(sinks._OPENER, "open",
                         lambda req, timeout=10: (sent.update(body=json.loads(req.data.decode())) or _Resp()))
     notify_n8n({"event_type": "callback_request", "summary": "call me at 509-555-9999"}, {"call_id": "c"})
     assert "509-555-9999" not in sent["body"]["summary"]

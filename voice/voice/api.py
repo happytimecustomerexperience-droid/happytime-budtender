@@ -16,7 +16,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from crm.sinks import _TEST_SESSION_PREFIXES
+from crm.sinks import visitor_ip
 from voice import capabilities, safety_copy
 from voice.chat import answer_text_chat
 from voice.tools import dispatch
@@ -27,9 +27,11 @@ _RATE_LIMIT_WINDOW_SECONDS = 60
 # A chat turn is one short message; nothing legitimate comes near this. Checked on the declared
 # Content-Length before anything reads or parses the body (Django reads at most that many bytes).
 _MAX_BODY_BYTES = 16 * 1024
-# What a session id may look like: it becomes ``VoiceCall.call_id`` (max_length 64). Accepts the
-# website's ``s-<base36 time>-<base36 rand>`` (as short as ``s-a-b``).
-_SESSION_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{5,64}")
+# The ONLY session id this endpoint takes: the website's ``s-<base36 time>-<base36 rand>`` (as short
+# as ``s-a-b``). It becomes ``VoiceCall.call_id``, and ``crm.sinks`` tells a website chat from a phone
+# call by that ``s-`` shape (a chat is alert-capped, a call is not) — so any other shape could pass a
+# chat off as a call, or address a real call's record by its Vapi id.
+_SESSION_TOKEN_RE = re.compile(r"s-[a-z0-9]{1,11}-[a-z0-9]{1,8}")
 
 
 def _client_ip(request) -> str:
@@ -37,13 +39,21 @@ def _client_ip(request) -> str:
     from Vercel's servers, so the website-supplied ``X-HHT-Client-IP`` (set from Vercel's
     x-forwarded-for) is the visitor — trusted only because the Bearer holder sent it. Without a valid
     one: the last X-Forwarded-For hop (our own proxy's view), else REMOTE_ADDR."""
-    supplied = request.headers.get("X-HHT-Client-IP", "").strip()
-    try:
-        return str(ipaddress.ip_address(supplied))
-    except ValueError:
-        pass
+    supplied = _vouched_ip(request)
+    if supplied:
+        return supplied
     xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
     return (xff.split(",")[-1].strip() if xff else request.META.get("REMOTE_ADDR", "")) or "anon"
+
+
+def _vouched_ip(request) -> str:
+    """The visitor IP the website itself reported in ``X-HHT-Client-IP``, or ``""`` when the header
+    is absent or not an IP. Only this is a visitor: the fallback in ``_client_ip`` is a proxy's view,
+    which for a Vercel-fronted chat is one address shared by every visitor."""
+    try:
+        return str(ipaddress.ip_address(request.headers.get("X-HHT-Client-IP", "").strip()))
+    except ValueError:
+        return ""
 
 
 def _limit(name: str, default: int) -> int:
@@ -161,14 +171,18 @@ def text_chat(request):
 
     data = _body(request)
     # The session id becomes ``VoiceCall.call_id``: an over-long one failed the DB write silently
-    # (resetting the under-21 block and the dispute carry every turn), and a test prefix (``pg-``,
-    # ``eval-``...) silenced staff alerts. The harnesses that use those prefixes call
-    # ``answer_text_chat`` in-process, never this view. An absent id stays allowed (root sends none).
+    # (resetting the under-21 block and the dispute carry every turn), a test prefix (``pg-``,
+    # ``eval-``...) silenced staff alerts, and a Vapi-shaped one addressed a real call's record. Only
+    # the website's own shape gets in (see ``_SESSION_TOKEN_RE``); the harnesses that use the test
+    # prefixes call ``answer_text_chat`` in-process, never this view. An absent id stays allowed
+    # (root sends none).
     session = str(data.get("session_token") or data.get("session_id") or "")
-    if session and (not _SESSION_TOKEN_RE.fullmatch(session) or session.startswith(_TEST_SESSION_PREFIXES)):
+    if session and not _SESSION_TOKEN_RE.fullmatch(session):
         return JsonResponse({"ok": False, "error": "invalid session_token"}, status=400)
 
-    result = answer_text_chat(data)
+    # A staff alert this turn fires is counted against this visitor (crm.sinks._over_text_alert_cap).
+    with visitor_ip(_vouched_ip(request)):
+        result = answer_text_chat(data)
     status = 200 if result.get("ok") else 400
     return JsonResponse(result, status=status)
 

@@ -70,6 +70,67 @@ def test_unreadable_state_fails_closed(monkeypatch):
     assert caps.is_enabled("tool.faq_lookup") is False
 
 
+ALERT_KEYS = ("alerts.email", "alerts.slack", "alerts.n8n")
+
+
+def test_unreadable_state_keeps_staff_alerts_on_and_everything_else_off(monkeypatch):
+    """W9-2: the three ``alerts.*`` delivery switches read ON when the switchboard cannot be read —
+    an outage must not hide a staff alert — while every other key stays fail-closed."""
+
+    def boom():
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(caps, "states", boom)
+    assert [caps.is_enabled(k) for k in ALERT_KEYS] == [True, True, True]
+    still_off = [c.key for c in caps.CAPABILITIES if c.key not in ALERT_KEYS and caps.is_enabled(c.key)]
+    assert still_off == [], f"must fail closed: {still_off}"
+    assert caps.is_enabled("alerts.not_declared") is False
+
+
+@pytest.mark.django_db
+def test_a_switchboard_outage_does_not_skip_the_staff_alert(settings, monkeypatch):
+    """The bug: on an unreadable state ``EmailSink.enabled`` read OFF, so the delivery was recorded
+    "skipped" and never retried — an urgent alert vanished."""
+    from django.core import mail
+
+    from crm import sinks
+    from voice.models import VoiceCall
+
+    settings.EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+    settings.STAFF_ALERT_EMAIL = "staff@example.com"
+    settings.SLACK_WEBHOOK_URL = ""
+    settings.N8N_WEBHOOK_URL = ""
+    vc = VoiceCall.objects.create(call_id="9f3a7c21-0000-4000-8000-0000000000aa", store="yakima", outcome="escalation")
+
+    def boom():
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(caps, "states", boom)
+    assert sinks.dispatch(vc)["email"] == "success"
+    assert len(mail.outbox) == 1
+
+
+@pytest.mark.django_db
+def test_an_explicit_off_row_still_wins_when_the_cache_is_down(monkeypatch):
+    """The cache is only a speed-up: with it unreadable the table is read, so the owner's saved OFF
+    still holds (and an unsaved key is its default), instead of every switch flipping to a guess."""
+    from django.core.cache import cache
+
+    caps.set_enabled("alerts.slack", False, by="owner")
+    caps.set_enabled("tool.pair_upsell", False, by="owner")
+
+    def down(*a, **k):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(cache, "get", down)
+    monkeypatch.setattr(cache, "set", down)
+
+    assert caps.is_enabled("alerts.slack") is False, "an explicit OFF wins over fail-open"
+    assert caps.is_enabled("tool.pair_upsell") is False
+    assert caps.is_enabled("alerts.email") is True  # no row: its declared default
+    assert caps.is_enabled("tool.faq_lookup") is True
+
+
 def test_ungated_tool_is_allowed():
     assert caps.tool_allowed("notify_n8n") is True
 
@@ -235,7 +296,8 @@ def test_alert_sinks_and_n8n_follow_their_switches(settings, monkeypatch):
     settings.SLACK_WEBHOOK_URL = "https://hooks.slack.test/x"
     settings.N8N_WEBHOOK_URL = "https://n8n.test/x"
     posted = []
-    monkeypatch.setattr(sinks.urllib.request, "urlopen", lambda *a, **k: posted.append(a))
+    monkeypatch.setattr(sinks.urllib.request, "urlopen", lambda *a, **k: posted.append(a))  # slack
+    monkeypatch.setattr(sinks._OPENER, "open", lambda *a, **k: posted.append(a))  # n8n
     vc = VoiceCall.objects.create(
         call_id="cap-sink-1", store="yakima", outcome="escalation", reason="defective_return"
     )

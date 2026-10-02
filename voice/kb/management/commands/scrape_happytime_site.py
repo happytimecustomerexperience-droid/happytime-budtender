@@ -39,9 +39,11 @@ class Command(BaseCommand):
         if run.validation_errors:
             for err in run.validation_errors:
                 self.stdout.write(f"- {err}")
-        if run.status == "failed":
-            # The fetch (or the apply) threw — e.g. HTTP 429 from the site. Exit non-zero so the
-            # nightly maintenance step is reported FAIL; "failed" used to exit 0 and read as ok.
-            # A "blocked" scrape (validation said no, nothing saved) keeps its existing exit 0.
+        if run.status in ("failed", "blocked"):
+            # "failed": the fetch (or the apply) threw — e.g. HTTP 429 from the site. "blocked":
+            # validation said no (an injection phrase on the site, a bad row) and nothing was saved,
+            # so every nightly refresh stops until someone looks. Both exit non-zero so the nightly
+            # maintenance step is reported FAIL and the Health page shows it; they used to exit 0 and
+            # read as ok. A run that fetched the site and found nothing new is "applied": exit 0.
             detail = " ".join("; ".join(str(e) for e in run.validation_errors).split())[:300]
             raise CommandError(f"{msg} ({detail})" if detail else msg)

@@ -21,8 +21,7 @@ def test_n8n_sink_skipped_when_unset(settings):
 
 @pytest.mark.django_db
 def test_n8n_sink_posts_leak_safe_payload(settings, monkeypatch):
-    import urllib.request
-
+    from crm import sinks
     from crm.sinks import N8nSink
     from voice.models import VoiceCall
 
@@ -45,7 +44,7 @@ def test_n8n_sink_posts_leak_safe_payload(settings, monkeypatch):
         sent["body"] = json.loads(req.data.decode())
         return _Resp()
 
-    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(sinks._OPENER, "open", _fake_urlopen)  # the n8n POST's one outbound seam
 
     assert N8nSink().enabled(vc) is True
     N8nSink().deliver(vc)

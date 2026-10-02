@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import urllib.request
 
 from django.conf import settings
 
@@ -52,14 +51,12 @@ def notify_n8n(args: dict, ctx: dict) -> dict:
         "store_spoken": spoken_store(store) if store else "",
         "call_id": ctx.get("call_id", ""),
     }
+    from crm import sinks
+
     try:
-        data = json.dumps(payload).encode()
-        req = urllib.request.Request(
-            url, data=data, headers={"Content-Type": "application/json"}, method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 (config-supplied URL)
-            if r.status >= 300:
-                return {"ok": False, "reason": f"n8n HTTP {r.status}"}
+        status = sinks.post_webhook(url, json.dumps(payload).encode())  # public hosts only, no redirects
+        if status >= 300:
+            return {"ok": False, "reason": f"n8n HTTP {status}"}
     except Exception as exc:  # noqa: BLE001 — a webhook hiccup is a soft failure, not a crash
         logger.warning("notify_n8n POST failed: %s", exc)
         return {"ok": False, "reason": "n8n unreachable"}

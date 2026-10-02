@@ -320,6 +320,23 @@ def test_slack_and_email_carry_the_same_text_and_obey_their_own_switches(client,
     assert len(http.pushes()) == 2
 
 
+def test_pushover_slack_and_email_all_carry_a_defanged_note(client, http, settings):
+    """W9-4: the old fixed-TLD strip let ``.xyz`` / ``.ru`` links through live to every channel."""
+    from django.core import mail
+
+    on()
+    settings.SLACK_WEBHOOK_URL = "https://hooks.example.test/T/B/x"
+    settings.STAFF_ALERT_EMAIL = "staff@example.test"
+    send(client, forwarding(summary="wants a refund, see evil.xyz and ftp://scam.ru/pay"))
+
+    [push] = http.pushes()
+    [slack] = [json.loads(c["data"]) for c in http.calls if "hooks.example.test" in c["url"]]
+    [email] = mail.outbox
+    for text in (push["message"], slack["text"], email.body):
+        assert "evil[.]xyz" in text and "hxxp://scam[.]ru/pay" in text, text
+        assert "evil.xyz" not in text and "scam.ru" not in text and "ftp://" not in text
+
+
 def test_a_dead_channel_never_breaks_the_webhook_or_the_others(client, http, settings):
     from django.core import mail
 

@@ -13,7 +13,8 @@ on an immediate alert — the durable ``VoiceCall`` + email are authoritative.
 
 Each outbound sink also follows its owner switch on /dashboard/capabilities/ (``alerts.email`` /
 ``alerts.slack`` / ``alerts.n8n``); the test-session suppression in ``dispatch`` runs before any
-of them, and website-chat alerts are capped per store per hour (``_over_text_alert_cap``).
+of them, and website-chat alerts are capped per visitor first and per store as a backstop, per hour
+(``_over_text_alert_cap``). Visitor text reaches staff through ``defang`` — inert, never a link.
 
 The transfer heads-up (``deliver_transfer_notice``, driven by ``crm.transfer_notice``) is a separate
 path: it fires while a call is being transferred, not at the end, over Pushover + the Slack and
@@ -26,8 +27,14 @@ substring. PII: the hashed caller, never the raw number.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import http.client
+import ipaddress
 import json
 import logging
+import re
+import socket
 import time
 import urllib.parse
 import urllib.request
@@ -75,14 +82,32 @@ def _safe_text(value, default: str = "") -> str:
     return scrubbed
 
 
+# A visitor can type anything, and a mail client or Slack turns a URL in it into a link staff may
+# click. ``defang`` makes it inert text: ``scheme://`` becomes ``hxxp://`` and the dot before a
+# 2-24 letter TLD becomes ``[.]`` (the ideographic and fullwidth dots too, which browsers read as a
+# dot). It cannot tell "evil.co" from "refund.Please" and does not try. Idempotent.
+_SCHEME_RE = re.compile(r"\b[a-z][a-z0-9+.\-]*://", re.IGNORECASE)
+_DOMAIN_DOT_RE = re.compile(r"(?<=\w)[.。．｡](?=[^\W\d_]{2,24}(?!\w))")
+
+
+def defang(text) -> str:
+    """``text`` with every link made inert: ``https://evil.co/x`` -> ``hxxp://evil[.]co/x``."""
+    return _DOMAIN_DOT_RE.sub("[.]", _SCHEME_RE.sub("hxxp://", str(text or "")))
+
+
+def _staff_text(value, default: str = "") -> str:
+    """Visitor-derived text for a staff-facing channel (email, Slack): leak-scrubbed, then defanged."""
+    return defang(_safe_text(value, default))
+
+
 def _conversation_lines(voice_call) -> list[str]:
     """Full conversation log for staff: VoiceTurn rows first, transcript fallback second."""
     turns = list(voice_call.turns.order_by("seq"))
     if turns:
         lines = []
         for t in turns:
-            text = _safe_text(t.text)
-            tool = _safe_text(t.tool_name)
+            text = _staff_text(t.text)
+            tool = _staff_text(t.tool_name)
             if not text and not tool:
                 continue
             label = (t.role or "turn").upper()
@@ -90,14 +115,14 @@ def _conversation_lines(voice_call) -> list[str]:
                 label = f"{label} [{tool}]"
             lines.append(f"{label}: {text or '(tool call)'}")
         return lines
-    transcript = _safe_text(getattr(voice_call, "transcript", ""))
+    transcript = _staff_text(getattr(voice_call, "transcript", ""))
     if transcript:
         return [transcript]
     # A text-channel escalation fires DURING the turn, before that turn is persisted as a
     # VoiceTurn, so a first-message dispute has no turns yet. The tool's summary IS the caller's
     # message; show it rather than an empty log (the 2026-09-18 alerts read "(no transcript
     # captured)" three times).
-    summary = _safe_text(getattr(voice_call, "ai_summary", ""))
+    summary = _staff_text(getattr(voice_call, "ai_summary", ""))
     return [f"CALLER: {summary}"] if summary else ["(no transcript captured)"]
 
 
@@ -117,32 +142,116 @@ def _slack_escape(value) -> str:
 
 
 _TEXT_ALERT_WINDOW_S = 3600
+_VISITOR_CAP_DEFAULT = 2  # website-chat alerts per visitor IP per hour
+_STORE_CAP_DEFAULT = 20  # the per-store backstop behind it
+
+# The website visitor behind the request being answered (see ``visitor_ip``). The alert fires in the
+# same request, in the same thread, so a context variable carries it without a model field or a
+# change to the chat brain's ctx; nothing is stored.
+_visitor: contextvars.ContextVar[str] = contextvars.ContextVar("hht_visitor_ip", default="")
+
+
+def _visitor_bucket(ip: str) -> str:
+    """The cap bucket for a visitor address: IPv4 as is, IPv6 by its /64 (one subscriber holds a whole
+    /64, so per-address counting would let them mint a fresh budget per request). ``""`` if not an IP."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return ""
+    addr = getattr(addr, "ipv4_mapped", None) or addr
+    return str(ipaddress.ip_network(f"{addr}/64", strict=False)) if addr.version == 6 else str(addr)
+
+
+@contextlib.contextmanager
+def visitor_ip(ip: str):
+    """Mark ``ip`` as the website visitor for everything that runs inside the block, so a chat alert
+    fired there is counted against that visitor. ``""`` means "no vouched visitor": only the store
+    backstop applies."""
+    token = _visitor.set(_visitor_bucket(ip))
+    try:
+        yield
+    finally:
+        _visitor.reset(token)
+
+
+def _cap(name: str, default: int) -> int:
+    try:
+        return max(0, int(str(getattr(settings, name, default)).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _count_this_hour(prefix: str) -> int:
+    """Count one event under ``prefix`` in the current clock hour; returns the new total."""
+    key = f"{prefix}:{int(time.time() // _TEXT_ALERT_WINDOW_S)}"
+    try:
+        cache.add(key, 0, timeout=_TEXT_ALERT_WINDOW_S)
+        return cache.incr(key)
+    except ValueError:  # expired between add and incr
+        cache.set(key, 1, timeout=_TEXT_ALERT_WINDOW_S)
+        return 1
 
 
 def _over_text_alert_cap(voice_call) -> bool:
-    """Whether this website-chat alert is past ``HHT_TEXT_ALERT_CAP_PER_STORE_HOUR`` for its store.
+    """Whether this website-chat alert is held back instead of sent.
 
     One visitor rotating session ids mints a fresh VoiceCall (and a fresh URGENT alert) per id, and
-    the ledger only dedupes per call — so chat alerts are counted per store per clock hour. A phone
-    call is never capped. A cache failure lets the alert through: a real dispute must not be
-    silenced because Redis hiccupped."""
+    the ledger only dedupes per call. So chat alerts are counted per visitor IP per clock hour first
+    (``HHT_TEXT_ALERT_CAP_PER_VISITOR_HOUR``, default 2): a flooder runs out of their own budget
+    without touching anyone else's. A visitor over their own limit does not count against the store.
+    The per-store count (``HHT_TEXT_ALERT_CAP_PER_STORE_HOUR``, default 20) is only the backstop; the
+    first alert it holds in a store-hour sends one roll-up email so a flood never reads as silence.
+    A phone call is never capped. A cache failure lets the alert through: a real dispute must not
+    be silenced because Redis hiccupped."""
     if not _is_chat(voice_call):
         return False
+    store_cap = _cap("HHT_TEXT_ALERT_CAP_PER_STORE_HOUR", _STORE_CAP_DEFAULT)
     try:
-        cap = int(getattr(settings, "HHT_TEXT_ALERT_CAP_PER_STORE_HOUR", 6))
-    except (TypeError, ValueError):
-        cap = 6
-    key = f"text_alert_cap:{voice_call.store or '-'}:{int(time.time() // _TEXT_ALERT_WINDOW_S)}"
-    try:
-        cache.add(key, 0, timeout=_TEXT_ALERT_WINDOW_S)
-        count = cache.incr(key)
-    except ValueError:  # expired between add and incr
-        cache.set(key, 1, timeout=_TEXT_ALERT_WINDOW_S)
-        count = 1
+        ip = _visitor.get()
+        if ip and _count_this_hour(f"text_alert_cap_visitor:{ip}") > _cap(
+            "HHT_TEXT_ALERT_CAP_PER_VISITOR_HOUR", _VISITOR_CAP_DEFAULT
+        ):
+            return True
+        held = _count_this_hour(f"text_alert_cap:{voice_call.store or '-'}") - store_cap
     except Exception:  # noqa: BLE001 — see docstring: fail open, the VoiceCall row is saved either way
         logger.warning("text alert cap unavailable; alerting anyway", exc_info=True)
         return False
-    return count > cap
+    if held > 0:
+        _send_rollup(voice_call.store, held, store_cap)
+    return held > 0
+
+
+def _send_rollup(store: str, held: int, cap: int) -> None:
+    """ONE email per store per clock hour saying website-chat alerts are being held. Follows the
+    email switch and the store's recipients; never raises."""
+    marker = f"text_alert_rollup:{store or '-'}:{int(time.time() // _TEXT_ALERT_WINDOW_S)}"
+    try:
+        if not cache.add(marker, 1, timeout=_TEXT_ALERT_WINDOW_S):
+            return  # this store-hour already has its roll-up
+    except Exception:  # noqa: BLE001
+        logger.warning("text alert roll-up marker unavailable; no roll-up sent", exc_info=True)
+        return
+    recipients = _recipients_for(store)
+    if not (recipients and capabilities.is_enabled("alerts.email")):
+        return
+    name = C.spoken_store(store) if store else "A store"
+    more = f"{held} more website-chat alert{' was' if held == 1 else 's were'} held this hour"
+    try:
+        EmailMultiAlternatives(
+            subject=f"[Happy Time voice] {name} — website-chat alerts held",
+            body=(
+                f"{more} — see the dashboard.\n\n"
+                f"{name} reached its limit of {cap} website-chat alerts per hour, so any further ones "
+                "this hour are held too and this is the only email about it. Every chat is still "
+                "logged on the dashboard."
+            ),
+            from_email=getattr(settings, "LEAD_EMAIL_FROM", "bot@happytimeweed.com"),
+            to=recipients,
+        ).send(fail_silently=False)
+    except Exception:  # noqa: BLE001 — an alert must never crash the request that raised it
+        logger.warning("text alert roll-up email failed", exc_info=True)
+        with contextlib.suppress(Exception):
+            cache.delete(marker)  # let the next held alert this hour try again
 
 
 def _text_body(voice_call, transfer: str, reason_line: str) -> str:
@@ -155,7 +264,7 @@ def _text_body(voice_call, transfer: str, reason_line: str) -> str:
         f"Duration: {voice_call.duration_s or '-'}s\n"
         f"Human requested: {voice_call.human_requested_count}x\n"
         f"Transfer: {transfer}\n\n"
-        f"Summary:\n{_safe_text(voice_call.ai_summary, '(none)')}\n\n"
+        f"Summary:\n{_staff_text(voice_call.ai_summary, '(none)')}\n\n"
         f"Conversation log:\n{conversation}\n\n"
         f"Call id: {voice_call.call_id}   logged {voice_call.created_at}\n"
     )
@@ -183,7 +292,7 @@ def _html_body(voice_call, transfer: str, reason_line: str, immediate: bool) -> 
       <tr><td><strong>Call id</strong></td><td>{escape(voice_call.call_id)}</td></tr>
     </table>
     <h3>Summary</h3>
-    <p>{escape(_safe_text(voice_call.ai_summary, '(none)'))}</p>
+    <p>{escape(_staff_text(voice_call.ai_summary, '(none)'))}</p>
     <h3>Conversation log</h3>
     <table cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
       <tr><th align="left">Role</th><th align="left">Message</th></tr>
@@ -191,6 +300,55 @@ def _html_body(voice_call, transfer: str, reason_line: str, immediate: bool) -> 
     </table>
   </body>
 </html>"""
+
+
+# ── The n8n webhook POST: public addresses only, no redirects ─────────────────────────────────────
+# The dashboard checks the n8n URL's host NAME on save, but a name proves nothing about where it
+# points (``169.254.169.254.nip.io`` is a public-looking name for the cloud metadata address) and a
+# 3xx can bounce a request anywhere. So the call itself refuses unless EVERY address the host
+# resolves to is public, connects to the very address it checked (no second lookup to rebind), and
+# treats a redirect as a failure. https only. Used by ``N8nSink``, ``send_staff_alert`` and the
+# ``notify_n8n`` tool. Slack and Pushover do not use it: their hosts are fixed (hooks.slack.com is
+# pinned by the credentials editor, Pushover is a constant), so there is no name to be fooled by.
+
+
+def _public_address(host: str, port: int) -> str:
+    """The address to connect to for ``host``; raises unless every address it resolves to is public."""
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    addrs = list(dict.fromkeys(info[4][0].split("%")[0] for info in infos))  # de-duplicated, resolver order
+    if not addrs or not all(ipaddress.ip_address(a).is_global for a in addrs):
+        raise OSError(f"refusing {host}: it does not resolve to public addresses only")
+    return addrs[0]
+
+
+class _PublicHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        sock = socket.create_connection((_public_address(self.host, self.port), self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _PublicHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_PublicHTTPSConnection, req, context=self._context)
+
+
+# A bare opener, not ``build_opener``: no ``HTTPRedirectHandler`` is installed, so a 3xx surfaces as an
+# ``HTTPError`` (a failure, never a second request), and with no plain-HTTP or file handler an
+# ``http://`` or ``file://`` URL fails too.
+_OPENER = urllib.request.OpenerDirector()
+for _handler in (
+    _PublicHTTPSHandler(), urllib.request.HTTPDefaultErrorHandler(),
+    urllib.request.HTTPErrorProcessor(), urllib.request.UnknownHandler(),
+):
+    _OPENER.add_handler(_handler)
+
+
+def post_webhook(url: str, data: bytes, *, timeout: float = 10) -> int:
+    """POST ``data`` as JSON to an owner-configured webhook and return the HTTP status. Raises when
+    the host is not public-only, on a redirect, on any non-2xx, and on a network error."""
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    with _OPENER.open(req, timeout=timeout) as r:
+        return r.status
 
 
 class Sink:
@@ -223,11 +381,11 @@ class EmailSink(Sink):
         recipients = _recipients_for(voice_call.store)
         immediate = _is_immediate(voice_call)
         urgent = " — URGENT" if immediate else ""
-        subject = (
+        subject = defang(
             f"[Happy Time voice] {voice_call.store or 'store'} — "
             f"{voice_call.outcome or 'call'}{urgent}"
         )
-        reason_line = f"  (reason: {_safe_text(voice_call.reason)})" if voice_call.reason else ""
+        reason_line = f"  (reason: {_staff_text(voice_call.reason)})" if voice_call.reason else ""
         transfer = (
             f"{voice_call.transfer_disposition or '—'} ({voice_call.transfer_number_key or '—'})"
         )
@@ -258,8 +416,8 @@ class SlackSink(Sink):
         block = {
             "store": voice_call.store or "store",
             "outcome": voice_call.outcome or "call",
-            "reason": _safe_text(voice_call.reason),
-            "summary": _safe_text(voice_call.ai_summary, "(no summary)"),
+            "reason": _staff_text(voice_call.reason),
+            "summary": _staff_text(voice_call.ai_summary, "(no summary)"),
             "call_id": voice_call.call_id,
         }
         block = {key: _slack_escape(value) for key, value in block.items()}
@@ -299,13 +457,9 @@ class N8nSink(Sink):
             "suggested_skus": list(voice_call.suggested_skus or []),
             "summary": _safe_text(voice_call.ai_summary, ""),
         }
-        data = json.dumps(payload).encode()
-        req = urllib.request.Request(
-            url, data=data, headers={"Content-Type": "application/json"}, method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 (config-supplied URL)
-            if r.status >= 300:
-                raise RuntimeError(f"n8n HTTP {r.status}")
+        status = post_webhook(url, json.dumps(payload).encode())
+        if status >= 300:
+            raise RuntimeError(f"n8n HTTP {status}")
 
 
 SINKS: list[Sink] = [DBSink(), EmailSink(), SlackSink(), N8nSink()]
@@ -491,11 +645,8 @@ def send_staff_alert(subject: str, markdown_table: str) -> None:
     if n8n_url and capabilities.is_enabled("alerts.n8n"):
         try:
             data = json.dumps({"event": "store_facts_drift", "subject": subject, "table": markdown_table}).encode()
-            req = urllib.request.Request(
-                n8n_url, data=data, headers={"Content-Type": "application/json"}, method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 (config-supplied URL)
-                if r.status >= 300:
-                    raise RuntimeError(f"n8n HTTP {r.status}")
+            status = post_webhook(n8n_url, data)
+            if status >= 300:
+                raise RuntimeError(f"n8n HTTP {status}")
         except Exception:  # noqa: BLE001
             logger.warning("send_staff_alert: n8n failed", exc_info=True)
