@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from django.core.cache import cache
 from django.db import connection
 from django.http import JsonResponse
 
@@ -11,6 +12,30 @@ from core.services import gemini, vapi
 from voice.budtender_client import budtender
 
 logger = logging.getLogger(__name__)
+
+# /healthz is public: without this every hit made a live Vapi API call (a free amplifier against
+# our Vapi quota). The result — success or failure — is reused for this long.
+_VAPI_CHECK_TTL_S = 30
+
+
+def _vapi_status() -> dict:
+    try:
+        cached = cache.get("healthz:vapi")
+    except Exception:  # noqa: BLE001 — a cache outage must not take the health check down with it
+        cached = None
+    if cached is not None:
+        return cached
+    try:
+        vap = vapi.auth_ok()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("healthz Vapi check failed: %s", type(exc).__name__)
+        vap = {"ok": False, "configured": vapi.configured()}
+    status = {"ok": bool(vap.get("ok")), "configured": bool(vap.get("configured"))}
+    try:
+        cache.set("healthz:vapi", status, _VAPI_CHECK_TTL_S)
+    except Exception:  # noqa: BLE001
+        pass
+    return status
 
 
 def healthz(request):
@@ -36,11 +61,7 @@ def healthz(request):
         logger.warning("healthz Gemini check failed: %s", type(exc).__name__)
         gem = {"ready": False}
 
-    try:
-        vap = vapi.auth_ok()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("healthz Vapi check failed: %s", type(exc).__name__)
-        vap = {"ok": False, "configured": vapi.configured()}
+    vap = _vapi_status()
 
     try:
         bt = budtender()

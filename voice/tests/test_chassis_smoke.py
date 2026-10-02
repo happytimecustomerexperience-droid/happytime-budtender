@@ -53,6 +53,25 @@ def test_healthz_green_when_all_ready(client, monkeypatch, mock_gemini):
     assert body["budtender"] == {"ok": True, "configured": True}
 
 
+@pytest.mark.django_db
+def test_healthz_reuses_the_vapi_check_for_30s(client, monkeypatch, mock_gemini):
+    """W5b: /healthz is public and made a live Vapi API call on every hit."""
+    import time
+    import types
+
+    calls = []
+    monkeypatch.setattr(vapi, "auth_ok", lambda: calls.append(1) or {"ok": True, "configured": True})
+    monkeypatch.setattr(core_views, "budtender", lambda: _FakeBudtender(ok=True, configured=True))
+    for _ in range(5):
+        assert client.get("/healthz").json()["vapi"] == {"ok": True, "configured": True}
+    assert len(calls) == 1, "five hits inside the window, one Vapi call"
+
+    later = time.time() + core_views._VAPI_CHECK_TTL_S + 1
+    monkeypatch.setattr("django.core.cache.backends.locmem.time", types.SimpleNamespace(time=lambda: later))
+    client.get("/healthz")
+    assert len(calls) == 2, "the check runs again once the window has passed"
+
+
 # ── vapi client: /workflow is an owner-authorized path (ADR-024 supersedes ADR-002) ──
 @pytest.mark.django_db
 def test_healthz_degrades_when_configured_budtender_is_down(client, monkeypatch, mock_gemini):
