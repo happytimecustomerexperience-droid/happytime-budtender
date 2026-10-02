@@ -144,7 +144,10 @@ def test_door_scan_previews_then_create_refreshes_and_queues_exact_customer(auth
     visit = ShopVisit.objects.get()
     assert visit.acct_id == 710000099 and visit.status == "queued" and visit.phone == "5095550100"
     customer = Customer.objects.get(dutchie_acct_id=710000099)
-    assert customer.address == "123 Main" and customer.address2 == "Unit 4"
+    # The home address went to Dutchie in the create/sync; the local cache of a RESOLVED customer
+    # keeps city/state (the customer page shows them) but not the street address or the ID number.
+    assert customer.address == "" and customer.address2 == "" and customer.id_number == ""
+    assert customer.city == "Yakima" and customer.state == "WA" and customer.over_21 is True
     assert "acct_id" not in auth.session
 
 

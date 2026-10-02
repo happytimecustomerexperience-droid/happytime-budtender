@@ -13,6 +13,19 @@ _SCAN_FIELDS = (
 )
 
 
+# Identity-document columns (plus the verbatim scan) a RESOLVED customer does not keep. The POS
+# create/sync step reads them back out of the pending row (raw_scan) between a scan and the Dutchie
+# account existing; once there is an account nothing reads them again — the customer page shows
+# over_21 / email / city / state, history keys on phone + account id — so only over_21 and the ID
+# expiry survive the scan.
+_ID_DOCUMENT_FIELDS = ("mjstateidno", "id_number", "address", "address2", "postal_code")
+
+
+def identity_document_blanks() -> dict:
+    """Column -> emptied value, for ``setattr`` on a Customer or ``QuerySet.update``."""
+    return {"raw_scan": {}, "birth_date": None, **{f: "" for f in _ID_DOCUMENT_FIELDS}}
+
+
 def _phone_key(phone: str) -> str:
     # ponytail: Dutchie checkout phones are US; keep stdlib normalization until international data exists.
     digits = re.sub(r"\D", "", phone or "")
@@ -23,7 +36,12 @@ def _phone_key(phone: str) -> str:
 
 def upsert_customer(scan: dict, dutchie_acct_id=None) -> Customer:
     """Get-or-create a Customer by phone (preferred) or acct_id, filling blanks
-    from the scan. `scan` is the raw OCR/lookup dict; stored verbatim in raw_scan.
+    from the scan. `scan` is the raw OCR/lookup dict.
+
+    Until a Dutchie account exists (``dutchie_acct_id`` None) the scan is kept verbatim in
+    raw_scan because the POS create/sync step reads it back. Once an account is passed in,
+    the scan has done its job and the identity-document columns are emptied (see
+    ``identity_document_blanks``); over_21 and the ID expiry stay.
     """
     scan = scan or {}
     phone = _phone_key(scan.get("phone") or "")
@@ -78,8 +96,11 @@ def upsert_customer(scan: dict, dutchie_acct_id=None) -> Customer:
     if scan.get("over_21") is not None:
         obj.over_21 = bool(scan["over_21"])
 
-    if scan:
-        obj.raw_scan = scan
+    if dutchie_acct_id is not None:
+        for field, blank in identity_document_blanks().items():
+            setattr(obj, field, blank)
+    elif scan:
+        obj.raw_scan = scan   # still pending: the POS create/sync step reads it back
     obj.save()
     for dup in matches[1:]:
         dup.delete()
