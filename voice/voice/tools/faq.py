@@ -113,12 +113,59 @@ _NO_CURRENT_SPECIALS = (
     "We don't have any specials posted right now. Our deals change month to month, so a "
     "budtender in store can tell you what's running today."
 )
-# How many deal lines one spoken answer may carry. A store runs about nine; reading all of them
-# blows past the written word cap and stops sounding like an answer.
-_MAX_SPOKEN_SPECIALS = 8
+# How many deal lines one spoken answer reads. Pullman runs 33 synced Dutchie deals; the old cap of
+# 8, ordered by label (= Dutchie id), read eight arbitrary ones and never reached the happy hours.
+_MAX_SPOKEN_SPECIALS = 3
+# "Most useful first": a happy hour (a "happy hour" title or a time window, which deals_sync writes
+# as "4-6 PM") or a BOGO, then the biggest percent off.
+_HAPPY_HOUR_RE = re.compile(
+    r"\bhappy\s*hours?\b|\b\d{1,2}(?::\d\d)?(?:\s*[AP]M)?\s*-\s*\d{1,2}(?::\d\d)?\s*[AP]M\b", re.I
+)
+_BOGO_RE = re.compile(
+    r"\bbogo\b|\bb\s?\d\s?g\s?\d\b|\bbuy\s+(?:one|two|three|\d+)\b[^.]{0,30}\bget\b|"
+    r"\b(?:2|two)\s+for\s+(?:1|one)\b",
+    re.I,
+)
+_PERCENT_RE = re.compile(r"(\d{1,3})\s*%")
+# "any deals on Wyld" / "discount for seniors": the thing the caller wants a deal ON.
+_DEAL_TARGET_RE = re.compile(
+    r"\b(?:deals?|specials?|sales?|discounts?|promos?|coupons?)\s+(?P<prep>on|for)\s+"
+    r"(?:the\s+|any\s+|your\s+)?(?P<x>[a-z0-9][\w'&.\- ]{0,40}?)\s*"
+    r"(?=$|[?.!,]|\s+(?:today|tonight|right\s+now|now|this\s+(?:week|month)|at|in|please|"
+    r"specifically|though)\b)",
+    re.I,
+)
+_NOT_A_TARGET = frozenset({"today", "tonight", "now", "me", "us", "you", "everyone", "anyone", "it"})
+_CATEGORY_LABEL = {
+    "cartridge": "carts", "edible": "edibles", "concentrate": "concentrates",
+    "pre-roll": "pre-rolls", "topical": "topicals", "capsule": "capsules", "mint": "mints",
+    "infused-blunt": "infused blunts", "blunt": "blunts",
+}
 
 
-def _specials_answer(store: str | None) -> dict:
+def _deal_rank(row) -> tuple:
+    text = str(row.value)
+    featured = bool(_HAPPY_HOUR_RE.search(text) or _BOGO_RE.search(text))
+    percent = max((int(p) for p in _PERCENT_RE.findall(text)), default=0)
+    return (not featured, -percent, -(row.weight or 0), row.label)
+
+
+def _deal_filter(query: str):
+    """``(label, prep, matches)`` for "deals on <category/brand>", or None for a broad ask."""
+    from voice.chat import _CATEGORY_RE, _category_from_text  # lazy: chat imports this package
+
+    category = _category_from_text(query)
+    if category:
+        return _CATEGORY_LABEL.get(category, category), "on", _CATEGORY_RE[category].search
+    match = _DEAL_TARGET_RE.search(query or "")
+    target = (match.group("x").strip() if match else "")
+    if not target or target.lower() in _NOT_A_TARGET:
+        return None
+    word = re.compile(r"\b" + re.escape(target) + r"\b", re.I)
+    return target, match.group("prep").lower(), word.search
+
+
+def _specials_answer(store: str | None, query: str = "") -> dict:
     """The specials answer, composed from the store's own CURRENT deal rows.
 
     The deal percentages used to live in the ``specials`` FAQEntry's prose, which meant they were
@@ -126,6 +173,10 @@ def _specials_answer(store: str | None) -> dict:
     the row could not be fixed without a code change. The numbers now live only in dated
     ``StoreFact(kind="special")`` rows, so this reads whatever is valid TODAY and says so plainly
     when that is nothing.
+
+    A store can run dozens of deals, so a broad ask hears how many and the three most useful
+    (``_deal_rank``), then an offer to narrow; "deals on edibles / on Wyld" reads only the rows
+    whose text mentions it. The count is the number of rows, never a figure composed from them.
 
     Only ``value`` is spoken, never ``label``: the label carries the owner-facing month name
     ("July: 30% off all flower"), which has no business in a caller's answer.
@@ -137,7 +188,22 @@ def _specials_answer(store: str | None) -> dict:
     qs = StoreFact.objects.current().filter(kind="special", is_active=True, confirmed=True)
     if store:
         qs = qs.filter(Q(store=store) | Q(store=""))
-    rows = list(qs.order_by("-weight", "label")[:_MAX_SPOKEN_SPECIALS])
+    rows = sorted((r for r in qs if str(r.value).strip()), key=_deal_rank)
+    wanted = _deal_filter(query) if rows else None
+    if wanted:
+        label, prep, mentions = wanted
+        rows = [r for r in rows if mentions(str(r.value))]
+        if not rows:
+            # NEW COPY — REQUIRES OWNER APPROVAL. An absence among today's rows, so not grounded.
+            return {
+                "answer": None,
+                "grounded": False,
+                "fallback": (
+                    f"I don't see a deal {prep} {label} posted right now. Ask me about another "
+                    "category or brand, or a budtender in store can tell you what's running today."
+                ),
+                "store": store or "",
+            }
     if not rows:
         # NOT grounded: there is no KB row that says "there are no specials" — this is a report
         # of an ABSENCE, and claiming it as a cited fact is exactly the overstatement
@@ -149,7 +215,14 @@ def _specials_answer(store: str | None) -> dict:
             "fallback": _NO_CURRENT_SPECIALS,
             "store": store or "",
         }
-    answer = " ".join(str(row.value).strip() for row in rows if str(row.value).strip())
+    spoken = rows[:_MAX_SPOKEN_SPECIALS]
+    answer = " ".join(str(row.value).strip() for row in spoken)
+    if len(rows) > len(spoken):
+        # NEW COPY — REQUIRES OWNER APPROVAL (both lead-ins and the tail).
+        scope = f" {wanted[1]} {wanted[0]}" if wanted else ""
+        answer = f"We have {len(rows)} deals{scope} running right now — here are a few. {answer}"
+        if not wanted:
+            answer += " Ask me about a category or brand and I'll narrow it down."
     return {
         "answer": answer,
         "grounded": True,
@@ -160,7 +233,7 @@ def _specials_answer(store: str | None) -> dict:
                 "title": _row_title(row),
                 "source_url": _row_url(row),
             }
-            for row in rows
+            for row in spoken
         ],
         "store": store or "",
     }
@@ -348,7 +421,7 @@ def faq_lookup(args: dict, ctx: dict) -> dict:
     # specials FAQEntry and the dated StoreFact rows are both on-topic, and only the dates say
     # which one is true right now.
     if topic == "specials":
-        return _specials_answer(store)
+        return _specials_answer(store, query)
 
     result = _grounded(query, store, topic)
     if result is not None:

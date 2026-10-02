@@ -24,7 +24,7 @@ from django.db import transaction
 
 from kb import signals
 from kb.models import StoreFact
-from voice import capabilities
+from voice import capabilities, guardrails
 from voice.budtender_client import budtender
 from voice.tools.faq import _looks_poisoned
 
@@ -40,9 +40,34 @@ def _clock(t: str) -> tuple[str, str]:
     return f"{h % 12 or 12}{f':{m:02d}' if m else ''}", "AM" if h < 12 else "PM"
 
 
+_DESC_MAX = 160  # one spoken sentence or so; descriptions can carry a paragraph of fine print
+
+
+def _norm(text: str) -> str:
+    return "".join(ch for ch in text.lower() if ch.isalnum())
+
+
+def _description(deal: dict) -> str:
+    """The menu description when it says more than the title ("Chewee's Caramels $14 First Come
+    First Serve!" under the title "Chewee's Special"), trimmed to about a sentence; else ""."""
+    desc = " ".join(str(deal.get("description") or "").split())
+    title = _norm(deal["title"])
+    # A "cost"/"margin" substring would get the WHOLE specials answer redacted by the leak wall
+    # (guardrails.scrub_leak), so such a description is left out rather than risk every deal.
+    if not desc or _norm(desc) in title or guardrails._has_forbidden_substr(desc):
+        return ""
+    if len(desc) > _DESC_MAX:
+        cut = desc[:_DESC_MAX]
+        end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+        desc = cut[: end + 1] if end > 0 else cut[: cut.rfind(" ")].rstrip(",;:-— ") + "."
+    return desc
+
+
 def spoken(deal: dict, today: datetime.date) -> str:
     """The sentence a caller hears: title, then the schedule when it has one ('daily 9-10 AM'),
-    then 'through Oct 31' when it ends within a year. Built only from the deal's own fields."""
+    then 'through Oct 31' when it ends within a year, then the menu description when it adds
+    something (``_description``). Built only from the deal's own fields."""
+    desc = _description(deal)
     parts = [deal["title"].strip()]
     days = "/".join(d[:3].capitalize() for d in deal.get("days") or [])
     hours = ""
@@ -57,7 +82,10 @@ def spoken(deal: dict, today: datetime.date) -> str:
         if end - today < datetime.timedelta(days=365):
             parts.append(f"through {end:%b} {end.day}")
     text = ", ".join(parts)
-    return text if text[-1] in ".!?" else text + "."  # rows are read back to back
+    text = text if text[-1] in ".!?" else text + "."  # rows are read back to back
+    if desc:
+        text += " " + (desc if desc[-1] in ".!?" else desc + ".")
+    return text
 
 
 def sync_deals(dry_run: bool = False) -> dict:

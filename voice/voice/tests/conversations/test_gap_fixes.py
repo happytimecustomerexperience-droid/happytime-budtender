@@ -181,3 +181,66 @@ def test_disabled_staff_alert_never_claims_the_team_was_told(convo):
     _off("notify_staff_issue")
     t = convo(phone="+15095550142").say("can you text me when the Jetty carts are back in stock")
     assert t.answer == TOOL_DISABLED
+
+
+# ── 8. deals ─────────────────────────────────────────────────────────────────
+def _deal_rows(store, values):
+    from kb.models import StoreFact
+
+    today = datetime.date.today()
+    for i, value in enumerate(values, start=1):
+        StoreFact.objects.create(store=store, kind="special", label=f"Dutchie #{1000 + i}", value=value,
+                                 confirmed=True, valid_from=today, valid_to=today)
+
+
+def _pullman_33():
+    filler = [f"{p}% off Brand{i} flower." for i, p in enumerate([10, 15, 20, 25] * 7 + [10, 15], start=1)]
+    _deal_rows("pullman", filler + [
+        "Happy Hour: 20% off pre-rolls, daily 4-6 PM.",
+        "BOGO Wyld gummies.",
+        "40% off all concentrates.",
+    ])
+
+
+@pytest.mark.django_db
+def test_broad_deals_ask_counts_and_reads_the_three_most_useful():
+    from voice.tools.faq import faq_lookup
+
+    _pullman_33()
+    out = faq_lookup({"query": "any deals right now", "store": "pullman"}, {})
+    assert out["grounded"]
+    answer = out["answer"]
+    assert answer.startswith("We have 33 deals running right now")
+    assert "Happy Hour" in answer and "BOGO Wyld" in answer and "40% off all concentrates" in answer
+    assert "Brand" not in answer, "only the three most useful are read"
+    assert answer.endswith("Ask me about a category or brand and I'll narrow it down.")
+    assert len(out["sources"]) == 3
+
+
+@pytest.mark.django_db
+def test_deals_on_a_category_or_brand_read_only_rows_that_mention_it():
+    from voice.tools.faq import faq_lookup
+
+    _pullman_33()
+    edibles = faq_lookup({"query": "any deals on edibles", "store": "pullman"}, {})
+    assert edibles["answer"] == "BOGO Wyld gummies."
+    wyld = faq_lookup({"query": "got any specials on Wyld", "store": "pullman"}, {})
+    assert wyld["answer"] == "BOGO Wyld gummies."
+    jetty = faq_lookup({"query": "any deals on Jetty", "store": "pullman"}, {})
+    assert not jetty["grounded"] and jetty["fallback"].startswith("I don't see a deal on Jetty posted")
+    flower = faq_lookup({"query": "is flower on sale", "store": "pullman"}, {})
+    assert flower["answer"].startswith("We have 30 deals on flower running right now")
+
+
+def test_deal_description_is_appended_only_when_it_adds_something():
+    from kb.deals_sync import spoken
+
+    today = datetime.date(2026, 10, 1)
+    base = {"title": "Chewee's Special", "days": None, "start_time": None, "end_time": None, "ends": None}
+    assert spoken({**base, "description": "Chewee's Caramels $14 First Come First Serve!"}, today) == (
+        "Chewee's Special. Chewee's Caramels $14 First Come First Serve!"
+    )
+    assert spoken({**base, "description": "chewee's special"}, today) == "Chewee's Special."
+    assert spoken({**base, "description": "Lowest cost in town"}, today) == "Chewee's Special."
+    long = "Buy any two and save. " + "Fine print " * 30
+    assert spoken({**base, "description": long}, today) == "Chewee's Special. Buy any two and save."
