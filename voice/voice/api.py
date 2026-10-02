@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import functools
 import hmac
+import ipaddress
 import json
 import logging
+import re
 import time
 
 from django.conf import settings
@@ -14,6 +16,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from crm.sinks import _TEST_SESSION_PREFIXES
 from voice import capabilities, safety_copy
 from voice.chat import answer_text_chat
 from voice.tools import dispatch
@@ -21,43 +24,70 @@ from voice.tools import dispatch
 logger = logging.getLogger(__name__)
 
 _RATE_LIMIT_WINDOW_SECONDS = 60
+# A chat turn is one short message; nothing legitimate comes near this. Checked on the declared
+# Content-Length before anything reads or parses the body (Django reads at most that many bytes).
+_MAX_BODY_BYTES = 16 * 1024
+# What a session id may look like: it becomes ``VoiceCall.call_id`` (max_length 64). Accepts the
+# website's ``s-<base36 time>-<base36 rand>`` (as short as ``s-a-b``).
+_SESSION_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{5,64}")
 
 
 def _client_ip(request) -> str:
+    """The visitor's IP, for a request ``_authorized`` already accepted. Every website turn arrives
+    from Vercel's servers, so the website-supplied ``X-HHT-Client-IP`` (set from Vercel's
+    x-forwarded-for) is the visitor — trusted only because the Bearer holder sent it. Without a valid
+    one: the last X-Forwarded-For hop (our own proxy's view), else REMOTE_ADDR."""
+    supplied = request.headers.get("X-HHT-Client-IP", "").strip()
+    try:
+        return str(ipaddress.ip_address(supplied))
+    except ValueError:
+        pass
     xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
     return (xff.split(",")[-1].strip() if xff else request.META.get("REMOTE_ADDR", "")) or "anon"
 
 
-def _rate_limit_key(request) -> str:
-    """Per (session_token, client IP) — the Bearer token is shared by the whole proxy, so
-    IP alone would throttle every legitimate caller together; session_token alone lets an
-    attacker rotate tokens to dodge the limit."""
+def _limit(name: str, default: int) -> int:
     try:
-        session_token = str(_body(request).get("session_token") or "")[:200]
-    except Exception:  # noqa: BLE001
-        session_token = ""
-    return f"{session_token}:{_client_ip(request)}"
+        return int(getattr(settings, name, default) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _over(key: str, limit: int) -> bool:
+    """Count one request in this fixed window; True once ``limit`` is exceeded."""
+    key = f"{key}:{int(time.time() // _RATE_LIMIT_WINDOW_SECONDS)}"
+    try:
+        cache.get_or_set(key, 0, timeout=_RATE_LIMIT_WINDOW_SECONDS)
+        count = cache.incr(key)
+    except ValueError:  # key expired between get_or_set and incr
+        cache.set(key, 1, timeout=_RATE_LIMIT_WINDOW_SECONDS)
+        count = 1
+    return count > limit
 
 
 def rate_limited(scope: str):
-    """Small cache-backed fixed-window throttle (env-tunable via HHT_VOICE_RATE_LIMIT,
-    default 60/min). Neither /api/voice/chat nor /api/voice/kb/search carried any throttle —
-    the Bearer token is a single shared proxy secret, so a leaked/compromised proxy is an
-    unmetered LLM-spend and DB-growth faucet without this."""
+    """Bearer auth, a body-size cap, and a cache-backed fixed-window throttle, in that order —
+    so an unauthenticated or oversized request is refused before its body is ever read or parsed.
+
+    Two buckets per scope: per visitor IP (``HHT_VOICE_RATE_LIMIT``, default 60/min — keyed on the
+    IP alone, since a session id is the caller's to rotate), and one global ceiling
+    (``HHT_VOICE_GLOBAL_RATE_LIMIT``, default 600/min) so rotating IPs or tokens still cannot run up
+    model spend."""
 
     def deco(view):
         @functools.wraps(view)
         def wrapped(request, *a, **kw):
-            limit = int(getattr(settings, "HHT_VOICE_RATE_LIMIT", 60) or 60)
-            bucket = int(time.time() // _RATE_LIMIT_WINDOW_SECONDS)
-            key = f"voice_rl:{scope}:{_rate_limit_key(request)}:{bucket}"
+            if not _authorized(request):
+                return JsonResponse({"ok": False, "error": "unauthorized"}, status=401)
             try:
-                count = cache.get_or_set(key, 0, timeout=_RATE_LIMIT_WINDOW_SECONDS)
-                count = cache.incr(key)
-            except ValueError:  # key expired between get_or_set and incr
-                cache.set(key, 1, timeout=_RATE_LIMIT_WINDOW_SECONDS)
-                count = 1
-            if count > limit:
+                declared = int(request.META.get("CONTENT_LENGTH") or 0)
+            except ValueError:
+                declared = 0  # Django reads an unparseable Content-Length as an empty body
+            if declared > _MAX_BODY_BYTES:
+                return JsonResponse({"ok": False, "error": "body_too_large"}, status=413)
+            if _over(f"voice_rl:{scope}:ip:{_client_ip(request)}", _limit("HHT_VOICE_RATE_LIMIT", 60)) or _over(
+                f"voice_rl:{scope}:all", _limit("HHT_VOICE_GLOBAL_RATE_LIMIT", 600)
+            ):
                 resp = JsonResponse({"ok": False, "error": "rate_limited"}, status=429)
                 resp["Retry-After"] = str(_RATE_LIMIT_WINDOW_SECONDS)
                 return resp
@@ -72,12 +102,18 @@ _VALID_STORES = {"yakima", "mount-vernon", "pullman"}
 
 
 def _authorized(request) -> bool:
-    token = getattr(settings, "HHT_BACKEND_TOKEN", "") or ""
+    """Constant-time Bearer check. ``HHT_VOICE_TOKEN`` is the website's own secret — it opens only
+    this service's endpoints. ``HHT_BACKEND_TOKEN`` is still accepted (root's own server-to-server
+    calls use it), but it must never be given to the website: it also unlocks budtender's customer
+    database."""
     header = request.headers.get("Authorization", "")
     prefix = "Bearer "
-    if not token or not header.startswith(prefix):
+    if not header.startswith(prefix):
         return False
-    return hmac.compare_digest(header[len(prefix) :], token)
+    presented = header[len(prefix) :].encode()
+    tokens = [getattr(settings, name, "") or "" for name in ("HHT_VOICE_TOKEN", "HHT_BACKEND_TOKEN")]
+    matches = [hmac.compare_digest(presented, token.encode()) for token in tokens if token]
+    return any(matches)
 
 
 def _body(request) -> dict:
@@ -123,7 +159,16 @@ def text_chat(request):
             {"ok": True, "answer": safety_copy.CHAT_OFFLINE, "grounded": False, "disabled": True}
         )
 
-    result = answer_text_chat(_body(request))
+    data = _body(request)
+    # The session id becomes ``VoiceCall.call_id``: an over-long one failed the DB write silently
+    # (resetting the under-21 block and the dispute carry every turn), and a test prefix (``pg-``,
+    # ``eval-``...) silenced staff alerts. The harnesses that use those prefixes call
+    # ``answer_text_chat`` in-process, never this view. An absent id stays allowed (root sends none).
+    session = str(data.get("session_token") or data.get("session_id") or "")
+    if session and (not _SESSION_TOKEN_RE.fullmatch(session) or session.startswith(_TEST_SESSION_PREFIXES)):
+        return JsonResponse({"ok": False, "error": "invalid session_token"}, status=400)
+
+    result = answer_text_chat(data)
     status = 200 if result.get("ok") else 400
     return JsonResponse(result, status=status)
 

@@ -244,7 +244,7 @@ def test_control_legal_citations_are_not_over_redacted():
 
 def test_fixed_voice_api_has_rate_limiting(client, settings):
     """FIXED: /api/voice/chat and /api/voice/kb/search are now wrapped in a small
-    cache-backed limiter (per session_token+client IP, env-tunable HHT_VOICE_RATE_LIMIT),
+    cache-backed limiter (per client IP + a global ceiling, env-tunable HHT_VOICE_RATE_LIMIT),
     429ing with Retry-After once the budget is exhausted. See voice/api.py::rate_limited."""
     settings.HHT_BACKEND_TOKEN = "t0ken"
     settings.HHT_VOICE_RATE_LIMIT = 3

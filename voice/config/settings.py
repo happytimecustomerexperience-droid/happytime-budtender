@@ -157,6 +157,13 @@ VAPI_SECRET_HEADER = os.environ.get("VAPI_SECRET_HEADER", "X-Vapi-Secret")
 # ── budtender microservice (03-CONVENTIONS.md §3.4) ───────────────────
 HHT_BUDTENDER_BASE_URL = os.environ.get("HHT_BUDTENDER_BASE_URL", "")
 HHT_BACKEND_TOKEN = os.environ.get("HHT_BACKEND_TOKEN", "")
+# The website's OWN Bearer for /api/voice/* (voice/api.py::_authorized also still accepts
+# HHT_BACKEND_TOKEN for root's calls). Never give the website HHT_BACKEND_TOKEN: it also unlocks
+# budtender's customer database.
+HHT_VOICE_TOKEN = os.environ.get("HHT_VOICE_TOKEN", "")
+# /api/voice/chat + /kb/search throttles, per minute: per visitor IP, and one global ceiling.
+HHT_VOICE_RATE_LIMIT = os.environ.get("HHT_VOICE_RATE_LIMIT", "60")
+HHT_VOICE_GLOBAL_RATE_LIMIT = os.environ.get("HHT_VOICE_GLOBAL_RATE_LIMIT", "600")
 HHT_BUDTENDER_TIMEOUT = int(os.environ.get("HHT_BUDTENDER_TIMEOUT", "8"))
 # ON by default → a StoreFact/AgentPrompt save nudges root's persona/store-facts refresh
 # endpoints so its caches update instantly (P6 instant-refresh chain). OFF under pytest so the
@@ -282,6 +289,9 @@ if not DEBUG:
         raise ImproperlyConfigured(
             "PHONE_HASH_PEPPER must differ from DJANGO_SECRET_KEY in production (DEBUG=0)."
         )
+    # The website's token must not be the one that also opens budtender's customer database.
+    if HHT_VOICE_TOKEN and HHT_VOICE_TOKEN == HHT_BACKEND_TOKEN:
+        raise ImproperlyConfigured("HHT_VOICE_TOKEN must differ from HHT_BACKEND_TOKEN (DEBUG=0).")
     # The Vapi webhook gate fails closed without these; refuse to boot if absent.
     _missing = [
         name
