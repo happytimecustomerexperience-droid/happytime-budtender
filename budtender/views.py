@@ -25,6 +25,7 @@ from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
                      SuggestedProduct)
 from .pairing import pair_for
 from . import facets, live_stock
+from .auth import is_website
 from .gemini_chat import (fetch_persona, generate_chat_reply_with_source,
                           invalidate_persona)
 from .intents import classify_intent, conversation_breakdown, intent_breakdown
@@ -503,7 +504,8 @@ class ChatReplyView(APIView):
                 token = "s-" + secrets.token_urlsafe(24)
             session = ChatSession.objects.create(session_token=token, location_slug=location, channel=channel)
 
-        phone = _normalize_phone(data.get("phone", "")) if data.get("phone") else ""
+        # A website visitor typed this phone: never an identity (budtender/auth.py).
+        phone = _normalize_phone(data.get("phone", "")) if data.get("phone") and not is_website(request) else ""
         if phone:
             profile = CustomerProfile.objects.filter(phone=phone).first()
             session.phone = phone
@@ -683,9 +685,11 @@ class ProductSearchView(APIView):
             request.data.get("session_token"), location_slug=location, channel="questionnaire"
         )
         # Profile drives personalization: prefer the session's linked customer,
-        # else resolve by a phone passed with the request (logged-in chat).
-        profile = session.customer if session and session.customer else None
-        if profile is None:
+        # else resolve by a phone passed with the request (logged-in chat). A website request is
+        # always anonymous — its phone was typed, and a session it can name may have been linked
+        # by a typed phone before this rule (budtender/auth.py).
+        profile = session.customer if session and session.customer and not is_website(request) else None
+        if profile is None and not is_website(request):
             profile = _profile_for_phone(request.data.get("phone") or "")
             if profile and session and not session.customer:
                 session.customer = profile
@@ -973,7 +977,7 @@ class PairingView(APIView):
         location = _safe_location(request.data.get("location"))
         sku = request.data.get("sku")
         slug = request.data.get("slug")
-        phone = request.data.get("phone") or ""
+        phone = "" if is_website(request) else (request.data.get("phone") or "")  # typed → not identity
         profile = _profile_for_phone(phone)
 
         anchor = None
@@ -1049,7 +1053,7 @@ class PersistView(APIView):
         session = _session_for_token(token)
         if session is None:
             return Response({"ok": False}, status=202)
-        phone = _normalize_phone(data.get("phone", "")) if data.get("phone") else ""
+        phone = _normalize_phone(data.get("phone", "")) if data.get("phone") and not is_website(request) else ""
         profile = CustomerProfile.objects.filter(phone=phone).first() if phone else None
         session.location_slug = _safe_location(
             (data.get("slots") or {}).get("store"), default=session.location_slug

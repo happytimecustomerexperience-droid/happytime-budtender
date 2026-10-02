@@ -25,8 +25,19 @@ class ServiceTokenPermission(BasePermission):
         if not header.startswith("Bearer "):
             return False  # fail closed, also when no token is configured
         provided = header[len("Bearer "):].strip()
+        request.website_token = False
         if _matches(provided, settings.HHT_BACKEND_TOKEN):
             return True
-        return getattr(view, "website_ok", False) and _matches(
+        if getattr(view, "website_ok", False) and _matches(
             provided, getattr(settings, "HHT_WEBSITE_TOKEN", "")
-        )
+        ):
+            # A phone in a website request was TYPED by the visitor: it is never an identity
+            # (views read ``is_website(request)`` and stay anonymous). Only the voice service's
+            # carrier caller-ID, sent with the backend token, may resolve a customer.
+            request.website_token = True
+            return True
+        return False
+
+
+def is_website(request) -> bool:
+    return bool(getattr(request, "website_token", False))
