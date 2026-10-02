@@ -387,6 +387,19 @@ class NewDropsView(APIView):
         return Response(snap)
 
 
+class DealsView(APIView):
+    """GET /api/v1/deals/ — every deal running today on each store's Dutchie online menu.
+
+    ``stores[slug]`` is the list (cached 10 min) or ``null`` when that store's Dutchie feed could not
+    be read — "unreachable" is never reported as "no deals". Auth: global ServiceTokenPermission.
+    """
+
+    def get(self, request):
+        from . import deals
+
+        return Response(deals.snapshot())
+
+
 class HealthView(APIView):
     is_public = True
 
