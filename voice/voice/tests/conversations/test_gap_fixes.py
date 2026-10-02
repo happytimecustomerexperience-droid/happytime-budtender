@@ -274,3 +274,19 @@ def test_a_complaint_session_keeps_the_dispute_apology(convo):
     c = convo()
     c.say("my order was wrong and I'm furious")
     assert c.say("I want to talk to a manager").answer.startswith("I'm sorry that happened.")
+
+
+@pytest.mark.parametrize("text", [
+    "can I get something cheaper, these prices kill me",
+])
+def test_kill_me_across_a_comma_is_an_idiom(text):
+    assert guardrails.in_scope(text)[1] != "crisis"
+
+
+@pytest.mark.django_db
+def test_handoff_guards_do_not_eat_shopping_or_delivery_asks(convo):
+    assert convo().say("got anything lighter for daytime flower").picks, "'lighter' is a shopping word"
+    t = convo().say("do you sell grinders")
+    assert "suggest_products" not in t.tools, "an accessory hand-off never re-opens the shelf"
+    t = convo().say("do you guys do doordash")
+    assert t.answer != UNDER_21, "asking about delivery is not a courier pickup"

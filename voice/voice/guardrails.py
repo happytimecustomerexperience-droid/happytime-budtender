@@ -199,8 +199,9 @@ _CRISIS = re.compile(
     r"don'?t\s+want\s+to\s+(?:live|be\s+alive|be\s+here|wake\s+up)|better\s+off\s+dead|"
     r"(?:hurt|harm)\s+myself|nothing\s+(?:left\s+)?to\s+live\s+for|"
     r"no\s+(?:reason|point)\s+(?:to|in)\s+(?:live|living|going\s+on)|"
-    r"how\s+(?:many|much)\b[^.?!]{0,60}\b(?:to\s+die|kill\s+me|lethal|(?:to\s+)?overdose)|"
-    r"(?:will|would|could|can|enough\s+to)\b[^.?!]{0,60}\bkill\s+me|"
+    # Same clause only (no comma): "can I get something cheaper, these prices kill me" is an idiom.
+    r"how\s+(?:many|much)\b[^.?!,]{0,60}\b(?:to\s+die|kill\s+me|lethal|(?:to\s+)?overdose)|"
+    r"(?:will|would|could|can|enough\s+to)\b[^.?!,]{0,60}\bkill\s+me|"
     r"medical emergency)\b",
     re.IGNORECASE,
 )

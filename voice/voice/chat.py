@@ -1072,7 +1072,9 @@ _PROXY_PURCHASE_RE = re.compile(
     # a customer") is the same third-party pickup — and delivery is not legal in WA at all.
     r"\bpick(?:ing)?\s+up\s+(?:an?\s+|the\s+)?order\s+for\s+(?:a\s+|my\s+)?"
     r"(?:customer|client|someone|somebody|friend|him|her|them)\b|"
-    r"\b(?:doordash|door\s+dash|uber\s*eats|grubhub|instacart|postmates)\b",
+    # ...a courier saying who they are — not "do you do DoorDash", which is the delivery question.
+    r"\b(?:doordash|door\s+dash|uber\s*eats|grubhub|instacart|postmates)\s+"
+    r"(?:driver|dasher|courier|shopper|order)\b",
     re.I,
 )
 
@@ -1740,8 +1742,8 @@ _HANDOFF_ONLY_RE = re.compile(
     r"\bwhich\s+(?:one\s+)?(?:has|is|'s)\s+(?:more|less|higher|lower)\s+(?:thc|cbd|potency)\b|"
     r"\bwhich\s+(?:one\s+)?is\s+stronger\b|"
     # accessories (no category for them; "510 batteries" read as a cart)
+    # ("lighter" is NOT here: "something lighter for daytime" is a shopping ask.)
     r"\b(?:510\s+)?batter(?:y|ies)\b|\bchargers?\b|\bgrinders?\b|\brolling\s+papers?\b|\bbongs?\b|"
-    r"\blighters?\b|"
     # what just arrived (no receipt data reaches the brain)
     r"\bwhat'?s\s+new\b|\bnew\s+(?:arrivals?|drops?|stuff|products?|strains?)\b|"
     r"\b(?:just|recently)\s+(?:came|come|got)\s+in\b|"
@@ -1752,7 +1754,7 @@ _HANDOFF_ONLY_RE = re.compile(
 # the shelf for quarter-ounces; the answer is the WA per-visit flower limit row.
 _OVER_LIMIT_RE = re.compile(
     r"\b(?:quarter|half)\s+(?:a\s+)?(?:pound|lb)s?\b|\b(?:a|one|1)\s+(?:pound|lb)\b|\bqp\b|"
-    r"\b(?:two|three|four|five|2|3|4|5)\s+(?:ounces|oz|zips)\b",
+    r"\b(?:two|three|four|five|2|3|4|5)\s+(?:ounces|zips)\b",  # not "oz": a 5 oz drink is a size
     re.I,
 )
 _FLOWER_LIMIT_QUERY = "what is the useable flower purchase limit per visit"
@@ -2508,13 +2510,16 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
 
     # Questions no KB row and no tool can answer (``_HANDOFF_ONLY_RE``) get the honest hand-off —
     # never a pitch for a noun they mention, never a row that merely shares one of their words.
-    if not escalation and _HANDOFF_ONLY_RE.search(ask):
+    handoff_only = not escalation and bool(_HANDOFF_ONLY_RE.search(ask))
+    if handoff_only:
         faq = {"grounded": False, "fallback": faq.get("fallback") or FAQ_FALLBACK}
         category, attempt_product_search, prefer_products = "", False, False
     # A lowercase brand/strain name ending a short ask is tried on the shelf, but only when the KB
     # had nothing to say (see ``_LOOSE_BRAND_RE``).
     loose_brand = ""
-    if not (category or attempt_product_search or escalation or faq.get("grounded")) and not _faq_first(ask):
+    if not (category or attempt_product_search or escalation or handoff_only or faq.get("grounded")) and not (
+        _faq_first(ask)
+    ):
         loose_brand = _brand_from_text(ask, loose=True)
         attempt_product_search = bool(loose_brand)
 
