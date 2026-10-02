@@ -15,11 +15,15 @@ worker boot), so it is safe to import under pytest with no Redis.
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import task_prerun
+from celery.signals import task_failure, task_prerun, task_success
+
+logger = logging.getLogger(__name__)
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
@@ -55,6 +59,68 @@ def _refresh_dashboard_credentials(*args, **kwargs):
     from dashboard import credentials
 
     credentials.refresh_if_stale()
+
+
+# ── job reporting: every beat-scheduled run lands on the dashboard Health page (JobRun) ──────────
+# Prerun/success/failure all fire in the process that executes the task, so a per-process dict
+# links a run's start to its end. Only tasks named in ``beat_schedule`` are recorded (no second
+# list to keep in step); recording is best-effort and never raises into the task.
+_OPEN_RUNS: dict[str, int] = {}  # task id -> JobRun pk, for beat tasks running in this process
+
+
+def _job_outcome(result) -> tuple[bool, str]:
+    """(ok, summary) for a task that returned. ``{"skipped": ...}`` (a capability switched off, a
+    store unreachable) is not a failure — it is recorded ok with the reason."""
+    if isinstance(result, dict):
+        if "skipped" in result:
+            return True, f"skipped: {result['skipped']}"
+        return True, json.dumps(result, default=str, sort_keys=True)
+    return True, "" if result is None else str(result)
+
+
+def _is_beat_task(task) -> bool:
+    return task is not None and task.name in {e["task"] for e in app.conf.beat_schedule.values()}
+
+
+def _job_run_end(task, task_id, ok: bool, summary: str) -> None:
+    """Close the run opened at prerun; if the start was never recorded (a transient DB error),
+    still report the end."""
+    try:
+        if not _is_beat_task(task):
+            return
+        from dashboard.models import JobRun
+
+        pk = _OPEN_RUNS.pop(task_id, None)
+        if pk is None:
+            JobRun.record(task.name, ok=ok, summary=summary, source="beat")
+        else:
+            JobRun.objects.get(pk=pk).finish(ok, summary)
+    except Exception:  # noqa: BLE001 - reporting must never break the job it reports on
+        logger.warning("job run end not recorded", exc_info=True)
+
+
+@task_prerun.connect
+def _job_run_started(sender=None, task_id=None, task=None, **kwargs):
+    try:
+        if _is_beat_task(task):
+            from dashboard.models import JobRun
+
+            _OPEN_RUNS[task_id] = JobRun.begin(task.name, "beat").pk
+    except Exception:  # noqa: BLE001 - reporting must never break the job it reports on
+        logger.warning("job run start not recorded", exc_info=True)
+
+
+@task_success.connect
+def _job_run_succeeded(sender=None, result=None, **kwargs):
+    try:
+        _job_run_end(sender, sender.request.id, *_job_outcome(result))
+    except Exception:  # noqa: BLE001 - e.g. a result that will not serialize
+        logger.warning("job run end not recorded", exc_info=True)
+
+
+@task_failure.connect
+def _job_run_failed(sender=None, task_id=None, exception=None, **kwargs):
+    _job_run_end(sender, task_id, False, f"{type(exception).__name__}: {exception}"[:500])
 
 
 @app.task(bind=True, ignore_result=True)

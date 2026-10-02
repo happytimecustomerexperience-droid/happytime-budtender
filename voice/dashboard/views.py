@@ -768,6 +768,8 @@ def conversation_history(request):
     """Unified recent conversation list across voice calls and website chatbot sessions."""
     from voice.models import VoiceCall
 
+    from . import monitor
+
     limit = _bounded_int(request.GET.get("limit"), default=25, lo=1, hi=100)
     rows = []
     for call in VoiceCall.objects.order_by("-created_at")[:limit]:
@@ -779,7 +781,9 @@ def conversation_history(request):
                 "when": call.created_at.isoformat(),
                 "conversation_id": call.call_id,
                 "summary": " ".join(str(snippet or "").split())[:220],
-                "status": call.get_outcome_display() if call.outcome else "in flight",
+                "status": call.get_outcome_display()
+                if call.outcome
+                else ("in flight" if monitor.is_live(call) else "ended (no report)"),
                 "href": reverse("dash-call-detail", kwargs={"pk": call.pk}),
             }
         )

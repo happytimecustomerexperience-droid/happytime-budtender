@@ -2,7 +2,7 @@
 {% load monitor_tags %}
 {% block title %}Call {{ call.call_id }} — Happy Time Voice{% endblock %}
 {% block content %}
-{% with b=call.outcome|outcome_badge %}
+{% with b=call|call_badge %}
 <p class="muted"><a href="{% url 'dash-call-log' %}">← Call log</a></p>
 <div class="row between">
   <h1>Call {{ call.call_id }}</h1>

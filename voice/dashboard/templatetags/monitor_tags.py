@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from django import template
 
-from ..monitor import call_outcome_badge
+from ..monitor import call_outcome_badge, call_status_badge
 
 register = template.Library()
 
@@ -18,4 +18,12 @@ register = template.Library()
 def outcome_badge(outcome: str) -> dict[str, str]:
     """{{ call.outcome|outcome_badge }} → {"label": ..., "color": ...} for ``<span class="badge {{ b.color }}">{{ b.label }}</span>``."""
     label, color = call_outcome_badge(outcome)
+    return {"label": label, "color": color}
+
+
+@register.filter(name="call_badge")
+def call_badge(call) -> dict[str, str]:
+    """{{ call|call_badge }} — like ``outcome_badge`` but age-aware: a blank-outcome call past the
+    live window is "Ended (no report)", not "In progress"."""
+    label, color = call_status_badge(call)
     return {"label": label, "color": color}

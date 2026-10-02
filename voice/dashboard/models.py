@@ -11,6 +11,7 @@ the editable source the push syncs.
 from __future__ import annotations
 
 from django.db import models
+from django.utils import timezone
 
 # budtender's anonymous (margin-first) + known (taste-first) defaults — the fresh-install baseline.
 DEFAULT_W_ANON = {
@@ -122,3 +123,58 @@ class RankingWeights(models.Model):
 
     def __str__(self) -> str:
         return f"RankingWeights(margin_emphasis={self.margin_emphasis})"
+
+
+class JobRun(models.Model):
+    """One run of a background job — a Celery beat task, a host cron script, or a manual run —
+    reported to the dashboard Health page (``dashboard/health.py``). ``ok`` is null while running.
+
+    Written by the Celery signal handlers in ``core/celery.py`` (source ``beat``) and by
+    ``manage.py record_job_run`` (source ``cron`` / ``manual``). The newest ``KEEP`` rows per
+    ``name`` are kept; older ones are pruned on write."""
+
+    KEEP = 50
+    SOURCES = [("beat", "beat"), ("cron", "cron"), ("manual", "manual")]
+
+    name = models.CharField(max_length=64, db_index=True)
+    started_at = models.DateTimeField(default=timezone.now)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    ok = models.BooleanField(null=True, blank=True)
+    summary = models.CharField(max_length=500, blank=True)
+    source = models.CharField(max_length=8, choices=SOURCES)
+
+    class Meta:
+        ordering = ["-started_at", "-id"]
+
+    def __str__(self) -> str:
+        state = "running" if self.ok is None else ("ok" if self.ok else "FAILED")
+        return f"JobRun<{self.name} {state}>"
+
+    @classmethod
+    def begin(cls, name: str, source: str) -> JobRun:
+        """Open a run (``ok`` null = running); close it with ``finish``."""
+        row = cls.objects.create(name=name, source=source)
+        cls._prune(name)
+        return row
+
+    def finish(self, ok: bool, summary: str = "") -> None:
+        self.ok, self.summary, self.finished_at = ok, (summary or "")[:500], timezone.now()
+        self.save(update_fields=["ok", "summary", "finished_at"])
+
+    @classmethod
+    def record(cls, name: str, *, ok: bool, summary: str = "", source: str = "manual") -> JobRun:
+        """A run that is already over (a host script reporting once, at its end)."""
+        now = timezone.now()
+        row = cls.objects.create(
+            name=name, source=source, ok=ok, summary=(summary or "")[:500],
+            started_at=now, finished_at=now,
+        )
+        cls._prune(name)
+        return row
+
+    @classmethod
+    def _prune(cls, name: str) -> None:
+        keep = list(
+            cls.objects.filter(name=name).order_by("-started_at", "-id").values_list("pk", flat=True)[: cls.KEEP]
+        )
+        cls.objects.filter(name=name).exclude(pk__in=keep).delete()

@@ -29,7 +29,7 @@
       <th><a href="?sort={% if sort_field == 'created_at' and sort_dir == 'asc' %}-{% endif %}created_at&{{ base_qs }}">When</a></th>
     </tr>
     {% for c in calls %}
-      {% with b=c.outcome|outcome_badge %}
+      {% with b=c|call_badge %}
       <tr>
         <td><a href="{% url 'dash-call-detail' c.pk %}">{{ c.pk }}</a></td>
         <td>{{ c.store|default:'—' }}</td>

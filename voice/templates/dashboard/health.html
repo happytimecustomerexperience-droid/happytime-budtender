@@ -1,0 +1,62 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Health — Happy Time Voice{% endblock %}
+{% block content %}
+<h1>Background jobs</h1>
+<p class="muted" style="max-width:760px">One row per job, from what each job reported when it finished. <strong>STALE</strong> means the
+last finish is older than the job should allow. A job that has never reported says so — that is not the same as healthy.
+Times are Pacific.</p>
+
+<div class="card" data-testid="health-jobs">
+  <div class="table-wrap">
+  <table class="health-table">
+    <thead><tr><th>Job</th><th>Status</th><th>Last finish</th><th>Stale after</th><th>What it said</th></tr></thead>
+    <tbody>
+      {% for j in jobs %}
+      <tr data-testid="job-row-{{ j.name }}">
+        <td><strong>{{ j.name }}</strong>{% if j.source %}<div class="muted" style="font-size:12px">{{ j.source }}</div>{% endif %}</td>
+        <td data-label="Status">
+          {% if j.status == "ok" %}<span class="badge green">ok</span>
+          {% elif j.status == "FAILED" %}<span class="badge red">FAILED</span>
+          {% elif j.status == "running" %}<span class="badge blue">running</span>
+          {% else %}<span class="badge slate">{{ j.status }}</span>{% endif %}
+          {% if j.running %}<span class="badge blue">running now</span>{% endif %}
+          {% if j.stale %}<span class="badge amber">STALE</span>{% endif %}
+        </td>
+        <td data-label="Last finish">{% if j.when %}{{ j.when }}<div class="muted" style="font-size:12px">{{ j.age }}</div>{% else %}—{% endif %}</td>
+        <td data-label="Stale after">{{ j.stale_after|default:"—" }}</td>
+        <td data-label="Said">{{ j.summary|default:"—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card" data-testid="health-freshness">
+  <h2>Data freshness</h2>
+  <p class="muted" style="font-size:12px;margin-top:0">Read from the data itself. A deal row only changes when its deal does, so an old
+  date here does not mean the sync stopped — the <code>kb.sync_deals</code> row above says whether it ran.</p>
+  <div class="table-wrap">
+  <table class="health-table">
+    <tbody>
+      {% for f in freshness %}
+      <tr>
+        <td><strong>{{ f.name }}</strong></td>
+        <td data-label="Newest">{% if f.when %}{{ f.when }} <span class="muted">({{ f.age }})</span>{% if f.detail %} <span class="muted">· {{ f.detail }}</span>{% endif %}{% else %}<span class="badge slate">none</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+<style>
+  /* Phones: stack each row so nothing needs sideways scrolling. */
+  @media (max-width: 720px) {
+    .health-table, .health-table tbody, .health-table tr, .health-table td { display: block; width: auto !important; white-space: normal; }
+    .health-table thead { display: none; }
+    .health-table tr { border-bottom: 1px solid var(--border); padding: 8px 0; }
+    .health-table td { border-bottom: 0; padding: 3px 0; }
+    .health-table td[data-label]::before { content: attr(data-label) ": "; font-weight: 600; }
+  }
+</style>
+{% endblock %}

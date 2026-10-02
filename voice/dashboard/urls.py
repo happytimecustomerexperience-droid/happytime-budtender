@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from . import views
+from . import health, views
 from .playground import playground, playground_send
 
 urlpatterns = [
@@ -82,6 +82,7 @@ urlpatterns = [
     path("capabilities/", views.capabilities_page, name="dash-capabilities"),
     path("capabilities/toggle", views.capability_toggle, name="dash-capability-toggle"),
     # publish to Vapi
+    path("health/", health.health, name="dash-health"),
     path("publish/", views.publish_page, name="dash-publish"),
     path("publish/run", views.publish_vapi, name="dash-publish-run"),
 ]

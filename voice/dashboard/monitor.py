@@ -33,9 +33,22 @@ def call_outcome_badge(outcome: str) -> tuple[str, str]:
     return _OUTCOME_BADGE.get(outcome or "", ("In progress" if not outcome else outcome, "slate"))
 
 
+def is_live(call) -> bool:
+    """THE live predicate: no outcome yet AND first logged within the last 2 hours. A blank-outcome
+    call older than that never got its end-of-call report — it is over, not in flight."""
+    return not call.outcome and call.created_at >= timezone.now() - _LIVE_WINDOW
+
+
+def call_status_badge(call) -> tuple[str, str]:
+    """(label, color-key) for a call row: the outcome badge, except a blank-outcome call that is no
+    longer live reads "Ended (no report)" rather than "In progress" forever."""
+    if not call.outcome and not is_live(call):
+        return "Ended (no report)", "amber"
+    return call_outcome_badge(call.outcome)
+
+
 def live_calls(limit: int = 25):
-    """In-flight calls — logged in the last 2 hours with no outcome stamped yet (the eocr hasn't
-    classified them)."""
+    """In-flight calls — ``is_live`` as a queryset filter (keep the two in step)."""
     since = timezone.now() - _LIVE_WINDOW
     return VoiceCall.objects.filter(outcome="", created_at__gte=since).order_by("-created_at")[:limit]
 

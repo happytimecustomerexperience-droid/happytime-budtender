@@ -55,6 +55,7 @@ DASH_ROUTES = [
     ("dash-vendor-update", {"pk": 1}),
     ("dash-capabilities", {}),
     ("dash-capability-toggle", {}),
+    ("dash-health", {}),
     ("dash-publish", {}),
     ("dash-publish-run", {}),
 ]
