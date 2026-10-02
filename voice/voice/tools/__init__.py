@@ -32,6 +32,16 @@ def dispatch(name: str, args: dict, ctx: dict) -> dict:
     if handler is None:
         logger.warning("unknown tool requested: %s", name)
         return {"error": "unknown_tool", "tool": name}
+    from voice import capabilities, safety_copy
+
+    if not capabilities.tool_allowed(name):  # the owner's switch (/dashboard/capabilities/)
+        return {
+            "disabled": True,
+            "tool": name,
+            "answer": None,
+            "grounded": False,
+            "fallback": safety_copy.TOOL_DISABLED,
+        }
     try:
         result = handler(_sanitize_args(name, args or {}), ctx or {})
     except Exception:  # noqa: BLE001 - a handler error must not crash the webhook

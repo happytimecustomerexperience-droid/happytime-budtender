@@ -36,6 +36,10 @@ def notify_n8n(args: dict, ctx: dict) -> dict:
         return {"ok": False, "reason": "missing event_type"}
     if not url:
         return {"ok": False, "reason": "n8n not configured"}
+    from voice import capabilities
+
+    if not capabilities.is_enabled("alerts.n8n"):  # "Nothing is sent to n8n" when switched off
+        return {"ok": False, "reason": "n8n switched off"}
 
     store = (args.get("store") or ctx.get("store") or "").strip()
     payload = {

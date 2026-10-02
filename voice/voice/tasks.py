@@ -150,7 +150,10 @@ def check_store_facts_nightly() -> dict:
     staff alert (existing ``crm.sinks`` email/n8n path) on drift. Read-only; never raises — a
     request failure just skips the comparison for this run (there is always a next night)."""
     from kb.management.commands.check_store_facts import diff_against_site
+    from voice import capabilities
 
+    if not capabilities.is_enabled("auto.nightly_drift_check"):
+        return {"skipped": "capability off"}
     try:
         rows = diff_against_site()
     except Exception:  # noqa: BLE001 — a fetch/compare failure must never crash the beat worker

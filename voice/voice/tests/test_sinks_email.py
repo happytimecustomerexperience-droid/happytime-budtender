@@ -24,7 +24,7 @@ def _locmem(settings):
     settings.STAFF_ALERT_EMAIL_YAKIMA = ""
     settings.STAFF_ALERT_EMAIL_MTVERNON = ""
     settings.STAFF_ALERT_EMAIL_PULLMAN = ""
-    settings.SLACK_ALERTS_ENABLED = False
+    settings.SLACK_WEBHOOK_URL = ""  # no Slack unless a test sets the URL (switch defaults on)
 
 
 def _call(**kw):
@@ -99,7 +99,6 @@ def test_email_leak_guard_no_cost_or_margin():
 @pytest.mark.django_db
 def test_slack_leak_guard_no_cost_or_margin(settings, monkeypatch):
     """Slack is optional, but when enabled it gets the same no-cost/no-margin wall as email."""
-    settings.SLACK_ALERTS_ENABLED = True
     settings.SLACK_WEBHOOK_URL = "https://hooks.slack.test/alert"
     sent = {}
 

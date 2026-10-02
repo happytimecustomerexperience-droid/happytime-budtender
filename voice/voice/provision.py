@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from django.conf import settings
 
 from core.services import vapi
+from voice import capabilities
 from voice import constants as C
 from voice import safety_copy as S
 
@@ -94,6 +95,14 @@ _OWNER_SAFETY_LINES = (
 _OWNER_SAFETY_UNDER_21_LINE = (
     f'- Caller is under 21 or buying for someone who is: "{S.UNDER_21.strip()}"\n'
 )
+# Appended only while the owner has "Transfer phone calls to a person" (call.transfer) OFF — the
+# transferCall tool is then not attached, so the prompt must not promise one.
+_NO_TRANSFER_LINE = (
+    "- Call transfers are switched off: never offer or promise to transfer or connect the caller "
+    "to a person. Take their name and what they need, and alert staff with the tool you have.\n"
+)
+
+INACTIVE = "inactive, left unchanged"
 
 
 # ── Report shapes (§4.11) ──────────────────────────────────────────────────────
@@ -211,6 +220,8 @@ def _with_runtime_safety(body: str, role: str) -> str:
         safety += _AGE_GATE_SAFETY
     under_21 = "" if role == "vendor" else _OWNER_SAFETY_UNDER_21_LINE
     safety += _OWNER_SAFETY_LINES.format(under_21=under_21)
+    if role != "written" and not capabilities.is_enabled("call.transfer"):
+        safety += _NO_TRANSFER_LINE
     if "IMMUTABLE RUNTIME SAFETY" in body:
         return body
     return f"{body.rstrip()}{safety}"
@@ -295,14 +306,18 @@ def _resolve_tool_ids(role: str, warnings: list[str], prompt=None) -> tuple[list
             warnings.append(f"unknown tool: {tool_name}")
             ok = False
             continue
+        if not capabilities.tool_allowed(tool_name):
+            warnings.append(f"tool switched off: {tool_name}")
+            continue
         rec = VapiObject.objects.filter(kind="tool", name=tool_name).first()
         if rec and rec.vapi_id:
             ids.append(rec.vapi_id)
         else:
             warnings.append(f"tool not provisioned: {tool_name}")
             ok = False
-    # The faq member also carries the KB Query Tool id (attached by ensure_files).
-    if role == "faq":
+    # The faq member also carries the KB Query Tool id (attached by ensure_files) — it answers
+    # store questions from the same KB, so it follows the faq_lookup switch.
+    if role == "faq" and capabilities.tool_allowed("faq_lookup"):
         qt = VapiObject.objects.filter(kind="tool", name="kb_query").first()
         if qt and qt.vapi_id and qt.vapi_id not in ids:
             ids.append(qt.vapi_id)
@@ -331,7 +346,9 @@ def build_assistant_payload(role: str, *, name: str | None = None) -> tuple[dict
     warnings: list[str] = []
     prompt = AgentPrompt.objects.filter(role=role, is_active=True).first()
     body_text = _with_runtime_safety(prompt.body if prompt else "", role)
-    if not prompt:
+    if not prompt and AgentPrompt.objects.filter(role=role).exists():
+        warnings.append(INACTIVE)  # callers skip: never PATCH a switched-off member blank
+    elif not prompt:
         warnings.append(f"no AgentPrompt(role={role}) — system prompt is empty")
 
     tool_ids, _tools_ok = _resolve_tool_ids(role, warnings, prompt)
@@ -357,8 +374,9 @@ def build_assistant_payload(role: str, *, name: str | None = None) -> tuple[dict
         "messages": [{"role": "system", "content": body_text}],
         "toolIds": tool_ids,
     }
-    # vendor/escalation carry the built-in transferCall inline (warm + summaryPlan, §4.8).
-    if role in ("vendor", "escalation"):
+    # vendor/escalation carry the built-in transferCall inline (warm + summaryPlan, §4.8) —
+    # unless the owner switched transfers off.
+    if role in ("vendor", "escalation") and capabilities.is_enabled("call.transfer"):
         model["tools"] = [_transfer_tool(role, warnings)]
 
     payload = {
@@ -507,7 +525,7 @@ def ensure_assistant(role: str, *, name: str | None = None) -> ReconcileResult:
     ``skipped`` with a warning and NO PATCH is sent (never a dangling toolId — C3)."""
     asst_name = name or role
     payload, warnings = build_assistant_payload(role, name=asst_name)
-    if any(w.startswith("tool not provisioned") for w in warnings):
+    if any(w.startswith(("tool not provisioned", INACTIVE)) for w in warnings):
         return ReconcileResult("assistant", asst_name, action="skipped", warnings=warnings)
 
     result = _reconcile(

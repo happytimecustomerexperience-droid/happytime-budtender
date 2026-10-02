@@ -232,8 +232,8 @@ STAFF_ALERT_EMAIL_MTVERNON = os.environ.get("STAFF_ALERT_EMAIL_MTVERNON", "")
 STAFF_ALERT_EMAIL_PULLMAN = os.environ.get("STAFF_ALERT_EMAIL_PULLMAN", "")
 
 # ── Slack (optional secondary sink; 03-CONVENTIONS.md §3.8) ────────────
+# On/off is the "Post staff alerts to Slack" switch on /dashboard/capabilities/ (alerts.slack).
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
-SLACK_ALERTS_ENABLED = _env_bool("SLACK_ALERTS_ENABLED", "0")
 
 # ── n8n (optional outbound automation sink; P6) — POST each call event here ───
 # Set from the credentials editor (or .env). Empty → the n8n sink is skipped.

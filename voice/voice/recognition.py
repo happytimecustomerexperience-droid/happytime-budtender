@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 
 from crm.models import phone_hash as _phone_hash
+from voice import capabilities
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,9 @@ def resolve_caller(number: str, ctx: dict, *, client=None) -> dict:
     ctx["recognition_resolved"] = True
 
     e164 = normalize_e164(number)
-    if not e164:  # blocked / anonymous caller-ID → margin-first, no error
+    # blocked / anonymous caller-ID, or the owner switched recognition off → treated as a new
+    # customer (margin-first), no profile lookup, no error.
+    if not e164 or not capabilities.is_enabled("call.recognize_caller"):
         ctx["known"] = False
         ctx["session_token"] = None
         ctx["profile_summary"] = {"has_history": False, "top_categories": [], "price_tier": ""}

@@ -37,3 +37,12 @@ NO_CURRENT_SPECIALS = (
 
 # faq_lookup's own no-confident-match fallback (voice/tools/faq.py).
 FAQ_FALLBACK = "I'm not certain on that one — let me get a team member who can help."
+
+# NEW COPY — owner sign-off. voice/tools/__init__.py::dispatch — the owner switched this tool off
+# on /dashboard/capabilities/.
+TOOL_DISABLED = "I can't help with that one here right now — a team member at the store can."
+
+# NEW COPY — owner sign-off. voice/api.py::text_chat — the owner switched the website chat off.
+CHAT_OFFLINE = (
+    "Our website chat is offline right now — please call the store and a budtender will help."
+)

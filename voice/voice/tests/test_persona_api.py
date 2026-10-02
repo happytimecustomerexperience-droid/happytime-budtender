@@ -49,7 +49,10 @@ def test_persona_returns_expected_shape(client, settings):
 
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body) == {"ok", "written_system_instruction", "greeting", "updated_at"}
+    assert set(body) == {
+        "ok", "written_system_instruction", "greeting", "updated_at", "website_chat_enabled"
+    }
+    assert body["website_chat_enabled"] is True  # channel.website_chat defaults on
     assert body["ok"] is True
     assert "warm, friendly voice of Happy Time Weed" in body["written_system_instruction"]
     assert "IMMUTABLE RUNTIME SAFETY" in body["written_system_instruction"]

@@ -118,3 +118,20 @@ def _isolate_deploy_env(settings):
     # ensure_phone_number try to reconcile a number the mocked Vapi returns None for ("cannot
     # create"). Clear it so the phone step skips by default; a phone-attach test would set it back.
     settings.VAPI_PHONE_NUMBER_ID = ""
+
+
+@pytest.fixture(autouse=True)
+def _capability_defaults_without_db(request, monkeypatch):
+    # The capability switchboard (voice/capabilities.py) lives in the DB and fails CLOSED when it
+    # can't be read, so a unit test with no DB access would see every switch OFF (every tool
+    # "disabled"). Give it the declared defaults — what a fresh install with no BotCapability rows
+    # answers. Tests with DB access read the real rows.
+    if request.node.get_closest_marker("django_db") or {"db", "transactional_db"} & set(
+        request.fixturenames
+    ):
+        return
+    from voice import capabilities
+
+    monkeypatch.setattr(
+        capabilities, "states", lambda: {c.key: c.default for c in capabilities.CAPABILITIES}
+    )

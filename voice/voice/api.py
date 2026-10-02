@@ -14,6 +14,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from voice import capabilities, safety_copy
 from voice.chat import answer_text_chat
 from voice.tools import dispatch
 
@@ -117,6 +118,10 @@ def text_chat(request):
     """Shared website-chat endpoint backed by the same grounded tool layer as Vapi."""
     if not _authorized(request):
         return JsonResponse({"ok": False, "error": "unauthorized"}, status=401)
+    if not capabilities.is_enabled("channel.website_chat"):  # the owner switched chat off
+        return JsonResponse(
+            {"ok": True, "answer": safety_copy.CHAT_OFFLINE, "grounded": False, "disabled": True}
+        )
 
     result = answer_text_chat(_body(request))
     status = 200 if result.get("ok") else 400
@@ -163,6 +168,7 @@ def persona(request):
             "written_system_instruction": body,
             "greeting": entry_greeting(),
             "updated_at": updated_at.isoformat(),
+            "website_chat_enabled": capabilities.is_enabled("channel.website_chat"),
         }
     )
 

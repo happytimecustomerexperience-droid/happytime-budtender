@@ -8,8 +8,12 @@ sink is independent (one failing never blocks the others) and ``dispatch`` is **
 ``(voice_call, sink)`` via the ``AlertDelivery`` ledger, so a re-delivered eocr (Vapi retries) never
 re-sends an email. ``dispatch`` never raises — a sink failure is recorded ``failed``, never fatal.
 
-Slack is the optional secondary sink (off until ``SLACK_ALERTS_ENABLED`` + ``SLACK_WEBHOOK_URL``,
-O-9) and only fires on an immediate alert — the durable ``VoiceCall`` + email are authoritative.
+Slack is the optional secondary sink (off until ``SLACK_WEBHOOK_URL`` is set, O-9) and only fires
+on an immediate alert — the durable ``VoiceCall`` + email are authoritative.
+
+Each outbound sink also follows its owner switch on /dashboard/capabilities/ (``alerts.email`` /
+``alerts.slack`` / ``alerts.n8n``); the test-session suppression in ``dispatch`` runs before any
+of them.
 
 Leak-Guard (12-P2 §4.5): the email body is built ONLY from ``VoiceCall`` fields + ``ai_summary`` —
 no product cost/margin field exists on the row; a contract test asserts no ``cost``/``margin``
@@ -26,7 +30,7 @@ from html import escape
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 
-from voice import outcomes
+from voice import capabilities, outcomes
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +174,7 @@ class EmailSink(Sink):
     name = "email"
 
     def enabled(self, voice_call) -> bool:
-        return bool(_recipients_for(voice_call.store))
+        return capabilities.is_enabled("alerts.email") and bool(_recipients_for(voice_call.store))
 
     def deliver(self, voice_call) -> None:
         recipients = _recipients_for(voice_call.store)
@@ -199,9 +203,9 @@ class SlackSink(Sink):
     name = "slack"
 
     def enabled(self, voice_call) -> bool:
-        # Off by default (O-9); fires ONLY on an immediate alert when configured + enabled.
+        # Fires ONLY on an immediate alert, when the webhook URL is set and the switch is on.
         return bool(
-            getattr(settings, "SLACK_ALERTS_ENABLED", False)
+            capabilities.is_enabled("alerts.slack")
             and getattr(settings, "SLACK_WEBHOOK_URL", "")
             and _is_immediate(voice_call)
         )
@@ -234,7 +238,7 @@ class N8nSink(Sink):
 
     def enabled(self, voice_call) -> bool:
         # The credentials editor applies N8N_WEBHOOK_URL to settings (and os.environ) on save.
-        return bool(getattr(settings, "N8N_WEBHOOK_URL", ""))
+        return capabilities.is_enabled("alerts.n8n") and bool(getattr(settings, "N8N_WEBHOOK_URL", ""))
 
     def deliver(self, voice_call) -> None:
         url = settings.N8N_WEBHOOK_URL
@@ -327,7 +331,7 @@ def send_staff_alert(subject: str, markdown_table: str) -> None:
     already idempotent by construction — it only fires once a night and only on drift). Never
     raises — each sink's failure is logged, not fatal."""
     recipients = _recipients_for("")
-    if recipients:
+    if recipients and capabilities.is_enabled("alerts.email"):
         try:
             EmailMultiAlternatives(
                 subject=subject[:120],
@@ -339,7 +343,7 @@ def send_staff_alert(subject: str, markdown_table: str) -> None:
             logger.warning("send_staff_alert: email failed", exc_info=True)
 
     n8n_url = getattr(settings, "N8N_WEBHOOK_URL", "")
-    if n8n_url:
+    if n8n_url and capabilities.is_enabled("alerts.n8n"):
         try:
             data = json.dumps({"event": "store_facts_drift", "subject": subject, "table": markdown_table}).encode()
             req = urllib.request.Request(
