@@ -52,6 +52,8 @@ for _origin in ("https://happytimeweed.com", "https://www.happytimeweed.com"):
 
 # Service token the website presents. Required in production.
 HHT_BACKEND_TOKEN = env("HHT_BACKEND_TOKEN", "")
+# The public site's own token: opens only the views marked website_ok (budtender/auth.py).
+HHT_WEBSITE_TOKEN = env("HHT_WEBSITE_TOKEN", "")
 
 # ── Bundle landing (/custom-order) ───────────────────────────────────────────
 # Shared with alpine-automations, which SIGNS the emailed links this app VERIFIES.
@@ -288,6 +290,9 @@ if not DEBUG:
             raise ImproperlyConfigured(
                 f"Missing required prod settings (DEBUG=0): {', '.join(_missing)}."
             )
+        if HHT_WEBSITE_TOKEN and HHT_WEBSITE_TOKEN == HHT_BACKEND_TOKEN:
+            # The same value would silently give the website every view (budtender/auth.py).
+            raise ImproperlyConfigured("HHT_WEBSITE_TOKEN must differ from HHT_BACKEND_TOKEN (DEBUG=0).")
     SECURE_SSL_REDIRECT = False  # TLS terminates at Cloudflare tunnel
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     SESSION_COOKIE_SECURE = True

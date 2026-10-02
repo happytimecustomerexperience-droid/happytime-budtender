@@ -1347,3 +1347,14 @@ class StoreFactsRefreshView(APIView):
             "stores": list(facts["stores"].keys()),
             "updated_at": timezone.now().isoformat(),
         })
+
+
+# The public site's server routes call exactly these with HHT_WEBSITE_TOKEN (budtender.auth). Every
+# other view — customer roster/detail, chat history, resume-by-phone, phone carts, profile upsert,
+# admin and refresh hooks — needs HHT_BACKEND_TOKEN, which only the voice service holds.
+for _view in (
+    SessionStartView, ChatReplyView, ProductSearchView, InStockProductsView, NewDropsView, DealsView,
+    ProductBySkuView, PriceBandsView, SubtypesView, SizesView, DohOptionsView, PairingView,
+    PersistView, TrackView, FeedbackView, AnalyticsSummaryView,
+):
+    _view.website_ok = True

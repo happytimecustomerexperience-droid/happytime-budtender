@@ -1,23 +1,32 @@
-"""Service-token auth. Only the website's server-side proxy may call this API."""
+"""Service-token auth. Only the website's server-side proxy and the voice service may call this API."""
 import hmac
 
 from django.conf import settings
 from rest_framework.permissions import BasePermission
 
 
+def _matches(provided: str, expected: str) -> bool:
+    return bool(expected) and hmac.compare_digest(provided, expected)  # constant-time
+
+
 class ServiceTokenPermission(BasePermission):
+    """``HHT_BACKEND_TOKEN`` (the voice service + dashboard) opens every view. ``HHT_WEBSITE_TOKEN``
+    opens only views marked ``website_ok = True`` — the public site's server routes (menu, search,
+    its own chat) — so a leak of the website's env cannot read the customer roster, chat
+    transcripts, or anyone's profile by phone."""
+
     message = "Invalid or missing service token."
 
     def has_permission(self, request, view) -> bool:
         # Health check is open (no token) so orchestrators can probe it.
         if getattr(view, "is_public", False):
             return True
-        expected = settings.HHT_BACKEND_TOKEN
-        if not expected:
-            return False  # fail closed if not configured
         header = request.META.get("HTTP_AUTHORIZATION", "")
         if not header.startswith("Bearer "):
-            return False
+            return False  # fail closed, also when no token is configured
         provided = header[len("Bearer "):].strip()
-        # constant-time compare
-        return hmac.compare_digest(provided, expected)
+        if _matches(provided, settings.HHT_BACKEND_TOKEN):
+            return True
+        return getattr(view, "website_ok", False) and _matches(
+            provided, getattr(settings, "HHT_WEBSITE_TOKEN", "")
+        )
