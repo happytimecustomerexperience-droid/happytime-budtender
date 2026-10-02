@@ -61,11 +61,14 @@ def handle_stage_phone_cart(args: dict, ctx: dict) -> dict:
     if action not in _ACTIONS:
         return {"ok": False, "error": "unknown_action"}
 
+    # Which draft this is comes from the call, never from the model: budtender finds a draft by
+    # draft_token first, then call_id, then session_token, so a model-supplied value (a prompt
+    # injection, a hallucination) could edit or release another caller's order.
     payload = {
         "action": action,
         "store": _store(args, ctx),
-        "call_id": str(args.get("call_id") or ctx.get("call_id") or "")[:80],
-        "session_token": str(args.get("session_token") or ctx.get("session_token") or "")[:80],
+        "call_id": str(ctx.get("call_id") or "")[:80],
+        "session_token": str(ctx.get("session_token") or "")[:80],
         "phone": str(ctx.get("_caller_phone") or ctx.get("caller_number") or "")[:40],
         "pickup_name": str(args.get("pickup_name") or "")[:120],
         "audit": {
@@ -73,8 +76,12 @@ def handle_stage_phone_cart(args: dict, ctx: dict) -> dict:
             "tool_call_id": str(ctx.get("tool_call_id") or ""),
         },
     }
-    if args.get("draft_token"):
-        payload["draft_token"] = str(args["draft_token"])[:64]
+    # A draft token only when it is the one THIS call's own staging reply returned (kept on ctx
+    # below for the rest of the request). Otherwise it is dropped and budtender resolves the draft
+    # by this call's call_id/session_token.
+    staged = str(ctx.get("_staged_draft_token") or "")
+    if staged and str(args.get("draft_token") or "")[:64] == staged:
+        payload["draft_token"] = staged
     if args.get("sku"):
         payload["sku"] = str(args["sku"])[:64]
     if "quantity" in args:
@@ -84,4 +91,7 @@ def handle_stage_phone_cart(args: dict, ctx: dict) -> dict:
         out = budtender().phone_cart_release(payload)
     else:
         out = budtender().phone_cart_upsert(payload)
+    draft = out.get("draft") if out.get("ok") else None
+    if isinstance(draft, dict) and draft.get("draft_token"):
+        ctx["_staged_draft_token"] = str(draft["draft_token"])[:64]
     return {**out, "spoken_summary": _summary(action, out)}
