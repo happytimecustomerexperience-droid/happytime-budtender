@@ -24,9 +24,11 @@ LAB_BEVERAGE = {"Cannabinoids": {"Thc": {"Value": 0.001, "UnitId": 2}, "Cbd": {"
                 "TestDetails": {"CoaUrl": "https://certs.conflabs.com/y.pdf"}}
 
 
-def pkg(pid, name, brand, received, *, category="Flower", batch=1, price=34, vendor="GROW OP FARMS"):
+def pkg(pid, name, brand, received, *, category="Flower", batch=1, price=34, vendor="GROW OP FARMS",
+        room="Sales Floor", is_sample=False):
     return {"receivedDate": received, "unitPrice": price, "recUnitPrice": price,
             "batch": {"id": batch}, "vendor": {"vendorName": vendor},
+            "room": {"roomNo": room}, "isSample": is_sample,
             "product": {"id": pid, "whseProductsDescription": name, "brand": {"brandName": brand},
                         "strain": {"strainName": "Scotch & Soda"},
                         "productTypeNavigation": {"masterCategory": category}}}
@@ -72,6 +74,19 @@ class TitleTests(SimpleTestCase):
         self.assertEqual(new_drops._title("Already Mixed Case"), "Already Mixed Case")
 
 
+def delivered(pid, when, *, batch=None, status="Received"):
+    """A receive transaction as GET /inventory/receivedinventory returns it (2026-10-04)."""
+    return {"status": status, "deliveredOn": when, "vendor": "GROW OP FARMS",
+            "items": [{"productId": pid, "batchId": batch, "product": f"P{pid}"}]}
+
+
+def index(*txs):
+    return new_drops.received_index(list(txs), NOW)
+
+
+ALL = index(*(delivered(i, "2026-09-30T10:00:00.0000000", batch=i) for i in range(1, 10)))
+
+
 class BuildSnapshotTests(SimpleTestCase):
     def test_grouped_by_brand_newest_first_and_deduped(self):
         packages = [
@@ -81,8 +96,12 @@ class BuildSnapshotTests(SimpleTestCase):
             pkg(3, "Harmony Farms Trade Sample Mixed", "Harmony Farms", "2026-10-01T02:00:00.000Z", batch=3),
             pkg(4, "Free Thing", "Freebie", "2026-10-01T03:00:00.000Z", price=0, batch=4),
         ]
+        receipts = index(delivered(1, "2026-09-30T10:00:00.0000000", batch=1),
+                         delivered(2, "2026-10-01T01:00:00.0000000", batch=2),
+                         delivered(3, "2026-10-01T02:00:00.0000000", batch=3),
+                         delivered(4, "2026-10-01T03:00:00.0000000", batch=4))
         snap = new_drops.build_snapshot("yakima", packages, {1: LAB_FLOWER, 2: LAB_BEVERAGE},
-                                        {"1": "dank-czar-flower-a"}, NOW)
+                                        {"1": "dank-czar-flower-a"}, receipts, NOW)
         self.assertEqual([b["brand"] for b in snap["brands"]], ["Sungaze", "Dank Czar"])  # samples/$0 dropped
         dank = snap["brands"][1]
         self.assertEqual(len(dank["products"]), 1)
@@ -93,12 +112,79 @@ class BuildSnapshotTests(SimpleTestCase):
         self.assertEqual(snap["generated_at"], "2026-10-01T16:00:00Z")
 
     def test_contract_keys_match_the_website_parser(self):
-        snap = new_drops.build_snapshot("yakima", [pkg(1, "X 1g", "B", "2026-09-30T10:00:00.000Z")], {1: LAB_FLOWER}, {}, NOW)
+        snap = new_drops.build_snapshot("yakima", [pkg(1, "X 1g", "B", "2026-09-30T10:00:00.000Z")], {1: LAB_FLOWER}, {}, ALL, NOW)
         self.assertEqual(set(snap), {"store", "generated_at", "window_days", "brands"})
         self.assertEqual(set(snap["brands"][0]), {"brand", "vendor", "last_received", "products"})
         self.assertEqual(set(snap["brands"][0]["products"][0]),
                          {"name", "category", "strain", "strain_type", "received_at", "thc", "cbd",
                           "potency_unit", "terpenes", "price", "menu_slug", "coa_url"})
+
+    def build(self, packages, receipts=ALL):
+        snap = new_drops.build_snapshot("yakima", packages, {}, {}, receipts, NOW)
+        return [p["name"] for b in snap["brands"] for p in b["products"]]
+
+    # ── only real deliveries are drops (2026-10-04: returns showed as "received today") ──
+    def test_a_returned_unit_does_not_make_its_product_a_new_drop(self):
+        # Real data: one returned cartridge, stamped received 2026-10-04 in the returns room,
+        # product last delivered long before the window.
+        returned = pkg(7, "Dank Czar Cart Blue Skatalite 1g", "Dank Czar", "2026-10-01T19:38:54.000Z",
+                       room="Quarantine Room/Returns")
+        self.assertEqual(self.build([returned], receipts=index()), [])
+
+    def test_a_returned_unit_never_shows_even_when_the_product_was_delivered_in_window(self):
+        returned = pkg(1, "Cart 1g", "B", "2026-10-01T19:00:00.000Z", room="Quarantine Room/Returns")
+        self.assertEqual(self.build([returned]), [])  # only the quarantined unit is left: nothing on the shelf
+
+    def test_received_date_is_the_delivery_not_the_package_stamp(self):
+        sellable = pkg(1, "Cart 1g", "B", "2026-10-01T19:00:00.000Z")  # package stamp = a later return
+        snap = new_drops.build_snapshot("yakima", [sellable], {}, {}, index(delivered(1, "2026-09-26T09:00:00.0000000")), NOW)
+        self.assertEqual(snap["brands"][0]["products"][0]["received_at"], "2026-09-26T09:00:00.000Z")
+
+    def test_no_delivery_in_the_window_means_not_a_drop(self):
+        self.assertEqual(self.build([pkg(1, "Old 1g", "B", "2026-10-01T10:00:00.000Z")],
+                                    receipts=index(delivered(1, "2026-08-01T10:00:00.0000000"))), [])
+
+    def test_a_batch_match_counts_when_the_product_id_was_remapped(self):
+        self.assertEqual(self.build([pkg(99, "Remapped 1g", "B", "2026-09-30T10:00:00.000Z", batch=5)],
+                                    receipts=index(delivered(1, "2026-09-30T10:00:00.0000000", batch=5))),
+                         ["Remapped 1g"])
+
+    # ── trade samples are never listed, whichever signal Dutchie happens to set ──
+    def test_trade_samples_are_excluded_on_every_signal(self):
+        samples = [
+            pkg(1, "Fire Bros Trade Sample Mixed", "Fire Bros", "2026-09-30T10:00:00.000Z", price=0),
+            pkg(2, "Fire Bros Trade Sample Mixed", "Fire Bros", "2026-09-30T10:00:00.000Z", price=25),   # name only
+            pkg(3, "Fire Bros TRADE-SAMPLES Pack", "Fire Bros", "2026-09-30T10:00:00.000Z", price=25),
+            pkg(4, "Fire Bros Cart 1g", "Fire Bros", "2026-09-30T10:00:00.000Z", price=25, is_sample=True),  # flag only
+            pkg(5, "Fire Bros Cart 1g", "Fire Bros", "2026-09-30T10:00:00.000Z", price=0),                  # price only
+        ]
+        self.assertEqual(self.build(samples), [])
+
+    def test_a_sampler_product_is_not_mistaken_for_a_trade_sample(self):
+        self.assertEqual(self.build([pkg(1, "Variety Sampler 5pk", "B", "2026-09-30T10:00:00.000Z")]), ["Variety Sampler 5pk"])
+
+
+class ReceivedIndexTests(SimpleTestCase):
+    def test_saved_drafts_and_future_receives_are_not_deliveries(self):
+        idx = index(delivered(1, "2026-10-14T17:00:00.0000000", status="Saved"),     # draft dated in the future
+                    delivered(2, "2026-10-01T05:00:00.0000000", status="Saved"),     # draft, not yet received
+                    delivered(3, "2026-10-05T00:00:00.0000000"),                     # "Received" but after now
+                    delivered(4, "2026-09-10T00:00:00.0000000"),                     # before the 20-day window
+                    delivered(5, "2026-10-01T05:00:00.0000000", batch=50))
+        self.assertEqual(idx, {"p:5": "2026-10-01T05:00:00.000Z", "b:50": "2026-10-01T05:00:00.000Z"})
+
+    def test_latest_delivery_wins_and_junk_rows_are_skipped(self):
+        idx = index(delivered(1, "2026-09-25T10:00:00.0000000"), delivered(1, "2026-09-29T10:00:00.0000000"),
+                    delivered(2, "not a date"), {"status": "Received", "deliveredOn": "2026-09-29T10:00:00.0000000"})
+        self.assertEqual(idx, {"p:1": "2026-09-29T10:00:00.000Z"})
+
+    def test_an_unreachable_dutchie_is_an_error_not_an_empty_week(self):
+        with override_settings(DUTCHIE={"stores": {"yakima": {"pos_key": "k"}}}):
+            with mock.patch.object(new_drops, "_pos_get", return_value=None):
+                with self.assertRaises(RuntimeError):
+                    new_drops.fetch_receipts("yakima", now=NOW)
+            with mock.patch.object(new_drops, "_pos_get", return_value=[]):
+                self.assertEqual(new_drops.fetch_receipts("yakima", now=NOW), [])  # authoritative "none"
 
 
 @override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}})
@@ -190,6 +276,7 @@ class PacingAndBudgetTests(SimpleTestCase):
         looked_up = []
         with mock.patch.object(new_drops, "_client"), \
              mock.patch.object(new_drops, "fetch_received", return_value=packages), \
+             mock.patch.object(new_drops, "fetch_receipts", return_value=[]), \
              mock.patch.object(new_drops, "lab_for_batch", side_effect=lambda c, b: looked_up.append(b) or LAB_FLOWER), \
              mock.patch.object(new_drops, "menu_map", return_value={}), \
              mock.patch.object(new_drops.Setting.objects, "update_or_create"):

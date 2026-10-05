@@ -3,9 +3,18 @@
 Feeds happytimeweed.com/new-drops via GET /api/v1/new-drops/?store=<slug>.
 
 Pipeline (one run per store, every 30 min while a store is open — tasks.py):
+  0. What was actually delivered: the POS REST receive history
+     (GET /inventory/receivedinventory). Only transactions with status "Received"
+     count — "Saved" is an unreceived draft (some are dated weeks ahead) — and a
+     product is a "new drop" only if one of them delivered it (by product or batch id)
+     inside the window. A package's own receivedDate is NOT proof of delivery:
+     processing a customer return into the "Quarantine Room/Returns" room stamps a
+     fresh one (2026-10-04: one returned cartridge made 57 Dank Czar products read
+     "received today"). Returns-room packages are also excluded outright.
   1. Backoffice login (dutchie.session.PosClient — same login + 10-min session
      retention as the marketing dashboard) and ONE paginated GraphQL query:
      getPackagesV5 where receivedDate >= now-N days and quantity > 0, newest first.
+     These supply the product details; step 0 decides which of them are drops.
   2. Lab result per BATCH (/api/v2/batches/{id}/lab-results) for potency,
      terpenes and the COA link. A batch's lab result never changes, so each is
      cached for 30 days and only new batches cost a call.
@@ -36,7 +45,7 @@ from django.core.cache import cache
 
 from dutchie.session import PosClient, Store
 
-from .dutchie import https_url
+from .dutchie import _pos_get, _store, https_url
 from .models import Setting
 
 logger = logging.getLogger(__name__)
@@ -141,6 +150,48 @@ def fetch_received(client: BackofficeClient, days: int = WINDOW_DAYS, now: datet
         skip += len(items)
         if len(items) < PAGE_SIZE or skip >= (block.get("totalCount") or 0):
             return out
+
+
+# ── 1b. what was actually delivered (POS REST receive history) ───────────────
+def _iso_utc(stamp: str | None) -> str:
+    """'2026-10-03T02:00:00.0000000' (UTC, no zone) -> '2026-10-03T02:00:00.000Z', the
+    same shape as a package receivedDate, so the two compare as plain strings.
+    '' when it is not a timestamp."""
+    s = (stamp or "").strip()
+    return s[:19] + ".000Z" if re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d.*", s) else ""
+
+
+def fetch_receipts(location_slug: str, days: int = WINDOW_DAYS, now: datetime | None = None) -> list[dict]:
+    """Raw receive transactions. Raises when Dutchie cannot be reached: an empty list
+    means "nothing was received", which must never be inferred from a failed call —
+    the run fails and the last good snapshot keeps serving."""
+    key = _store(location_slug).get("pos_key")
+    if not key:
+        raise RuntimeError(f"no POS key for {location_slug}")
+    now = now or datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    data = _pos_get(key, "/inventory/receivedinventory", {"startDate": since})
+    if not isinstance(data, list):
+        raise RuntimeError(f"receivedinventory unavailable for {location_slug}")
+    return data
+
+
+def received_index(receipts: list[dict], now: datetime, days: int = WINDOW_DAYS) -> dict[str, str]:
+    """Pure: {"p:<productId>" / "b:<batchId>" -> latest delivery time} over the
+    transactions that really happened: status "Received" (not a "Saved" draft),
+    delivered inside the window and not in the future."""
+    lo = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    hi = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    out: dict[str, str] = {}
+    for tx in receipts:
+        when = _iso_utc(tx.get("deliveredOn"))
+        if tx.get("status") != "Received" or not when or not lo <= when <= hi:
+            continue
+        for item in tx.get("items") or []:
+            for key in (f"p:{item.get('productId')}", f"b:{item.get('batchId')}"):
+                if key not in ("p:None", "b:None") and when > out.get(key, ""):
+                    out[key] = when
+    return out
 
 
 # ── 2. lab results per batch ─────────────────────────────────────────────────
@@ -280,19 +331,38 @@ def _title(s: str | None) -> str | None:
     return re.sub(r"\b(Llc|Inc|Co|Lp|Llp)\b\.?", lambda m: _SUFFIXES[m.group(1)], s.title())
 
 
+_RETURN_ROOM = re.compile(r"quarantine|return", re.I)
+# Trade samples arrive as "<Brand> Trade Sample Mixed" at $0 and Dutchie's own isSample
+# flag is True on only some of them (2026-10-04: 31 of 148), so the flag, the name and
+# the price each exclude on their own. "Sampler" is a real product and is not matched.
+_SAMPLE_NAME = re.compile(r"\bsamples?\b", re.I)
+
+
+def _is_trade_sample(pkg: dict, name: str, price) -> bool:
+    return pkg.get("isSample") is True or bool(_SAMPLE_NAME.search(name)) or not price or float(price) <= 0
+
+
 def build_snapshot(location_slug: str, packages: list[dict], labs: dict[int, dict | None],
-                   slugs: dict[str, str], now: datetime, days: int = WINDOW_DAYS) -> dict:
-    """Pure: group received packages by brand, newest first. One row per product
-    (the newest package of it); trade samples and $0 items are not for sale."""
+                   slugs: dict[str, str], receipts: dict[str, str], now: datetime,
+                   days: int = WINDOW_DAYS) -> dict:
+    """Pure: group received products by brand, newest first. One row per product.
+    A product is a drop only if `receipts` (received_index) says a real delivery of
+    its product or batch landed in the window; that delivery's time is its received_at.
+    Trade samples, $0 items and packages sitting in the returns room are not drops."""
     products: dict[str, dict] = {}
     for pkg in packages:
         prod = pkg.get("product") or {}
         name = (prod.get("whseProductsDescription") or "").strip()
         price = pkg.get("recUnitPrice") or pkg.get("unitPrice") or prod.get("whseProductsRecUnitPrice")
-        if not name or "trade sample" in name.lower() or not price or float(price) <= 0:
+        if not name or _is_trade_sample(pkg, name, price):
+            continue
+        if _RETURN_ROOM.search((pkg.get("room") or {}).get("roomNo") or ""):
             continue
         pid = str(prod.get("id") or "")
-        received = pkg.get("receivedDate") or ""
+        batch = (pkg.get("batch") or {}).get("id")
+        received = max((receipts.get(k) or "" for k in (f"p:{pid}", f"b:{batch}")), default="")
+        if not received:
+            continue
         if pid in products and products[pid]["received_at"] >= received:
             continue
         category = ((prod.get("productTypeNavigation") or {}).get("masterCategory") or "").strip()
@@ -331,6 +401,7 @@ def build_snapshot(location_slug: str, packages: list[dict], labs: dict[int, dic
 def refresh_store(location_slug: str, now: datetime | None = None,
                   max_lookups: int = MAX_LAB_LOOKUPS_PER_RUN) -> dict:
     now = now or datetime.now(timezone.utc)
+    receipts = received_index(fetch_receipts(location_slug, now=now), now)  # first: a failure costs no backoffice call
     client = _client(location_slug)
     packages = fetch_received(client, now=now)
     labs: dict = {}
@@ -347,7 +418,7 @@ def refresh_store(location_slug: str, now: datetime | None = None,
             labs[bid] = lab_for_batch(client, bid)
             lookups += 1
     needed = {str((p.get("product") or {}).get("id")) for p in packages if (p.get("product") or {}).get("id")}
-    snap = build_snapshot(location_slug, packages, labs, menu_map(location_slug, needed), now)
+    snap = build_snapshot(location_slug, packages, labs, menu_map(location_slug, needed), receipts, now)
     Setting.objects.update_or_create(key=f"new_drops:{location_slug}", defaults={"value": snap})
     logger.info("new_drops %s: %d packages -> %d brands", location_slug, len(packages), len(snap["brands"]))
     return snap
