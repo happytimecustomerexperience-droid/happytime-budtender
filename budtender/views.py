@@ -11,6 +11,7 @@ import re
 import secrets
 from datetime import timedelta
 
+from django.conf import settings
 from django.core.cache import cache
 from django.db.models import Q
 from django.utils import timezone
@@ -24,8 +25,9 @@ from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
                      CustomerProfile, Feedback, PhoneCartDraft, Product,
                      SuggestedProduct)
 from .pairing import pair_for
-from . import facets, live_stock
+from . import facets, identity, lab_enrich, live_stock
 from .auth import is_website
+from .fire import fire
 from .gemini_chat import (fetch_persona, generate_chat_reply_with_source,
                           invalidate_persona)
 from .intents import classify_intent, conversation_breakdown, intent_breakdown
@@ -362,7 +364,10 @@ class ProductBySkuView(APIView):
         if not live.buyable(sku=p.sku, product_id=p.product_id, min_stock=MIN_STOCK):
             return Response({"stock_source": live.source})
         row = live.get(p.sku, p.product_id)
-        return Response({"product": public_product(p, live=row), "stock_source": live.source})
+        labs, details = lab_enrich.for_picks(location, [p])
+        return Response({"product": public_product(p, live=row, lab=labs.get(p.batch_id),
+                                                   info=details.get(p.product_id)),
+                         "stock_source": live.source})
 
 
 RESUME_WINDOW = timedelta(days=30)
@@ -379,9 +384,7 @@ def _promote_intent(current: str, new: str) -> bool:
 
 
 def _profile_for_phone(phone: str) -> CustomerProfile | None:
-    if not phone:
-        return None
-    return CustomerProfile.objects.filter(phone=_normalize_phone(phone)).first()
+    return identity.profile_for_phone(phone)
 
 
 class NewDropsView(APIView):
@@ -507,7 +510,7 @@ class ChatReplyView(APIView):
         # A website visitor typed this phone: never an identity (budtender/auth.py).
         phone = _normalize_phone(data.get("phone", "")) if data.get("phone") and not is_website(request) else ""
         if phone:
-            profile = CustomerProfile.objects.filter(phone=phone).first()
+            profile = identity.profile_for_phone(phone)
             session.phone = phone
             session.customer = profile
         if location and not session.location_slug:
@@ -634,7 +637,7 @@ class CustomerListView(APIView):
         q = str(data.get("q") or "").strip()[:80]
         limit = _bounded_int(data.get("limit"), default=25, lo=1, hi=100)
         offset = _bounded_int(data.get("offset"), default=0, lo=0, hi=1_000_000)
-        qs = CustomerProfile.objects.all()
+        qs = CustomerProfile.objects.filter(merged_into__isnull=True)
         if q:
             qs = qs.filter(Q(name__icontains=q) | Q(phone__icontains=q))
         total = qs.count()
@@ -666,7 +669,7 @@ class CustomerDetailView(APIView):
             phone = _normalize_phone(str(data.get("phone") or ""))
             if not phone:
                 return Response({"ok": False, "reason": "missing id/name/phone"}, status=400)
-            profile = CustomerProfile.objects.filter(phone=phone).first()
+            profile = identity.profile_for_phone(phone)
         if not profile:
             return Response({"ok": False, "reason": "not found"}, status=404)
         return Response({"ok": True, "customer": customer_detail(profile)})
@@ -686,9 +689,13 @@ class ProductSearchView(APIView):
         )
         # Profile drives personalization: prefer the session's linked customer,
         # else resolve by a phone passed with the request (logged-in chat). A website request is
-        # always anonymous — its phone was typed, and a session it can name may have been linked
-        # by a typed phone before this rule (budtender/auth.py).
-        profile = session.customer if session and session.customer and not is_website(request) else None
+        # anonymous — its phone was typed — EXCEPT a session the visitor identified through
+        # SessionContextView (identity_via set; owner-approved, HHT_WEB_PHONE_IDENTITY). A phone in
+        # THIS request body never counts (budtender/auth.py).
+        trusted = not is_website(request) or bool(
+            session and session.identity_via == "web_phone" and settings.HHT_WEB_PHONE_IDENTITY
+        )
+        profile = identity.follow(session.customer) if session and session.customer and trusted else None
         if profile is None and not is_website(request):
             profile = _profile_for_phone(request.data.get("phone") or "")
             if profile and session and not session.customer:
@@ -700,15 +707,17 @@ class ProductSearchView(APIView):
         # async refresh so suggestions self-heal to live stock. Never blocks the
         # response (and the ranking below already filters to in-stock SKUs).
         if inventory_is_stale(location):
-            try:
-                ensure_inventory_fresh.delay()
-            except Exception:
-                pass
+            fire(ensure_inventory_fresh)
 
         ranking_weights = request.data.get("ranking_weights")
         if ranking_weights is None:
             ranking_weights = cache.get(_RANKING_WEIGHTS_CACHE_KEY)
 
+        # `labs` is the request's one memo of batch labs: the ranker fills it (one bulk read for
+        # the picks, plus the few null-THC candidates when sorting by potency) and the serializer
+        # reads it back — no per-product query. `slots` goes to the ranker untouched, so `sort_by`
+        # ('potency' | 'price_asc') arrives there; the ranker ignores any other value.
+        labs = lab_enrich.Memo()
         ranked = rank_products(
             location,
             slots,
@@ -716,8 +725,14 @@ class ProductSearchView(APIView):
             limit=limit,
             exclude_skus=exclude,
             ranking_weights=ranking_weights,
+            labs=labs,
         )
-        results = [public_product(p, rank=i + 1, why_this=why) for i, (p, why) in enumerate(ranked)]
+        # One bulk read of the stored product info; whatever lab/info is missing or stale is handed to
+        # ONE deduped warm task for the next viewer. The request itself never calls Dutchie.
+        labs, details = lab_enrich.for_picks(location, [p for p, _ in ranked], labs)
+        results = [public_product(p, rank=i + 1, why_this=why, lab=labs.get(p.batch_id),
+                                  info=details.get(p.product_id))
+                   for i, (p, why) in enumerate(ranked)]
 
         if session:
             for r in results:
@@ -996,8 +1011,10 @@ class PairingView(APIView):
             kind="pairing", source=(session.channel if session else "menu"),
             paired_with_sku=(anchor.sku if anchor else ""), reason_code=reason,
         )
+        labs, details = lab_enrich.for_picks(location, [pair])
         return Response({
-            "pairing": public_product(pair), "reason_code": reason,
+            "pairing": public_product(pair, lab=labs.get(pair.batch_id), info=details.get(pair.product_id)),
+            "reason_code": reason,
             "reason_text": reason_text, "strength": strength,
         })
 
@@ -1006,15 +1023,16 @@ class ResumeByPhoneView(APIView):
     def post(self, request):
         phone = _normalize_phone(request.data.get("phone", ""))
         current = request.data.get("current_session_token")
-        profile = CustomerProfile.objects.filter(phone=phone).first() if phone else None
+        profile = identity.profile_for_phone(phone) if phone else None
 
         # Link the in-flight session to the customer.
         if current:
             ChatSession.objects.filter(session_token=current).update(
-                phone=phone, customer=profile, last_active_at=timezone.now()
+                phone=phone, customer=profile, last_active_at=timezone.now(),
+                identity_via="caller_id" if profile else "",
             )
         if profile:
-            recompute_affinity.delay(phone)
+            fire(recompute_affinity, profile.phone)
 
         prior = (
             ChatSession.objects.filter(phone=phone, started_at__gte=timezone.now() - RESUME_WINDOW)
@@ -1054,7 +1072,7 @@ class PersistView(APIView):
         if session is None:
             return Response({"ok": False}, status=202)
         phone = _normalize_phone(data.get("phone", "")) if data.get("phone") and not is_website(request) else ""
-        profile = CustomerProfile.objects.filter(phone=phone).first() if phone else None
+        profile = identity.profile_for_phone(phone) if phone else None
         session.location_slug = _safe_location(
             (data.get("slots") or {}).get("store"), default=session.location_slug
         )
@@ -1302,13 +1320,67 @@ class FeedbackView(APIView):
 
 
 class ProfileUpsertView(APIView):
+    """Create the profile for a phone we have never seen, and remember a first name the caller
+    gave. Never writes to Dutchie. A name is stored only when the row has none (Dutchie's wins)."""
+
     def post(self, request):
-        phone = _normalize_phone(request.data.get("phone", ""))
-        if not phone:
+        source = "web" if request.data.get("source") == "web" else "voice"
+        profile, created = identity.ensure_profile(
+            request.data.get("phone", ""), source, request.data.get("name", "")
+        )
+        if profile is None:
             return Response({"status": "no-phone"}, status=400)
-        profile, _ = CustomerProfile.objects.get_or_create(phone=phone)
-        recompute_affinity.delay(phone)
-        return Response({"status": "ok", "profile_summary": profile_summary(profile)})
+        fire(recompute_affinity, profile.phone)
+        return Response({"status": "ok", "created": created, "first_name": identity.first_name(profile.name),
+                         "profile_summary": profile_summary(profile)})
+
+
+class CallerContextView(APIView):
+    """What the phone agents may know about the caller, in one DB-only call (the voice service
+    asks this before the first word). Creates a profile for a number we have never seen. Backend
+    token only: the number is the carrier's caller-ID, which is the identity voice trusts."""
+
+    def post(self, request):
+        data = request.data or {}
+        e164 = _normalize_phone(data.get("phone", ""))
+        if not e164:
+            return Response({"ok": True, **identity.context(None)})
+        if data.get("create", True):
+            profile, created = identity.ensure_profile(e164, "voice")
+        else:
+            profile, created = identity.profile_for_phone(e164), False
+        identity.link_session(data.get("session_token"), profile, e164, "caller_id")
+        return Response({"ok": True, **identity.context(profile, created)})
+
+
+SESSION_CONTEXT_PER_SESSION_HOUR = 6
+SESSION_CONTEXT_SITE_HOUR = 600  # lookups/hour for the whole site: a number-enumeration ceiling
+
+
+class SessionContextView(APIView):
+    """The website chat identifies its visitor by the phone they typed (owner decision 2026-10-05:
+    "phone alone is enough"; HHT_WEB_PHONE_IDENTITY=0 turns it off). The only place a typed phone
+    becomes identity: it links THIS session, which ProductSearchView then personalises from. A
+    number we have never seen gets a "web" profile. Capped per session and site-wide so it cannot be
+    used to walk through phone numbers."""
+
+    def post(self, request):
+        data = request.data or {}
+        e164 = _normalize_phone(data.get("phone", ""))
+        token = str(data.get("session_token") or "").strip()
+        if not settings.HHT_WEB_PHONE_IDENTITY or not e164 or not token:  # no session: nothing to link
+            return Response({"ok": True, **identity.context(None)})
+        session = _session_for_token(token, channel="chat")
+        # Asking again for the number this session is already linked to reveals nothing new (the chat
+        # does it every turn), so only a first or different number spends the caps.
+        repeat = bool(session and session.identity_via == "web_phone" and session.phone == e164)
+        if not repeat and (not caps.take("web-ident-session", SESSION_CONTEXT_PER_SESSION_HOUR, 3600, token)
+                           or not caps.take("web-ident-site", SESSION_CONTEXT_SITE_HOUR, 3600)):
+            return Response({"ok": False, "error": "rate_limited"}, status=429)
+        profile, created = identity.ensure_profile(e164, "web", data.get("name", ""))
+        if session is not None:
+            identity.link_session(session.session_token, profile, e164, "web_phone")
+        return Response({"ok": True, **identity.context(profile, created)})
 
 
 class PersonaRefreshView(APIView):
@@ -1359,6 +1431,6 @@ class StoreFactsRefreshView(APIView):
 for _view in (
     SessionStartView, ChatReplyView, ProductSearchView, InStockProductsView, NewDropsView, DealsView,
     ProductBySkuView, PriceBandsView, SubtypesView, SizesView, DohOptionsView, PairingView,
-    PersistView, TrackView, FeedbackView, AnalyticsSummaryView,
+    PersistView, TrackView, FeedbackView, AnalyticsSummaryView, SessionContextView,
 ):
     _view.website_ok = True

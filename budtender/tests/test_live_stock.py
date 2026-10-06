@@ -127,6 +127,16 @@ class PublicProductOverlayTests(_CacheIsolated):
         out = public_product(p, live=_row(cost=11.0))
         self.assertEqual(set(out.keys()), set(PUBLIC_PRODUCT_FIELDS))
 
+    def test_the_live_overlay_and_a_lab_together_keep_the_allowlist_and_the_live_price(self):
+        p = _make_product(price=25, quantity_on_hand=9)
+        out = public_product(p, live=_row(price=19.0, quantity_on_hand=7.0, cost=11.0),
+                             lab={"thc_total": 24.5, "terpenes": []})
+        self.assertEqual(set(out.keys()), set(PUBLIC_PRODUCT_FIELDS))
+        for key in ("lab", "size", "info"):
+            self.assertIn(key, PUBLIC_PRODUCT_FIELDS)
+        self.assertEqual((out["price"], out["stock_on_hand"]), (19.0, 7))  # the lab never touches price/stock
+        self.assertEqual(out["thc_percent"], 24.5)                           # p has no inventory THC
+
     def test_without_live_the_table_values_are_used(self):
         p = _make_product(price=25, quantity_on_hand=9)
         out = public_product(p)

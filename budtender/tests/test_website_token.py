@@ -19,6 +19,7 @@ STAFF_ONLY = (
     "/api/v1/chat/resume-by-phone",
     "/api/v1/phone-cart/claim",
     "/api/v1/customer/profile-upsert",
+    "/api/v1/customer/caller-context",
     "/api/v1/admin/ranking-weights",
 )
 
@@ -49,7 +50,8 @@ class WebsiteTokenTests(TestCase):
 
     def test_no_customer_or_transcript_view_is_marked_for_the_website(self):
         for view in (views.CustomerListView, views.CustomerDetailView, views.ChatHistoryView,
-                     views.ResumeByPhoneView, views.PhoneCartClaimView, views.ProfileUpsertView):
+                     views.ResumeByPhoneView, views.PhoneCartClaimView, views.ProfileUpsertView,
+                     views.CallerContextView):
             self.assertFalse(getattr(view, "website_ok", False), view.__name__)
 
 

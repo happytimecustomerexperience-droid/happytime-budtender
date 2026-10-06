@@ -27,6 +27,14 @@ app.conf.beat_schedule = {
         "task": "budtender.tasks.refresh_new_drops_all",
         "schedule": 30 * 60.0,
     },
+    # Lab results (terpenes + %) per in-stock batch → BatchLab and the allowlisted product info
+    # → ProductDetail, so every chat pick can carry real numbers. Paced, 100 of each per store
+    # per run; a no-op outside the same store-hours window and while a New Drops run holds the
+    # Dutchie rate budget.
+    "warm-batch-labs": {
+        "task": "budtender.tasks.warm_batch_labs_all",
+        "schedule": 30 * 60.0,
+    },
     "ensure-inventory-fresh-daily": {
         "task": "budtender.tasks.ensure_inventory_fresh",
         "schedule": 60 * 60.0,  # hourly check; pulls only when ≥24h stale
@@ -43,6 +51,12 @@ app.conf.beat_schedule = {
     # business instead of staying a number someone guessed once.
     "calibrate-order-caps-weekly": {
         "task": "budtender.tasks.calibrate_order_caps",
+        "schedule": 7 * 24 * 60 * 60.0,  # weekly
+    },
+    # One person on two rows (a caller we created, then a Dutchie guest on another number): merge
+    # only on a shared Dutchie account id — budtender.identity.merge_duplicates.
+    "merge-duplicate-profiles-weekly": {
+        "task": "budtender.tasks.merge_duplicate_profiles",
         "schedule": 7 * 24 * 60 * 60.0,  # weekly
     },
 }

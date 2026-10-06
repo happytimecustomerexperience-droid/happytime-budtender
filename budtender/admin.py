@@ -5,8 +5,9 @@ nightly classifier never overwrites a human decision.
 """
 from django.contrib import admin
 
-from .models import (AdminAudit, AnalyticsEvent, CustomerProfile, Feedback,
-                     ManualPairing, PhoneCartDraft, Product, Setting, SuggestedProduct)
+from .models import (AdminAudit, AnalyticsEvent, BatchLab, CustomerProfile, Feedback,
+                     ManualPairing, PhoneCartDraft, Product, ProductDetail, Setting,
+                     SuggestedProduct)
 
 
 @admin.register(Product)
@@ -103,3 +104,30 @@ class PhoneCartDraftAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+class _ReadOnlyAdmin(admin.ModelAdmin):
+    """Lab / product-detail rows are written only by the paced warm job: staff may look, never edit."""
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BatchLab)
+class BatchLabAdmin(_ReadOnlyAdmin):
+    list_display = ("batch_id", "status", "checked_at")
+    list_filter = ("status",)
+    search_fields = ("batch_id",)
+
+
+@admin.register(ProductDetail)
+class ProductDetailAdmin(_ReadOnlyAdmin):
+    list_display = ("product_id", "status", "checked_at")
+    list_filter = ("status",)
+    search_fields = ("product_id",)

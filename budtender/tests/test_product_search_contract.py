@@ -17,7 +17,7 @@ class ProductSearchContractTests(SimpleTestCase):
             save=lambda **kw: saves.append(kw),
         )
 
-        def fake_rank(location, slots, prof, *, limit, exclude_skus, ranking_weights):
+        def fake_rank(location, slots, prof, *, limit, exclude_skus, ranking_weights, labs):
             calls.append(
                 {
                     "location": location,
@@ -26,9 +26,10 @@ class ProductSearchContractTests(SimpleTestCase):
                     "limit": limit,
                     "exclude_skus": exclude_skus,
                     "ranking_weights": ranking_weights,
+                    "labs": labs,
                 }
             )
-            return [(SimpleNamespace(sku="SKU2"), "fits your taste")]
+            return [(SimpleNamespace(sku="SKU2", batch_id="", product_id=""), "fits your taste")]
 
         original_session = views.ChatSession
         original_suggested = views.SuggestedProduct
@@ -50,16 +51,19 @@ class ProductSearchContractTests(SimpleTestCase):
             views._profile_for_phone = lambda phone: profile if phone == "+1 (509) 555-1234" else None
             views.inventory_is_stale = lambda location: False
             views.rank_products = fake_rank
-            views.public_product = lambda product, rank, why_this: {
+            views.public_product = lambda product, rank, why_this, lab=None, info=None: {
                 "sku": product.sku,
                 "rank": rank,
                 "why_this": why_this,
+                "lab": lab,
+                "info": info,
             }
 
             response = views.ProductSearchView().post(
                 SimpleNamespace(
                     data={
-                        "slots": {"store": "pullman", "category": "flower", "price_tier": "mid"},
+                        "slots": {"store": "pullman", "category": "flower", "price_tier": "mid",
+                                  "sort_by": "potency"},
                         "limit": 2,
                         "phone": "+1 (509) 555-1234",
                         "session_token": "s1",
@@ -80,6 +84,9 @@ class ProductSearchContractTests(SimpleTestCase):
         self.assertEqual(response.data["results"][0]["sku"], "SKU2")
         self.assertEqual(calls[0]["location"], "pullman")
         self.assertEqual(calls[0]["slots"]["category"], "flower")
+        # `sort_by` is not stripped or validated here: the ranker owns the whitelist.
+        self.assertEqual(calls[0]["slots"]["sort_by"], "potency")
+        self.assertEqual(calls[0]["labs"], {})  # the request's lab memo, handed to the ranker to fill
         self.assertIs(calls[0]["profile"], profile)
         self.assertEqual(calls[0]["limit"], 2)
         self.assertEqual(calls[0]["exclude_skus"], {"OLD1", "7"})

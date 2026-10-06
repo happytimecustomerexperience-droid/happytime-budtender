@@ -7,14 +7,21 @@ browser. A regression test (tests/test_no_leak.py) enforces this.
 """
 from decimal import Decimal
 
+from . import lab_enrich, product_detail
 from .models import Product
 from .new_drops import cached_coa, menu_slug
+from .ranking import _effective_grams
+
+# Categories whose unit_weight is a real per-unit gram weight. Everything else (edibles, beverages,
+# tinctures, topicals, capsules, mints...) has no trustworthy per-unit figure: ranking.py itself calls
+# potency_mg "package-total + wildly noisy", so no size is invented for them.
+_GRAM_CATEGORIES = frozenset({"flower", "pre-rolls", "concentrates", "vape-cartridges", "blunt", "infused-blunt"})
 
 # The only fields the website/browser may ever see for a product.
 PUBLIC_PRODUCT_FIELDS = (
     "rank", "sku", "name", "brand", "strain", "price", "price_was",
     "thc_percent", "dominant_terpene", "stock_on_hand", "dutchie_link",
-    "image_url", "why_this", "coa_url", "menu_slug",
+    "image_url", "why_this", "coa_url", "menu_slug", "lab", "size", "info",
 )
 
 
@@ -22,14 +29,31 @@ def _num(v):
     return float(v) if isinstance(v, Decimal) else v
 
 
+def exact_size(p: Product) -> str | None:
+    """The shelf size as stated, never bucketed: "3.5g", "0.8g", "28g" (ranking.size_label snaps 0.8g to
+    "1g" and edible doses to 5/10/20mg buckets, which is right for filtering and wrong on a card). The
+    gram figure is the one the size filter trusts: a real weight in the name beats a mis-synced
+    unit_weight. None when the category has no per-unit gram weight or none is on file."""
+    if p.category not in _GRAM_CATEGORIES:
+        return None
+    grams = _effective_grams(p)
+    return f"{grams:g}g" if grams else None
+
+
 def public_product(p: Product, rank: int = 1, why_this: str | None = None,
-                   live: dict | None = None) -> dict:
+                   live: dict | None = None, lab: dict | None = None, info: dict | None = None) -> dict:
     """Map a Product to the website's SearchResultPublic shape (NO cost/margin).
 
     `live` is a row from `live_stock.StockMap` for this SKU. When present, its
     price and stock WIN over the Product row's — the table is refreshed on a beat
     and is the wrong thing to quote a customer. Everything else (strain, terpene,
     image) legitimately comes from the enrichment row.
+
+    `lab` is the stored BatchLab dict for this product's batch (budtender.lab_enrich.labs_for —
+    the caller reads them in ONE query), or None: `lab: null` means no lab on file. The lab's
+    total THC fills `thc_percent` only when the inventory has none. `info` is the stored allowlisted
+    product info (budtender.product_detail), or None. `size` is the shelf label ("3.5g", "10mg") from
+    the same helper the ranker groups by, or None.
     """
     price = _num(p.price) or 0
     price_was = _num(p.price_was) if p.price_was else None
@@ -46,7 +70,7 @@ def public_product(p: Product, rank: int = 1, why_this: str | None = None,
         "strain": p.strain or None,
         "price": price,
         "price_was": price_was,
-        "thc_percent": p.thc_percent,
+        "thc_percent": lab_enrich.effective_thc(p.thc_percent, lab),
         "dominant_terpene": p.dominant_terpene or None,
         "stock_on_hand": stock,
         "dutchie_link": f"/catalog/product/{p.slug}" if p.slug else "/catalog",
@@ -57,6 +81,9 @@ def public_product(p: Product, rank: int = 1, why_this: str | None = None,
         "coa_url": p.coa_url or cached_coa(p.batch_id) or None,
         # Exact menu product (dtche[product]=<slug>), matched on the POS product id.
         "menu_slug": menu_slug(p.location_slug, p.product_id),
+        "lab": lab_enrich.public_lab(lab),
+        "size": exact_size(p),
+        "info": product_detail.public_info(info),
     }
 
 

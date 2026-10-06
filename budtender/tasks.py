@@ -18,7 +18,7 @@ from django.utils.text import slugify
 
 from customers.models import Customer as CachedCustomer
 
-from . import dutchie, live_stock
+from . import backoffice_lock, dutchie, identity, lab_enrich, live_stock
 from .models import STORES, CustomerProfile, Product, SuggestedProduct, SyncState
 
 logger = logging.getLogger(__name__)
@@ -97,6 +97,8 @@ def sync_inventory(location_slug: str) -> int:
     # read, so the beat sync doubles as the live_stock warmer at zero extra cost.
     if rows:
         live_stock.prime(location_slug, rows)
+    # The inventory feed carries no terpene; the batch's lab does. One bulk read per sync.
+    labs = lab_enrich.labs_for({str(r.get("batch_id") or "") for r in rows})
     seen = set()
     for r in rows:
         price = Decimal(str(r.get("price", 0) or 0))
@@ -108,10 +110,14 @@ def sync_inventory(location_slug: str) -> int:
         # Known cost → true margin; unknown cost → estimate (never full price).
         margin = (price - cost) if cost > 0 else (price * EST_MARGIN_FRACTION)
         margin = max(margin, Decimal("0"))
+        # Only ever FILL the terpene: when neither the feed nor the batch's lab has one this time (no lab row
+        # yet, a failed read), the stored value stays instead of being blanked.
+        terpene = r.get("dominant_terpene") or lab_enrich.dominant_terpene(labs.get(str(r.get("batch_id") or "")))
         Product.objects.update_or_create(
             location_slug=location_slug,
             sku=sku,
             defaults={
+                **({"dominant_terpene": terpene} if terpene else {}),
                 "slug": r.get("slug") or slugify(f"{r.get('name','')}-{sku}")[:200],
                 "product_id": r.get("product_id", ""),
                 "name": r.get("name", ""),
@@ -120,7 +126,6 @@ def sync_inventory(location_slug: str) -> int:
                 "strain": r.get("strain", ""),
                 "strain_type": r.get("strain_type", ""),
                 "thc_percent": r.get("thc_percent"),
-                "dominant_terpene": r.get("dominant_terpene", ""),
                 "effects": r.get("effects", []),
                 "flavors": r.get("flavors", []),
                 "price": price,
@@ -275,6 +280,7 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
     )
     by_phone: dict[str, list[dict]] = defaultdict(list)
     name_by_phone: dict[str, str] = {}
+    ids_by_phone: dict[str, set[str]] = defaultdict(set)
     # Boundary dedup: ids already folded AT exactly the watermark second — so a same-second sale is
     # neither dropped (lossless) nor re-counted (exactly-once). max_tx_dt + new_boundary track the
     # new watermark and the ids sitting on it.
@@ -288,6 +294,7 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
         phone = _normalize_phone(phone_by_id.get(cid, ""))
         if not phone:
             continue
+        ids_by_phone[phone].add(cid)
         tx_id = str(tx.get("transactionId") or tx.get("id") or tx.get("transactionNumber") or "")
         bought_at = tx.get("transactionDate") or tx.get("lastModifiedDateUTC") or now.isoformat()
         bought_dt = dutchie._parse_iso(bought_at)
@@ -364,6 +371,13 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
         if phone not in by_phone:
             CustomerProfile.objects.filter(phone=phone).exclude(name=nm).update(name=nm)
 
+    # Record which Dutchie customerIds this row is — the bridge identity.merge_duplicates uses.
+    for phone, ids in ids_by_phone.items():
+        row = identity.profile_for_phone(phone)
+        if row is not None and not ids <= set(row.dutchie_ids or []):
+            row.dutchie_ids = sorted(set(row.dutchie_ids or []) | ids)
+            row.save(update_fields=["dutchie_ids"])
+
     # Advance the watermark + boundary id set so the next run folds only genuinely-new transactions.
     if max_tx_dt is not None:
         SyncState.objects.update_or_create(
@@ -398,11 +412,17 @@ def calibrate_order_caps() -> dict:
 
 
 @shared_task
+def merge_duplicate_profiles() -> dict:
+    """Weekly: fold a caller/visitor shell row into the Dutchie row it provably belongs to."""
+    return identity.merge_duplicates()
+
+
+@shared_task
 def recompute_affinity(phone: str) -> bool:
     """Turn purchase_history into the taste profile the ranking consumes:
     frequency-weighted affinity maps, a quality tier, a novelty score
     (habit↔explorer), and the core/traffic/profit bucket mix."""
-    profile = CustomerProfile.objects.filter(phone=phone).first()
+    profile = identity.profile_for_phone(phone)
     if not profile:
         return False
     hist = profile.purchase_history or []
@@ -634,6 +654,7 @@ def _normalize_phone(raw: str) -> str:
 
 def _fold_history(phone: str, lines: list[dict], name: str | None = None) -> None:
     profile, _ = CustomerProfile.objects.get_or_create(phone=phone)
+    profile = identity.follow(profile)  # a merged shell's number lands on the row it was folded into
     key = lambda h: str(h.get("product_id") or h.get("sku") or "")
     agg: dict[str, dict] = {key(h): h for h in (profile.purchase_history or []) if key(h)}
     for ln in lines:
@@ -710,8 +731,10 @@ def refresh_new_drops_all(force: bool = False) -> dict:
         return {"skipped": "stores_closed"}
     from . import new_drops
 
-    # One run at a time: a paced cold-start fill must not overlap the next tick.
-    if not cache.add("newdrops:lock", 1, 50 * 60):
+    # One Dutchie-backoffice job at a time (this, the lab/detail warm, the on-demand warm): a paced
+    # cold-start fill must not overlap the next tick, and two jobs must not double the call rate.
+    token = backoffice_lock.acquire(50 * 60)
+    if not token:
         return {"skipped": "previous_run_still_going"}
     out: dict = {}
     try:
@@ -727,5 +750,55 @@ def refresh_new_drops_all(force: bool = False) -> dict:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("backfill_lab %s failed: %s", slug, exc)
     finally:
-        cache.delete("newdrops:lock")
+        backoffice_lock.release(token)
+    return out
+
+
+WARM_IDS_DEFERRALS = 3  # how many times a held lock is waited out before the beat is left to cover it
+
+
+@shared_task(ignore_result=True)
+def warm_ids(location_slug: str, batch_ids: list, product_ids: list, attempt: int = 0) -> dict:
+    """Warm just these batch labs / product details (enqueued by the request path for picks that
+    had none, so they fill for the next viewer). It takes the SAME lock the beat uses, so the Dutchie
+    call rate never doubles; while the lock is held it retries later with a growing countdown a few
+    times, then gives up (the beat warms the whole in-stock set anyway)."""
+    if location_slug not in STORE_SLUGS:
+        return {"skipped": "unknown_store"}
+    token = backoffice_lock.acquire(50 * 60)
+    if not token:
+        if attempt >= WARM_IDS_DEFERRALS:
+            logger.info("warm_ids %s: lock still held after %d tries; the beat will cover %d batches / %d products",
+                        location_slug, attempt, len(batch_ids), len(product_ids))
+            return {"gave_up": True}
+        warm_ids.apply_async(args=[location_slug, batch_ids, product_ids, attempt + 1],
+                             countdown=120 * (attempt + 1), retry=False)
+        return {"deferred": attempt + 1}
+    try:
+        return lab_enrich.warm(location_slug, only_batches=set(batch_ids), only_products=set(product_ids))
+    finally:
+        backoffice_lock.release(token)
+
+
+@shared_task
+def warm_batch_labs_all(force: bool = False, limit: int | None = None) -> dict:
+    """Fill the BatchLab (terpenes + % per batch) and ProductDetail (allowlisted product info) tables
+    for in-stock products, paced and sequential — with `warm_ids`, the only thing that ever asks Dutchie
+    for them on behalf of the chat. Every 30 min while a store is open; yields to a New Drops run
+    (both spend the same 60 calls/min)."""
+    if not force and not any_store_open_or_warming():
+        return {"skipped": "stores_closed"}
+    token = backoffice_lock.acquire(50 * 60)
+    if not token:
+        return {"skipped": "backoffice_busy"}  # New Drops, or another warm, is on the Dutchie budget
+    out: dict = {}
+    try:
+        for slug in STORE_SLUGS:
+            try:
+                out[slug] = lab_enrich.warm(slug, **({"limit": limit} if limit else {}))
+            except Exception as exc:  # noqa: BLE001 - report, keep the other stores going
+                logger.warning("warm_batch_labs %s failed: %s", slug, exc)
+                out[slug] = f"error: {type(exc).__name__}"
+    finally:
+        backoffice_lock.release(token)
     return out

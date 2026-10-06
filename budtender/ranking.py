@@ -11,12 +11,15 @@ import re
 # ranking.py keeps the ORM query, slot/size/DOH filtering, the facet helpers and
 # the owner ordering; it delegates the per-item demand score + persuasive reason
 # to the engine so the formula can never drift between website and POS again.
-from .engine import (MIN_STOCK, _recent_affinity, _request_weights,
+from .engine import (AROMA_BOOST, MIN_STOCK, _recent_affinity, _request_weights,
                      from_product, profile_dict, score_one)
 from .engine import why as _engine_why
 from .engine import W_ANON, W_KNOWN  # noqa: F401 — re-exported for views._clean_ranking_weights
 from .models import CustomerProfile, Product
-from . import live_stock
+from . import lab_enrich, live_stock, terpenes
+
+# Contract B: `sort_by` re-orders the already-filtered set. Anything else is ignored.
+SORT_MODES = ("potency", "price_asc")
 
 
 def _live_price(live, p: Product) -> float:
@@ -409,8 +412,14 @@ def available_sizes(rows, category: str | None, min_count: int = 1) -> list[dict
 
 def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
                   limit: int = 5, exclude_skus: set[str] | None = None,
-                  ranking_weights: dict | None = None) -> list[tuple[Product, str]]:
+                  ranking_weights: dict | None = None,
+                  labs: dict | None = None) -> list[tuple[Product, str]]:
+    """Ranked (Product, why) picks. `labs` is the caller's per-request memo of batch labs
+    ({batch_id: stored lab | None}); it is filled here — one bulk read for the picks — and the
+    caller reuses it, so a request never reads labs per product."""
     exclude_skus = exclude_skus or set()
+    labs = lab_enrich.Memo() if labs is None else labs
+    sort_by = slots.get("sort_by") if slots.get("sort_by") in SORT_MODES else None
     cat_slot = slots.get("category")
     category = CATEGORY_BY_SLOTKEY.get(cat_slot, cat_slot) if cat_slot else None
     # Prefer an explicit dollar range; fall back to the tier bounds (chat route).
@@ -475,7 +484,10 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
     blocked &= set(CATEGORY_BY_SLOTKEY.values())
     if blocked:
         candidates = [p for p in candidates if p.category not in blocked]
-    if not premium_intent:
+    # Premium intent makes price a preference (priciest first), not a gate. An explicit sort_by replaces
+    # that ordering, so the customer's budget band is a HARD filter again, premium or not: "stronger"
+    # must never surface a $30 pick to someone who asked for $100 & up.
+    if not premium_intent or sort_by:
         candidates = [p for p in candidates
                       if lo <= _live_price(live, p) <= hi]
     if not candidates:
@@ -553,10 +565,45 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
         "recent_brands": recent_brands, "recent_cats": recent_cats,
     }
 
+    # The aroma slot (one of terpenes.AROMA_TERPENES; anything else is ignored) nudges the score of
+    # products whose real batch lab carries it. DB-only: one bulk read for every candidate, memoized in
+    # `labs` (the picks' labs below and the serializer reuse it); no slot, no read, no change.
+    aroma = slots.get("aroma")
+    aroma_hits: dict[str, tuple] = {}
+    if isinstance(aroma, str) and aroma in terpenes.AROMA_TERPENES:
+        lab_enrich.labs_for([p.batch_id for p in candidates], memo=labs)
+        for p in candidates:
+            hit = terpenes.aroma_hit((labs.get(p.batch_id) or {}).get("terpenes"), aroma)
+            if hit:
+                aroma_hits[p.sku] = (aroma, *hit)
+
+    # (score, product, aroma hit | None): the reason is written once, for the final picks only (_finish).
     scored = []
     for p in candidates:
         score = score_one(from_product(p), pf, ctx)
-        scored.append((score, p, _why(p, desired, profile)))
+        if p.sku in aroma_hits:
+            score += AROMA_BOOST
+        scored.append((score, p, aroma_hits.get(p.sku)))
+
+    # ---- Explicit sort (Contract B): "stronger" / "cheaper" re-orders THIS filtered set. ----
+    # Every filter above (category, subtype, size, price band, DOH, exclusions) has already
+    # applied; this only decides the order. It wins over the premium and margin-first orderings.
+    if sort_by:
+        if sort_by == "potency":
+            # The displayed THC is the inventory number, else the batch lab's: sort on the same one.
+            lab_enrich.labs_for([t[1].batch_id for t in scored if t[1].thc_percent is None], memo=labs)
+
+            def _key(t):
+                thc = lab_enrich.effective_thc(t[1].thc_percent, labs.get(t[1].batch_id))
+                return (thc is None, -(thc or 0.0), -t[0], t[1].sku)   # highest first, unknowns last
+        else:
+            def _key(t):
+                return (_live_price(live, t[1]), -t[0], t[1].sku)      # cheapest first
+        picks = sorted(scored, key=_key)[:limit]
+        if len(picks) < limit and nearby:
+            have = {t[1].sku for t in picks}
+            picks += [(0.0, p, None) for p in nearby if p.sku not in have][: limit - len(picks)]
+        return _finish(picks, desired, profile, labs)
 
     # ---- Premium intent: highest price of this category+weight wins. ----
     # The customer asked for the top end (top tier / "$100 & up"), so we order
@@ -591,9 +638,9 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
         if len(picks) < limit and nearby:
             for p in nearby[: min(2, limit - len(picks))]:
                 if p.sku not in chosen:
-                    picks.append((0.0, p, _why(p, desired, profile)))
+                    picks.append((0.0, p, None))
                     chosen.add(p.sku)
-        return [(p, why) for _, p, why in picks[:limit]]
+        return _finish(picks[:limit], desired, profile, labs)
 
     scored.sort(key=lambda t: t[0], reverse=True)   # demand score, desc
 
@@ -636,9 +683,9 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
                     break
                 if p.sku in used_skus:
                     continue
-                _take((0.0, p, _why(p, desired, profile)))
+                _take((0.0, p, None))
 
-        return [(p, why) for _, p, why in picks[:limit]]
+        return _finish(picks[:limit], desired, profile, labs)
 
     _take(max(scored, key=lambda t: float(t[1].margin)))
     # #2 — highest sales velocity among the rest. With no transactions yet all
@@ -661,13 +708,25 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
                 break
             if p.sku in used_skus:
                 continue
-            _take((0.0, p, _why(p, desired, profile)))
+            _take((0.0, p, None))
 
     # Order is intentional (#1 margin, #2 velocity, …) — do NOT re-sort by score.
-    return [(p, why) for _, p, why in picks[:limit]]
+    return _finish(picks[:limit], desired, profile, labs)
 
 
-def _why(p: Product, desired: str | None, profile: CustomerProfile | None) -> str:
+def _why(p: Product, desired: str | None, profile: CustomerProfile | None, aroma_hit: tuple | None = None) -> str:
     """Persuasive reason for THIS pick — delegated to the shared engine so the
-    website and the in-store POS speak the same language."""
-    return _engine_why(from_product(p), desired, profile_dict(profile))
+    website and the in-store POS speak the same language. The lab's words live in
+    `lab.profile` (the card shows them once, from there), never in this reason; the one
+    exception is the aroma the customer asked for, when the batch lab really carries it."""
+    return _engine_why(from_product(p), desired, profile_dict(profile), aroma_hit)
+
+
+def _finish(picks: list[tuple], desired: str | None, profile: CustomerProfile | None,
+            labs: dict) -> list[tuple[Product, str]]:
+    """The final picks with their reasons. The one bulk lab read for the picks happens
+    here (memoized in `labs`, which the caller reuses for serialization), and reasons are
+    written for the picks only — never for every candidate."""
+    products = [t[1] for t in picks]
+    lab_enrich.labs_for([p.batch_id for p in products], memo=labs)
+    return [(t[1], _why(t[1], desired, profile, t[2])) for t in picks]

@@ -31,11 +31,52 @@ class PublicSerializerTests(TestCase):
         out = public_product(p, rank=1)
         self.assertEqual(set(out.keys()), set(PUBLIC_PRODUCT_FIELDS))
 
+    def test_a_stored_lab_or_info_row_carrying_cost_or_vendor_keys_never_reaches_a_customer(self):
+        """Serialization allowlists lab/info too, so a stray key in a STORED row (a bad write, an old rule, a
+        manual edit) cannot leak: the hand-built dict above could not catch that, a stored row can."""
+        from budtender import lab_enrich
+        from budtender.models import BatchLab, ProductDetail
+        p = _make_product(batch_id="777", product_id="888")
+        now = timezone.now()
+        BatchLab.objects.create(batch_id="777", status="ok", checked_at=now, data={
+            "total_terpenes": 2.0, "terpenes": [{"name": "Limonene", "pct": 0.5, "cost": 12}], "cbd_total": None,
+            "thc_total": 24.0, "minor_cannabinoids": [], "tested_date": None, "lab_name": None,
+            "coa_url": "https://certs.example.com/a.pdf", "contaminants": {},
+            "cost": 12, "margin": 9, "vendor": "FIXTURE VENDOR"})
+        ProductDetail.objects.create(product_id="888", status="ok", checked_at=now, data={
+            "strain_type": "Hybrid", "Cost": 987654, "cost": 5, "vendor": "FIXTURE VENDOR", "margin": 3})
+        labs, details = lab_enrich.for_picks("yakima", [p])
+        out = public_product(p, lab=labs.get("777"), info=details.get("888"))
+        self.assertEqual(out["info"], {"strain_type": "Hybrid"})
+        blob = json.dumps(out).lower()
+        for word in ("margin", "cost", "vendor", "987654"):
+            self.assertNotIn(word, blob)
+
     def test_public_product_never_contains_cost_or_margin(self):
         p = _make_product()
         blob = json.dumps(public_product(p)).lower()
         for word in FORBIDDEN:
             self.assertNotIn(word, blob, f"'{word}' leaked into public product")
+
+    def test_lab_is_an_allowlisted_key_and_cost_margin_stay_out_beside_it(self):
+        """The lab report (terpenes, totals, COA) joined the allowlist; the exact key set is pinned
+        so a new field can't ride in unreviewed, and cost/margin still never appear."""
+        for key in ("lab", "size", "info"):
+            self.assertIn(key, PUBLIC_PRODUCT_FIELDS)
+        p = _make_product(cost=12, margin=18)
+        lab = {"total_terpenes": 2.31, "terpenes": [{"name": "Beta-Myrcene", "pct": 0.82}], "cbd_total": None,
+               "thc_total": 24.5, "minor_cannabinoids": [{"name": "CBG", "pct": 1.5}],
+               "tested_date": "2026-09-14", "lab_name": "Test Lab",
+               "coa_url": "https://certs.example.com/a.pdf", "contaminants": {"pesticides": "pass"}}
+        out = public_product(p, lab=lab, info={"strain_type": "Hybrid"})
+        self.assertEqual(set(out.keys()), set(PUBLIC_PRODUCT_FIELDS))
+        # thc_total is stored but never serialized: thc_percent is the one potency number
+        self.assertEqual(set(out["lab"]), {"total_terpenes", "terpenes", "cbd_total",
+                                           "minor_cannabinoids", "tested_date", "lab_name", "coa_url",
+                                           "contaminants", "profile"})
+        blob = json.dumps(out).lower()
+        for word in FORBIDDEN:
+            self.assertNotIn(word, blob, f"'{word}' leaked into a product that carries a lab")
 
 
 @override_settings(

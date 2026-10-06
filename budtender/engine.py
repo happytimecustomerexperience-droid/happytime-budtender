@@ -19,10 +19,12 @@ allowlist serializer is the sole client boundary (see serializers.public_product
 from __future__ import annotations
 
 import math
+import re
 from datetime import datetime, timedelta, timezone
 
 from django.core.cache import cache
 
+from . import terpenes
 from .models import ManualPairing, Product
 
 # ── Weights ──────────────────────────────────────────────────────────────────
@@ -39,11 +41,19 @@ _TIER_CENTER = {"value": -0.6, "mid": 0.0, "top": 0.6}
 # Owner policy: never suggest anything with fewer than 5 on the sales floor.
 MIN_STOCK = 5
 
+# Strain-type / name cues here; the TERPENE half of each ask comes from terpenes.NOTES' leans, so a
+# terpene's effect is defined once (a card's wording and this score can no longer disagree).
 EFFECT_HINTS = {
-    "relaxed": {"indica", "myrcene", "linalool", "kush"},
-    "uplifted": {"sativa", "limonene", "pinene", "haze"},
+    "relaxed": {"indica", "kush"} | terpenes.leaning("relaxing", "calm"),
+    "uplifted": {"sativa", "haze"} | terpenes.leaning("uplifting", "alert"),
     "middle": {"hybrid"},
 }
+
+# A customer who asked for an aroma (the `aroma` slot) gets this added to the score of a product whose real
+# batch lab carries it (terpenes.aroma_hit). The size of the effect weight above (W_KNOWN["effect"]):
+# a nudge between near-equal picks, never enough to beat a clear margin or taste lead; the stock, price
+# and size filters have already run, so it cannot surface anything they removed.
+AROMA_BOOST = 0.10
 
 
 def _request_weights(config: dict | None, profile) -> dict[str, float]:
@@ -186,8 +196,11 @@ def _effect_score(feat: dict, desired: str | None) -> float:
     if not desired:
         return 0.0
     hints = EFFECT_HINTS.get(desired, set())
-    hay = f"{feat.get('strain','')} {feat.get('strain_type','')} {feat.get('terpene','')} {feat.get('name','')}".lower()
-    return 1.0 if any(h in hay for h in hints) else 0.0
+    # The terpene field matches its hint by EQUALITY ("pinene" is a substring of "terpinene", which is not
+    # pinene); strain / type / name cues match at the start of a word ("Kush", "Haze", "Indica-Hybrid").
+    terpene = terpenes.canonical(feat.get("terpene"))
+    hay = f"{feat.get('strain', '')} {feat.get('strain_type', '')} {feat.get('name', '')}".lower()
+    return 1.0 if any(h == terpene or re.search(r"(?<![a-z0-9])" + re.escape(h), hay) for h in hints) else 0.0
 
 
 def _quality_fit(feat: dict, pf: dict | None) -> float:
@@ -272,21 +285,28 @@ def score_one(feat: dict, pf: dict | None, ctx: dict) -> float:
     )
 
 
-def why(feat: dict, desired: str | None, pf: dict | None) -> str:
+def why(feat: dict, desired: str | None, pf: dict | None, aroma_hit: tuple | None = None) -> str:
     """A short, PERSUASIVE reason for THIS pick, from real signals only. Ordered
-    strongest-converting first: personal hook, live deal, requested effect, real
-    potency, genuine scarcity, then flavor/strain fallback."""
+    strongest-converting first: personal hook, live deal, requested effect, requested
+    aroma, real potency, genuine scarcity, then flavor/strain fallback. `aroma_hit` is
+    (aroma, terpene, leads) from a real batch lab (terpenes.aroma_hit), or None."""
     bits: list[str] = []
     brand = feat.get("brand")
     st = feat.get("strain_type") or ""
-    name = feat.get("name") or feat.get("strain") or "this pick"
+    sub = feat.get("subcategory") or ""
+    # The card already shows the product name, so the reason never carries it, and never
+    # repeats a word (strain, terpene, brand, type) that the name already says.
+    low_name = (feat.get("name") or feat.get("strain") or "").lower()
+
+    def fresh(word) -> bool:
+        return bool(word) and str(word).lower() not in low_name
 
     if pf and brand and _aff(pf, "brand_affinity", brand) >= 0.25:
-        bits.append(f"your go-to {brand}")
-    elif pf and st and _aff(pf, "strain_type_affinity", st) >= 0.4:
+        bits.append(f"your go-to {brand}" if fresh(brand) else "your go-to brand")
+    elif pf and fresh(st) and _aff(pf, "strain_type_affinity", st) >= 0.4:
         bits.append(f"right in your {st.lower()} lane")
-    elif pf and feat.get("subcategory") and _aff(pf, "subcategory_affinity", feat["subcategory"]) >= 0.4:
-        bits.append(f"your usual {feat['subcategory']}")
+    elif pf and fresh(sub) and _aff(pf, "subcategory_affinity", sub) >= 0.4:
+        bits.append(f"your usual {sub}")
     elif pf and pf.get("price_tier") and _quality_fit(feat, pf) >= 0.7:
         bits.append("exactly your usual quality")
 
@@ -296,6 +316,13 @@ def why(feat: dict, desired: str | None, pf: dict | None) -> str:
 
     if desired and _effect_score(feat, desired):
         bits.append(f"dialed in for {desired}")
+
+    if aroma_hit:
+        aroma, terpene, leads = aroma_hit
+        if leads:
+            bits.append(f"{aroma}-forward" + (f" — {terpene} leads" if fresh(terpene) else ""))
+        else:
+            bits.append(f"{aroma} notes" + (f" — {terpene} is a top terpene" if fresh(terpene) else ""))
 
     if _f(feat.get("thc")) >= 25:
         bits.append(f"hits hard at {_f(feat.get('thc')):.0f}% THC")
@@ -307,17 +334,17 @@ def why(feat: dict, desired: str | None, pf: dict | None) -> str:
     except (TypeError, ValueError):
         pass
 
-    if len(bits) < 2 and feat.get("terpene"):
-        bits.append(f"{feat['terpene'].lower()}-forward")
-    elif len(bits) < 2 and feat.get("strain"):
-        bits.append(feat["strain"])
+    if len(bits) < 2:
+        if fresh(feat.get("terpene")) and not aroma_hit:   # the aroma bit already names the terpene
+            bits.append(f"{feat['terpene'].lower()}-forward")
+        elif fresh(feat.get("strain")):
+            bits.append(feat["strain"])
 
     picked = [b for b in bits if b][:2]
-    if not picked:
-        return f"a standout {brand} pick · {name}" if brand else f"a standout pick · {name}"
-    s = " · ".join(picked)
-    if name and name not in s:
-        s = f"{s} · {name}"
+    if not picked:  # never empty (the in-store menu shows it), never the name
+        s = f"a standout {brand} pick" if fresh(brand) else "a standout pick"
+    else:
+        s = " · ".join(picked)
     return s[0].upper() + s[1:]
 
 

@@ -73,6 +73,41 @@ class Product(models.Model):
         return f"{self.name} @ {self.location_slug}"
 
 
+class BatchLab(models.Model):
+    """One batch's lab report, kept durably — a batch's lab result never changes.
+
+    Written ONLY by budtender.lab_enrich (a paced job, never a request). `data` is the Contract-A
+    `lab` dict without its `profile` (that is derived from the numbers at read time). Status:
+      ok   — Dutchie answered with a lab report
+      none — Dutchie answered and there is no lab data; asked again after 7 days
+    Unreachable / rate-limited / errored writes NO row: empty is not the same as unknown.
+    """
+    batch_id = models.CharField(max_length=32, unique=True)
+    status = models.CharField(max_length=8, choices=(("ok", "ok"), ("none", "none")))
+    data = models.JSONField(default=dict, blank=True)
+    checked_at = models.DateTimeField(db_index=True)
+
+    def __str__(self) -> str:
+        return f"BatchLab({self.batch_id} {self.status})"
+
+
+class ProductDetail(models.Model):
+    """The allowlisted `info` for one product (Dutchie's product-master record, boiled down by
+    budtender.product_detail). Unlike a batch lab this is MUTABLE (tags, ingredients, category),
+    so it is refreshed after 7 days. Written only by budtender.lab_enrich, never by a request.
+      ok   — Dutchie answered and the record has something to show (`data` is the info)
+      none — Dutchie answered and nothing customer-facing is filled in (`data` is {})
+    Unreachable / empty / unstructured answers write NO row.
+    """
+    product_id = models.CharField(max_length=64, unique=True)  # Dutchie productId == Product.product_id
+    status = models.CharField(max_length=8, choices=(("ok", "ok"), ("none", "none")))
+    data = models.JSONField(default=dict, blank=True)
+    checked_at = models.DateTimeField(db_index=True)
+
+    def __str__(self) -> str:
+        return f"ProductDetail({self.product_id} {self.status})"
+
+
 class SyncState(models.Model):
     """When each store's inventory was last successfully refreshed from Dutchie.
     Suggestions are only ever served against in-stock products; this record lets a
@@ -117,6 +152,15 @@ class CustomerProfile(models.Model):
     purchase_history = models.JSONField(default=list, blank=True)
     computed_at = models.DateTimeField(null=True, blank=True)
 
+    # Who created the row. Dutchie sync only reaches phones Dutchie knows; a caller or visitor we
+    # have never sold to is created by us ("voice" | "web") and is NEVER written to Dutchie.
+    source = models.CharField(max_length=16, default="dutchie")
+    # Dutchie customerIds that fold into this phone (set by sync_transactions): the merge bridge.
+    dutchie_ids = models.JSONField(default=list, blank=True)
+    # Set when the weekly merge folded this row into another (the phone stays, as a pointer).
+    merged_into = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL,
+                                    related_name="merged_from")
+
     def __str__(self) -> str:
         return f"CustomerProfile({self.phone})"
 
@@ -132,6 +176,10 @@ class ChatSession(models.Model):
     # (non-greeting) turn intent. Per-turn intent lives in AnalyticsEvent.props.
     primary_intent = models.CharField(max_length=24, blank=True, db_index=True)
     channel = models.CharField(max_length=16, default="chat")  # chat|questionnaire|voice
+    # How `customer` was established: "caller_id" (carrier, voice) | "web_phone" (typed by the
+    # visitor; owner-approved identity, HHT_WEB_PHONE_IDENTITY). A website request personalises
+    # from `customer` only when this is set.
+    identity_via = models.CharField(max_length=16, blank=True)
     is_active = models.BooleanField(default=True)
     started_at = models.DateTimeField(auto_now_add=True)
     last_active_at = models.DateTimeField(auto_now=True)

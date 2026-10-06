@@ -4,10 +4,9 @@
     python manage.py refresh_new_drops --store yakima
     python manage.py refresh_new_drops --max-lookups 150   # what the 30-min task does
 """
-from django.core.cache import cache
 from django.core.management.base import BaseCommand, CommandError
 
-from budtender import new_drops
+from budtender import backoffice_lock, new_drops
 from budtender.models import STORES
 
 
@@ -22,8 +21,9 @@ class Command(BaseCommand):
     def handle(self, *args, store=None, max_lookups=5000, **opts):
         # Same lock as the 30-min task: two paced runs at once would double the
         # call rate and trip Dutchie's 60/min limit.
-        if not cache.add("newdrops:lock", 1, 3 * 3600):
-            raise CommandError("a New Drops refresh is already running")
+        token = backoffice_lock.acquire(3 * 3600)
+        if not token:
+            raise CommandError("a New Drops refresh or a lab warm-up is already running")
         try:
             for slug in [store] if store else [s[0] for s in STORES]:
                 snap = new_drops.refresh_store(slug, max_lookups=max_lookups)
@@ -34,4 +34,4 @@ class Command(BaseCommand):
                                   f"{linked} exact menu links, {coa} COAs")
                 self.stdout.flush()
         finally:
-            cache.delete("newdrops:lock")
+            backoffice_lock.release(token)

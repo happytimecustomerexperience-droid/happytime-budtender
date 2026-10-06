@@ -23,6 +23,8 @@ urlpatterns = [
     path("phone-cart/release", views.PhoneCartReleaseView.as_view()),
     path("phone-cart/claim", views.PhoneCartClaimView.as_view()),
     path("customer/profile-upsert", views.ProfileUpsertView.as_view()),
+    path("customer/caller-context", views.CallerContextView.as_view()),     # voice: who is calling
+    path("customer/session-context", views.SessionContextView.as_view()),   # website: typed phone
     path("customer/list", views.CustomerListView.as_view()),       # P7 staff roster (dashboard)
     path("customer/detail", views.CustomerDetailView.as_view()),   # P7 full profile (dashboard)
     path("track/", views.TrackView.as_view()),

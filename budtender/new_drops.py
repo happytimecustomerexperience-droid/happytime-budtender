@@ -78,7 +78,9 @@ _QUERY = (Path(__file__).with_name("new_drops_packages.graphql")).read_text(enco
 # Edible-type categories report potency as % of the item's WEIGHT (0.001%) —
 # meaningless to a shopper, so they show no potency rather than a misleading one.
 _NO_POTENCY_CATEGORIES = {"solid edible", "liquid edible", "edible", "beverage", "topical",
-                          "tincture", "capsule", "other"}
+                          "tincture", "capsule", "other",
+                          # the catalog slugs Product.category carries (the chat's lab path)
+                          "edibles", "beverages", "topicals", "tinctures", "capsules"}
 THCA_FACTOR = 0.877  # Total THC = THC + 0.877 * THCA (the figure WA labels carry)
 
 
@@ -91,23 +93,37 @@ class BackofficeClient(PosClient):
         super().__init__(store)
         self.base_origin = store.base_url.rstrip("/")
 
-    def post(self, path, body, *, _retry=False, raw=False):
+    def post(self, path, body, **kw):
+        # **kw, never a fixed signature: PosClient.post re-calls itself with its own retry state
+        # (_retry/_force/_throttled/_blips/idempotent) and a fixed list here once turned every 401
+        # re-login and every 429/transport retry into a TypeError.
         wait = BackofficeClient._last_call + MIN_CALL_INTERVAL - time.monotonic()
         if wait > 0:
             time.sleep(wait)
         BackofficeClient._last_call = time.monotonic()
         try:
-            return super().post(path, body, _retry=_retry, raw=raw)
+            return super().post(path, body, **kw)
         except Exception as exc:
-            if "too many requests" not in str(exc).lower() or getattr(self, "_rate_retry", False):
+            # A call that already waited out the 429 back-off must not wait again on top of it.
+            if (getattr(exc, "backed_off", False) or "too many requests" not in str(exc).lower()
+                    or getattr(self, "_rate_retry", False)):
                 raise
             logger.info("new_drops: Dutchie rate limit hit on %s; waiting 61s", path)
             time.sleep(61)
             self._rate_retry = True
             try:
-                return self.post(path, body, _retry=_retry, raw=raw)
+                return self.post(path, body, **kw)
             finally:
                 self._rate_retry = False
+
+    def get_product_details(self, product_id) -> dict | None:
+        """The full product-master record (155 keys, incl. Cost and Vendor: callers allowlist it,
+        see product_detail.info_from_data). A read, so it is marked idempotent: a throttle or a
+        dropped connection is retried. None when Dutchie answers without a record."""
+        resp = self.post("/api/product-master/get-product-details-v2",
+                         {"ProductId": int(product_id), **self.session_block()}, idempotent=True)
+        data = resp.get("Data")
+        return data if isinstance(data, dict) and data else None
 
 
 def _client(location_slug: str) -> BackofficeClient:
@@ -201,7 +217,16 @@ def received_index(receipts: list[dict], now: datetime, days: int = WINDOW_DAYS)
 
 
 # ── 2. lab results per batch ─────────────────────────────────────────────────
+# Keys whose camel-case split does not read like a terpene name (all 41 keys of the real lab payload walked).
+_TERPENE_NAMES = {
+    "ThreeCarene": "3-Carene", "PCymene": "p-Cymene", "PIsopropyltoluene": "p-Isopropyltoluene",
+    "YTerpinene": "Gamma-Terpinene", "OcimeneOne": "Ocimene", "OcimeneTwo": "Ocimene", "NerolidolTwo": "Nerolidol",
+}
+
+
 def _pretty_terpene(key: str) -> str:
+    if key in _TERPENE_NAMES:
+        return _TERPENE_NAMES[key]
     words = re.sub(r"(?<!^)(?=[A-Z])", " ", key).split()
     if words and words[0] in ("Alpha", "Beta", "Gamma", "Delta", "Trans", "Cis"):
         return f"{words[0]}-{' '.join(words[1:])}" if len(words) > 1 else words[0]
@@ -218,38 +243,122 @@ def _value(section: dict | None, key: str) -> float | None:
         return None
 
 
-def summarize_lab(data: dict, category: str) -> dict:
-    """Pure: lab-results Data -> {thc, cbd, potency_unit, terpenes, coa_url}."""
+def _unit_ok(entry: dict | None, strict: bool) -> bool:
+    """Only UnitId 2 (= %) is trusted. The New Drops reading also lets a missing unit
+    through (None); `strict` (the chat's lab path) does not: a value with no unit is
+    not guessed to be a percent. An entry with no value has nothing to distrust."""
+    entry = entry or {}
+    if strict:
+        return entry.get("Value") is None or entry.get("UnitId") == 2
+    return entry.get("UnitId") in (None, 2)
+
+
+def _lab_date(raw) -> str | None:
+    """'2026-09-14T00:00:00' -> '2026-09-14'; anything that is not a date -> None."""
+    s = str(raw or "").strip()
+    return s[:10] if re.fullmatch(r"\d{4}-\d\d-\d\d(?:[T ].*)?", s) else None
+
+
+_BIG_FOUR = {"thc", "thca", "cbd", "cbda"}
+# Not minors: TAC is a TOTAL (total active cannabinoids); Thc8/Thc9/Thc10 are other THC isomers. The real
+# capture's delta-9 THC lives under plain `Thc` (Thc8/9/10 are null there), so the isomer fields are
+# neither listed as minors nor added into the THC total: adding Thc9 would count delta-9 twice.
+_NOT_MINORS = _BIG_FOUR | {"tac", "thc8", "thc9", "thc10"}
+_CONTAMINANT_KEYS = {"Pesticides": "pesticides", "HeavyMetal": "heavy_metals", "Mycotoxin": "mycotoxin",
+                     "Microbiology": "microbiology", "SolventResidue": "solvents"}
+
+
+def _minor_cannabinoids(cann: dict, top: int = 3) -> list[dict]:
+    """[{name, pct}], the strongest minors (CBG, CBN, THCV, CBC...): UnitId 2 and Value > 0 only,
+    never THC/THCA/CBD/CBDA (those are the potency figures)."""
+    minors = []
+    for key, val in cann.items():
+        if (isinstance(val, dict) and str(key).lower() not in _NOT_MINORS and val.get("UnitId") == 2
+                and isinstance(val.get("Value"), (int, float)) and val["Value"] > 0):
+            minors.append({"name": str(key).upper(), "pct": round(float(val["Value"]), 2)})
+    minors.sort(key=lambda m: -m["pct"])
+    return [m for m in minors if m["pct"] > 0][:top]
+
+
+def _contaminants(section) -> dict:
+    """{pesticides, heavy_metals, ...: "pass"}: a key is present ONLY when the lab's value is "pass"
+    (any case); a null screen is simply left out. If ANY screen is neither null nor "pass" ("fail",
+    "not tested", anything we cannot read), the whole dict is omitted: partial passes are never shown
+    next to a fail, and nothing is ever implied."""
+    if not isinstance(section, dict):
+        return {}
+    values = {name: section.get(key) for key, name in _CONTAMINANT_KEYS.items()}
+    passed = {name: isinstance(v, str) and v.strip().lower() == "pass" for name, v in values.items()}
+    if any(not passed[name] and v not in (None, "") for name, v in values.items()):
+        return {}
+    return {name: "pass" for name, ok in passed.items() if ok}
+
+
+def summarize_lab(data: dict, category: str, top: int = 3, detail: bool = False) -> dict:
+    """Pure: lab-results Data -> {thc, cbd, potency_unit, terpenes, coa_url}.
+
+    `top` is how many terpenes to list. `detail` (opt-in, so the New Drops contract does
+    not move) is the chat's reading: it also returns total_terpenes (the lab's own total
+    when it reports one in %, else the sum of every reported % terpene), tested_date and
+    lab_name, and it never guesses a unit."""
     cann = data.get("Cannabinoids") or {}
-    coa = https_url((data.get("TestDetails") or {}).get("CoaUrl")) or None   # lands in an href
-    unit_ok = all(((cann.get(k) or {}).get("UnitId") in (None, 2)) for k in ("Thc", "Thca", "Cbd", "Cbda"))
+    test = data.get("TestDetails") or {}
+    coa = https_url(test.get("CoaUrl")) or None   # lands in an href
+    unit_ok = all(_unit_ok(cann.get(k), detail) for k in ("Thc", "Thca", "Cbd", "Cbda"))
+    potency_shown = category.strip().lower() not in _NO_POTENCY_CATEGORIES
     thc = cbd = None
-    if category.strip().lower() not in _NO_POTENCY_CATEGORIES and unit_ok:
+    if potency_shown and unit_ok:
         t = (_value(cann, "Thc") or 0) + THCA_FACTOR * (_value(cann, "Thca") or 0)
         c = (_value(cann, "Cbd") or 0) + THCA_FACTOR * (_value(cann, "Cbda") or 0)
         thc = round(t, 1) if t >= 1 else None
         cbd = round(c, 1) if c >= 1 else None
-    terps = []
+    # One entry per compound: Dutchie's schema has Ocimene / OcimeneOne / OcimeneTwo (and Nerolidol /
+    # NerolidolTwo, GammaTerpinene / YTerpinene) and does not say whether they are isomers of one total or
+    # separate entries. Summing could double-count; keeping the larger can only understate, so it does.
+    best: dict[str, float] = {}
     for key, val in (data.get("Terpenes") or {}).items():
-        if isinstance(val, dict) and (val.get("UnitId") in (None, 2)) and (val.get("Value") or 0) > 0:
-            terps.append({"name": _pretty_terpene(key), "value": round(float(val["Value"]), 2)})
+        if isinstance(val, dict) and _unit_ok(val, detail) and (val.get("Value") or 0) > 0:
+            name = _pretty_terpene(key)
+            best[name] = max(best.get(name, 0.0), float(val["Value"]))
+    terps = [{"name": name, "value": round(v, 2)} for name, v in best.items()]
+    total = sum(best.values())
     terps.sort(key=lambda t: -t["value"])
-    return {"thc": thc, "cbd": cbd, "potency_unit": "%" if (thc or cbd) else None,
-            "terpenes": terps[:3], "coa_url": coa}
+    out = {"thc": thc, "cbd": cbd, "potency_unit": "%" if (thc or cbd) else None,
+           "terpenes": terps[:top], "coa_url": coa}
+    if detail:
+        own = data.get("TotalTerpenes") or {}
+        trusted_own = isinstance(own, dict) and own.get("UnitId") == 2 and (_value(data, "TotalTerpenes") or 0) > 0
+        out["total_terpenes"] = round(_value(data, "TotalTerpenes") if trusted_own else total, 2) or None
+        out["tested_date"] = _lab_date(test.get("TestedDate"))
+        out["lab_name"] = str(test.get("LabName") or "").strip()[:120] or None
+        out["minor_cannabinoids"] = _minor_cannabinoids(cann) if potency_shown else []
+        out["contaminants"] = _contaminants(data.get("Contaminants"))
+    return out
 
 
-def lab_for_batch(client: BackofficeClient, batch_id: int) -> dict | None:
-    """Raw lab-results Data for a batch, cached 30 days. Failures are NOT cached."""
+def lab_for_batch(client: BackofficeClient, batch_id: int, strict: bool = False) -> dict | None:
+    """Raw lab-results Data for a batch, cached 30 days. Failures and anomalies are NOT cached.
+    A failed call returns None, unless `strict`: then it raises, so a caller that loops over many ids
+    (lab_enrich.warm) can tell a transport/throttle/auth failure from an id that simply has no answer."""
     key = f"newdrops:lab:{batch_id}"
     hit = cache.get(key)
     if hit is not None:
         return hit
     try:
-        resp = client.post(f"/api/v2/batches/{batch_id}/lab-results", dict(client.session_block()))
+        resp = client.post(f"/api/v2/batches/{batch_id}/lab-results", dict(client.session_block()),
+                           idempotent=True)
     except Exception as exc:  # rate limit / transient: try again next run
         logger.info("new_drops lab-results batch=%s failed: %s", batch_id, exc)
+        if strict:
+            raise
         return None
-    data = resp.get("Data") or {}
+    data = resp.get("Data")
+    if not isinstance(data, dict) or not data:
+        # Dutchie's real "no lab" answer is the FULL shape (HasLabData:false, every value null). A
+        # missing or empty Data is an anomaly: never cached, never read as "this batch has no lab".
+        logger.warning("new_drops lab-results batch=%s: empty/odd Data (%s); not cached", batch_id,
+                       type(data).__name__)
+        return None
     cache.set(key, data, 30 * 24 * 3600)
     return data
 

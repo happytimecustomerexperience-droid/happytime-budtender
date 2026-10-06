@@ -1,0 +1,41 @@
+{
+ "Result": true,
+ "Message": null,
+ "Data": {
+  "BatchId": 7597051,
+  "BatchName": "WA413287.INJLRW",
+  "StrainId": 209872,
+  "StrainName": "High Life",
+  "BatchType": "Inventory",
+  "Brand": null,
+  "BatchClosed": null,
+  "OtherPlantLotNo": null,
+  "HarvestDate": null,
+  "CreatedDate": "2026-09-08T18:42:34.733",
+  "LastModified": "2026-09-08T22:42:34.907",
+  "PackageCounts": {
+   "CurrentLocation": {
+    "LocationId": 3498,
+    "LocationName": "Happy Time (Yakima)",
+    "Count": 2
+   },
+   "OtherLocations": [],
+   "Total": 2
+  },
+  "RoomId": null,
+  "RoomName": null,
+  "WetWeight": null,
+  "DryWeight": null,
+  "NetBudWeight": null,
+  "ShakeWeight": null,
+  "TrimWasteWeight": null,
+  "PlantCount": null,
+  "HarvestReportingStage": null,
+  "HarvestUnitId": null,
+  "HarvestStartDate": null,
+  "IsFreshFrozenHarvest": false,
+  "ProjectedYield": null,
+  "ProjectedYieldUnitId": null,
+  "ProjectedHarvestDate": null
+ }
+}

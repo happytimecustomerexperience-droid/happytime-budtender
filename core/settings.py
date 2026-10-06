@@ -54,6 +54,9 @@ for _origin in ("https://happytimeweed.com", "https://www.happytimeweed.com"):
 HHT_BACKEND_TOKEN = env("HHT_BACKEND_TOKEN", "")
 # The public site's own token: opens only the views marked website_ok (budtender/auth.py).
 HHT_WEBSITE_TOKEN = env("HHT_WEBSITE_TOKEN", "")
+# A phone the website visitor TYPED may identify their own chat session (budtender.identity,
+# SessionContextView). Owner decision 2026-10-05; 0 turns it off and the site is anonymous again.
+HHT_WEB_PHONE_IDENTITY = env_bool("HHT_WEB_PHONE_IDENTITY", True)
 
 # ── Bundle landing (/custom-order) ───────────────────────────────────────────
 # Shared with alpine-automations, which SIGNS the emailed links this app VERIFIES.

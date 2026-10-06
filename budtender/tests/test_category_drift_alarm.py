@@ -41,16 +41,22 @@ def _seed_live_snapshot(location="yakima"):
 
 
 def _voice_tool_specs() -> dict:
-    """Parse voice/voice/constants.py::TOOL_SPECS as data (ast.literal_eval) — no Django
-    setup, no import of the sibling `voice` service, just its source read as a sibling file."""
+    """voice/voice/constants.py::TOOL_SPECS without Django setup or an import of the sibling `voice`
+    service: its source is read as a sibling file and only the module-level assignments are run, in
+    order (TOOL_SPECS builds its enums from PRODUCT_CATEGORIES / AROMAS, so literal_eval no longer
+    reads it). Anything that cannot run on its own (it needs an import) is skipped."""
     path = Path(__file__).resolve().parents[2] / "voice" / "voice" / "constants.py"
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "TOOL_SPECS" for t in node.targets
-        ):
-            return ast.literal_eval(node.value)
-    raise AssertionError(f"TOOL_SPECS assignment not found in {path}")
+    ns: dict = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            try:
+                exec(compile(ast.Module([node], []), str(path), "exec"), ns)
+            except Exception:  # noqa: BLE001 - a line that needs an import is not what we read
+                pass
+    if "TOOL_SPECS" not in ns:
+        raise AssertionError(f"TOOL_SPECS assignment not found in {path}")
+    return ns["TOOL_SPECS"]
 
 
 class LiveCategoryDriftAlarmTests(TestCase):

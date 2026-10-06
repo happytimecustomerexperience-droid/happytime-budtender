@@ -1,0 +1,170 @@
+"""Who is this person? Phone -> profile, first names, new-profile creation, the weekly merge.
+
+A profile is keyed by phone. Dutchie only ever creates one for a phone it knows; a caller or
+visitor we have never sold to gets a row created HERE (``source`` "voice" / "web") and nothing is
+ever written to Dutchie. The same person can still end up on two rows (a number the store never
+had, then a Dutchie guest on another number), so ``merge_duplicates`` folds a never-purchased
+shell into the Dutchie row, and only on a stable id: a Dutchie account id that staff or sync tied to
+both numbers. Never a name.
+"""
+from __future__ import annotations
+
+import logging
+import re
+from collections import defaultdict
+
+from django.db import transaction
+from django.utils import timezone
+
+from .models import ChatSession, CustomerProfile, PhoneCartDraft, SuggestedProduct
+
+logger = logging.getLogger(__name__)
+
+MAX_HOPS = 5  # a merge chain is one hop; the cap only stops a corrupt loop spinning forever
+# One word of letters (any script), with ' or - inside. Anything else is not a first name.
+_FIRST = re.compile(r"[^\W\d_](?:[^\W\d_]|['’-]){0,29}")
+
+
+def first_name(name: object) -> str:
+    """The first word of a stored name if it reads like a first name, else "" (a business, a
+    "Last, First" row, digits). A caller is never greeted with something we are unsure of."""
+    parts = str(name or "").split()
+    tok = parts[0] if parts else ""
+    if not _FIRST.fullmatch(tok):
+        return ""
+    return tok.capitalize() if tok.isupper() or tok.islower() else tok
+
+
+def follow(profile: CustomerProfile | None) -> CustomerProfile | None:
+    """The row a lookup should land on: the merge target, not the pointer a merge left behind."""
+    for _ in range(MAX_HOPS):
+        if profile is None or not profile.merged_into_id:
+            break
+        profile = profile.merged_into
+    return profile
+
+
+def profile_for_phone(phone: object) -> CustomerProfile | None:
+    from .tasks import _normalize_phone  # tasks imports this module
+
+    e164 = _normalize_phone(phone or "")
+    if not e164:
+        return None
+    return follow(CustomerProfile.objects.filter(phone=e164).select_related("merged_into").first())
+
+
+def ensure_profile(phone: object, source: str, name: object = "") -> tuple[CustomerProfile | None, bool]:
+    """The profile for this phone, created as ``source`` when we have never seen it. A name is
+    written only when the row has none: Dutchie's name wins whenever Dutchie has one."""
+    from .tasks import _normalize_phone
+
+    e164 = _normalize_phone(phone or "")
+    if not e164:
+        return None, False
+    profile = profile_for_phone(e164)
+    created = False
+    if profile is None:
+        profile, created = CustomerProfile.objects.get_or_create(phone=e164, defaults={"source": source})
+        profile = follow(profile)
+    fn = first_name(name)
+    if fn and not profile.name:
+        profile.name = fn
+        profile.save(update_fields=["name"])
+    return profile, created
+
+
+def _top(weights: dict | None, n: int = 3) -> list[str]:
+    return [k for k, _ in sorted((weights or {}).items(), key=lambda kv: kv[1], reverse=True)[:n]]
+
+
+def context(profile: CustomerProfile | None, created: bool = False) -> dict:
+    """What an agent may know about this person: customer-facing taste only, no raw history, no
+    phone, no cost/margin. ``known`` means they have bought from us (a shell has not)."""
+    if profile is None:
+        return {"known": False, "created": False, "first_name": "", "has_history": False, "orders": 0,
+                "days_since_last": None, "top_categories": [], "price_tier": "", "brands": [],
+                "flavors": [], "terpenes": []}
+    last = profile.last_purchase_at
+    return {
+        "known": profile.total_orders > 0,
+        "created": created,
+        "first_name": first_name(profile.name),
+        "has_history": profile.total_orders > 0,
+        "orders": profile.total_orders,
+        "days_since_last": (timezone.now() - last).days if last else None,
+        "top_categories": _top(profile.category_affinity),
+        "price_tier": profile.price_tier or "",
+        "brands": _top(profile.brand_affinity),
+        "flavors": _top(profile.flavor_affinity),
+        "terpenes": _top(profile.terpene_affinity),
+    }
+
+
+def link_session(token: object, profile: CustomerProfile | None, e164: str, via: str) -> None:
+    """Tie an existing chat session to the customer (no-op for an unknown token or no profile)."""
+    token = str(token or "").strip()
+    if token and profile is not None:
+        ChatSession.objects.filter(session_token=token).update(
+            customer=profile, phone=e164, identity_via=via, last_active_at=timezone.now()
+        )
+
+
+# ── weekly merge ─────────────────────────────────────────────────────────────
+
+def _merge(primary: CustomerProfile, secondary: CustomerProfile) -> None:
+    with transaction.atomic():
+        if not primary.name and secondary.name:
+            primary.name = secondary.name
+            primary.save(update_fields=["name"])
+        ChatSession.objects.filter(customer=secondary).update(customer=primary)
+        SuggestedProduct.objects.filter(customer=secondary).update(customer=primary)
+        secondary.merged_into = primary
+        secondary.save(update_fields=["merged_into"])
+
+
+def merge_duplicates() -> dict:
+    """Fold each never-purchased shell row into the Dutchie row it provably belongs to.
+
+    Evidence for "same person" is a Dutchie account id seen with both phones: sync records the ids
+    that fold into each Dutchie row; the POS scan cache and staff-claimed web/phone orders record
+    which phone an account was matched to. Anything that is not exactly one Dutchie owner for an
+    account, or a secondary that has history or Dutchie ids of its own, is left alone and counted.
+    Re-running merges nothing new. The secondary's phone stays as a pointer, so a lookup by either
+    number lands on one row and a Dutchie rebuild cannot resurrect the duplicate."""
+    from customers.models import Customer as ScanCustomer
+
+    from .tasks import _normalize_phone
+
+    owners: dict[str, set[int]] = defaultdict(set)
+    for p in CustomerProfile.objects.filter(merged_into__isnull=True).iterator():
+        for acct in p.dutchie_ids or []:
+            owners[str(acct)].add(p.pk)
+
+    phones: dict[str, set[str]] = defaultdict(set)
+    for acct, ph in (ScanCustomer.objects.exclude(dutchie_acct_id__isnull=True).exclude(phone="")
+                     .values_list("dutchie_acct_id", "phone")):
+        phones[str(acct)].add(_normalize_phone(ph))
+    for acct, ph in (PhoneCartDraft.objects.exclude(dutchie_acct_id="").exclude(contact_phone="")
+                     .values_list("dutchie_acct_id", "contact_phone")):
+        phones[str(acct)].add(_normalize_phone(ph))
+
+    merged = ambiguous = skipped = 0
+    for acct, pks in owners.items():
+        cands = {p for p in phones.get(acct, ()) if p}
+        if not cands:
+            continue
+        if len(pks) != 1:
+            ambiguous += 1
+            continue
+        primary = CustomerProfile.objects.get(pk=next(iter(pks)))
+        for ph in cands - {primary.phone}:
+            sec = CustomerProfile.objects.filter(phone=ph, merged_into__isnull=True).first()
+            if sec is None or sec.pk == primary.pk:
+                continue
+            if sec.dutchie_ids or sec.purchase_history or sec.total_orders:
+                skipped += 1  # has a purchase identity of its own: not a shell, never auto-merged
+                continue
+            _merge(primary, sec)
+            merged += 1
+            logger.info("merged profile ...%s into %s", ph[-4:], primary.pk)
+    return {"merged": merged, "ambiguous": ambiguous, "skipped": skipped}

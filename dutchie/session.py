@@ -22,8 +22,48 @@ from .transport import http_get, http_post
 logger = logging.getLogger(__name__)
 
 
+# HTTP 429 back-off and transport retry, for calls that opt in with `idempotent=True` (reads).
+# Ported from the marketing dashboard's backoffice client (_retry_after_seconds / _post).
+_MAX_THROTTLE_RETRIES = 5
+_THROTTLE_BASE_DELAY = 2.0
+_THROTTLE_MAX_DELAY = 120.0
+_TRANSPORT_RETRIES = 2
+
+
+def _retry_after_seconds(resp, attempt: int) -> float:
+    """Honour Retry-After when Dutchie sends it, else exponential back-off. Never wait less
+    than the exponential floor: Dutchie answers a throttled call with `Retry-After: 0`, and
+    honouring that literally turns back-off into a busy loop on the endpoint that asked to slow down."""
+    try:
+        header = (resp.headers or {}).get("Retry-After") or ""
+    except Exception:  # noqa: BLE001 - header access must never mask the 429
+        header = ""
+    floor = min(_THROTTLE_BASE_DELAY * (2 ** attempt), _THROTTLE_MAX_DELAY)
+    try:
+        if header:
+            hinted = max(0.0, min(float(str(header).strip()), _THROTTLE_MAX_DELAY))
+            return max(hinted, floor)
+    except (TypeError, ValueError):
+        pass  # Retry-After may be an HTTP-date: fall through to the floor
+    return floor
+
+
 class DutchieUnavailable(RuntimeError):
     """Transport/5xx/non-JSON/Result=false — a retryable-or-report failure."""
+
+
+class DutchieRejected(DutchieUnavailable):
+    """Dutchie answered (200, Result=false) and said no to THIS request: a problem with the request,
+    not with the connection or the rate. Callers that loop over many ids treat it as per-id."""
+
+
+class DutchieThrottled(DutchieUnavailable):
+    """Dutchie is rate-limiting us. `backed_off` is True when the call already waited out the opt-in
+    429 back-off (so an outer wrapper must not wait again on top of it)."""
+
+    def __init__(self, message: str, backed_off: bool = False):
+        super().__init__(message)
+        self.backed_off = backed_off
 
 
 class DutchieSessionExpired(RuntimeError):
@@ -131,8 +171,22 @@ class PosClient:
         self._pinned = None
 
     # ── transport (one re-login retry on 401/403) ────────────────────────────
-    def post(self, path: str, body: dict, *, _retry: bool = False, raw: bool = False) -> dict:
-        sess = self._session(force_refresh=_retry)
+    def post(self, path: str, body: dict, *, _retry: bool = False, raw: bool = False,
+             idempotent: bool = False, _throttled: int = 0, _blips: int = 0, _force: bool = False) -> dict:
+        """POST a JSON body. `idempotent=True` is the caller's promise that re-sending this exact
+        body is a no-op (a read), which opts the call in to waiting out a 429 (Retry-After, bounded)
+        and retrying a transport error. It is OPT-IN and never blanket: a transport error leaves it
+        unknown whether the server applied the request, so a write must not be re-sent."""
+        # `_retry` = this attempt follows the one allowed re-login; `_force` = log in afresh for THIS
+        # attempt (only the 401 branch sets it, so a 429 / transport retry never costs a second login).
+        sess = self._session(force_refresh=_force)
+        if isinstance(body, dict) and "SessionId" in body:
+            # Callers build the body from session_block() BEFORE calling post(), so after a re-login
+            # it would still carry the OLD session. Send the session this attempt actually uses (a
+            # copy: the caller's dict is not touched).
+            body = {**body, "SessionId": sess.session_gid}
+            if "UserId" in body:
+                body["UserId"] = str(sess.user_id)
         h = _headers(self.base_origin, **{
             "Accept": "application/json, text/plain, */*",
             "Content-Type": "application/json",
@@ -142,14 +196,33 @@ class PosClient:
         try:
             resp = http_post(url, json=body, headers=h, timeout=self.timeout)
         except Exception as exc:
+            if idempotent and _blips < _TRANSPORT_RETRIES:
+                delay = 2 ** _blips
+                logger.warning("POS %s transport error (retry %d/%d in %ss): %s",
+                               path, _blips + 1, _TRANSPORT_RETRIES, delay, exc)
+                time.sleep(delay)
+                return self.post(path, body, _retry=_retry, raw=raw, idempotent=True,
+                                 _throttled=_throttled, _blips=_blips + 1)
             raise DutchieUnavailable(f"POST {url}: {exc}") from exc
 
         if resp.status_code in (401, 403) and not _retry:
             logger.info("POS %s -> %s; re-logging in", path, resp.status_code)
             self._invalidate()
-            return self.post(path, body, _retry=True, raw=raw)
+            return self.post(path, body, _retry=True, raw=raw, idempotent=idempotent,
+                             _throttled=_throttled, _blips=_blips, _force=True)
         if resp.status_code in (401, 403):
             raise DutchieSessionExpired(f"{url} -> HTTP {resp.status_code} after re-login")
+        if resp.status_code == 429 and idempotent:
+            if _throttled >= _MAX_THROTTLE_RETRIES:
+                raise DutchieThrottled(
+                    f"{url} -> HTTP 429 after {_throttled} back-offs: Dutchie is rate-limiting harder "
+                    f"than the caller paces ({getattr(resp, 'text', '')[:200]!r})", backed_off=True)
+            delay = _retry_after_seconds(resp, _throttled)
+            logger.warning("POS %s rate-limited (429); backing off %.1fs (%d/%d)",
+                           path, delay, _throttled + 1, _MAX_THROTTLE_RETRIES)
+            time.sleep(delay)
+            return self.post(path, body, _retry=_retry, raw=raw, idempotent=True,
+                             _throttled=_throttled + 1, _blips=_blips)
         if resp.status_code >= 500:
             raise DutchieUnavailable(f"{url} -> HTTP {resp.status_code}")
         try:
@@ -161,7 +234,11 @@ class PosClient:
         if raw:
             return data
         if not isinstance(data, dict) or data.get("Result") is False:
-            raise DutchieUnavailable(f"{url} Result=false: {(data or {}).get('Message')!r}")
+            detail = data.get("Message") if isinstance(data, dict) else repr(data)[:200]
+            message = f"{url} Result=false: {detail!r}"
+            if "too many requests" in message.lower():
+                raise DutchieThrottled(message)  # Dutchie's per-minute limit arrives as a Result=false body
+            raise DutchieRejected(message)
         return data
 
     def get(self, path: str, params: dict | None = None) -> object:

@@ -1,0 +1,304 @@
+{
+ "Result": true,
+ "Message": null,
+ "Data": {
+  "BatchId": 7597051,
+  "HasLabData": true,
+  "TestDetails": {
+   "LabName": null,
+   "TestedDate": "2026-08-27T00:00:00",
+   "SampleDate": "2026-09-16T19:01:30.593",
+   "HarvestDate": null,
+   "ExpirationDate": null,
+   "ExtractionDate": null,
+   "PackageDate": null,
+   "CoaUrl": "https://storage.googleapis.com/storage.getbamboo.com/public/qa-results/d37e2558-fe7e-41b9-a96a-8b5c5b990670/y4Bgyn6e6wHYbQZmsjhN6upF56FhM7cGTzFbUBkK.pdf",
+   "SampleWeight": 0,
+   "SampledPackageId": null,
+   "FlowerEquivalent": null,
+   "RawFlowerEquivalent": null,
+   "IngredientDetails": null,
+   "PesticidesUsed": null
+  },
+  "Cannabinoids": {
+   "Cannabinoid": null,
+   "Cbc": {
+    "Value": 0.54,
+    "UnitId": 2
+   },
+   "Cbca": {
+    "Value": 0.19,
+    "UnitId": 2
+   },
+   "Cbcv": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Cbd": {
+    "Value": 0.34,
+    "UnitId": 2
+   },
+   "Cbda": {
+    "Value": 0.069,
+    "UnitId": 2
+   },
+   "Cbdv": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Cbdva": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Cbg": {
+    "Value": 1.5,
+    "UnitId": 2
+   },
+   "Cbga": {
+    "Value": 0.16,
+    "UnitId": 2
+   },
+   "Cbl": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Cbla": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Cbn": {
+    "Value": 0.2,
+    "UnitId": 2
+   },
+   "Cbna": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Cbt": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Tac": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Thc": {
+    "Value": 66,
+    "UnitId": 2
+   },
+   "Thca": {
+    "Value": 9.7,
+    "UnitId": 2
+   },
+   "Thcv": {
+    "Value": 0.47,
+    "UnitId": 2
+   },
+   "Thcva": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Thc8": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Thc9": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Thc10": {
+    "Value": null,
+    "UnitId": null
+   }
+  },
+  "TotalCannabinoids": {
+   "Value": 79,
+   "UnitId": 2
+  },
+  "Terpenes": {
+   "ThreeCarene": {
+    "Value": 0.071,
+    "UnitId": 2
+   },
+   "AlphaBisabolol": {
+    "Value": null,
+    "UnitId": null
+   },
+   "AlphaPhellandrene": {
+    "Value": null,
+    "UnitId": null
+   },
+   "AlphaPinene": {
+    "Value": 0.18,
+    "UnitId": 2
+   },
+   "AlphaTerpinene": {
+    "Value": 0.082,
+    "UnitId": 2
+   },
+   "BetaCaryophyllene": {
+    "Value": 0.93,
+    "UnitId": 2
+   },
+   "BetaEudesmol": {
+    "Value": null,
+    "UnitId": null
+   },
+   "BetaMyrcene": {
+    "Value": 2,
+    "UnitId": 2
+   },
+   "BetaPinene": {
+    "Value": 0.25,
+    "UnitId": 2
+   },
+   "Bisabolol": {
+    "Value": 0.13,
+    "UnitId": 2
+   },
+   "Borneol": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Camphene": {
+    "Value": 0,
+    "UnitId": 2
+   },
+   "CaryophylleneOxide": {
+    "Value": null,
+    "UnitId": null
+   },
+   "DeltaTerpinene": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Eucalyptol": {
+    "Value": 0,
+    "UnitId": 2
+   },
+   "Farnesene": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Fenchol": {
+    "Value": 0,
+    "UnitId": 2
+   },
+   "GammaTerpinene": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Geraniol": {
+    "Value": null,
+    "UnitId": null
+   },
+   "GeraniolAcetate": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Guaiol": {
+    "Value": 0.044,
+    "UnitId": 2
+   },
+   "Humulene": {
+    "Value": 0.32,
+    "UnitId": 2
+   },
+   "Isopulegol": {
+    "Value": 0,
+    "UnitId": 2
+   },
+   "Limonene": {
+    "Value": 0.65,
+    "UnitId": 2
+   },
+   "Linalool": {
+    "Value": 0.26,
+    "UnitId": 2
+   },
+   "Nerol": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Nerolidol": {
+    "Value": null,
+    "UnitId": null
+   },
+   "NerolidolTwo": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Ocimene": {
+    "Value": 0.038,
+    "UnitId": 2
+   },
+   "OcimeneOne": {
+    "Value": null,
+    "UnitId": null
+   },
+   "OcimeneTwo": {
+    "Value": null,
+    "UnitId": null
+   },
+   "PCymene": {
+    "Value": 0,
+    "UnitId": 2
+   },
+   "PIsopropyltoluene": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Phytol": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Sabinene": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Terpinene": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Terpineol": {
+    "Value": 0.046,
+    "UnitId": 2
+   },
+   "Terpinolene": {
+    "Value": 2.7,
+    "UnitId": 2
+   },
+   "TransNerolidol": {
+    "Value": null,
+    "UnitId": null
+   },
+   "Valencene": {
+    "Value": null,
+    "UnitId": null
+   },
+   "YTerpinene": {
+    "Value": null,
+    "UnitId": null
+   }
+  },
+  "TotalTerpenes": {
+   "Value": 10,
+   "UnitId": 2
+  },
+  "Contaminants": {
+   "Pesticides": "pass",
+   "HeavyMetal": "pass",
+   "Microbiology": null,
+   "Mycotoxin": "pass",
+   "ChemicalResidue": null,
+   "SolventResidue": "pass",
+   "MoistureAnalysis": null,
+   "VisualInspection": null
+  },
+  "Additional": {
+   "Cbdml": null,
+   "Thcml": null,
+   "Custom": []
+  }
+ }
+}
