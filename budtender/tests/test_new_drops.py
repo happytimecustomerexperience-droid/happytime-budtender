@@ -1,7 +1,7 @@
 """New Drops snapshot: potency rules, grouping/ordering, menu-slug safety, endpoint."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from django.core.cache import cache
@@ -189,6 +189,14 @@ class ReceivedIndexTests(SimpleTestCase):
         idx = index(delivered(1, "2026-09-25T10:00:00.0000000"), delivered(1, "2026-09-29T10:00:00.0000000"),
                     delivered(2, "not a date"), {"status": "Received", "deliveredOn": "2026-09-29T10:00:00.0000000"})
         self.assertEqual(idx, {"p:1": "2026-09-29T10:00:00.000Z"})
+
+    def test_fetch_reaches_back_past_the_window_because_startdate_filters_the_manifest_date(self):
+        with override_settings(DUTCHIE={"stores": {"yakima": {"pos_key": "k"}}}):
+            with mock.patch.object(new_drops, "_pos_get", return_value=[]) as get:
+                new_drops.fetch_receipts("yakima", now=NOW)
+        asked = get.call_args.args[2]["startDate"]
+        window = (NOW - timedelta(days=new_drops.WINDOW_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.assertLess(asked, window)   # strictly earlier than the 20-day window start
 
     def test_an_unreachable_dutchie_is_an_error_not_an_empty_week(self):
         with override_settings(DUTCHIE={"stores": {"yakima": {"pos_key": "k"}}}):

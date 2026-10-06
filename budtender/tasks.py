@@ -724,7 +724,7 @@ def _normalize_counter(counter: Counter) -> dict:
 
 @shared_task
 def refresh_new_drops_all(force: bool = False) -> dict:
-    """New Drops snapshot (website /new-drops) for every store. Every 30 min while a
+    """New Drops snapshot (website /new-drops) for every store. Every 15 min while a
     store is open; one store failing never blocks the others, and a failed store
     keeps serving its last good snapshot."""
     if not force and not any_store_open_or_warming():

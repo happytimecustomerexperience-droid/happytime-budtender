@@ -51,6 +51,7 @@ from .models import Setting
 logger = logging.getLogger(__name__)
 
 WINDOW_DAYS = 20  # owner, 2026-10-01: "keep info for 20 days"
+RECEIPT_LOOKBACK_EXTRA_DAYS = 30  # manifest dates can trail the day an order is entered by weeks
 PAGE_SIZE = 500
 
 # Dutchie backoffice allows 60 calls/min per login ("Too many requests - only 60
@@ -185,7 +186,11 @@ def fetch_receipts(location_slug: str, days: int = WINDOW_DAYS, now: datetime | 
     if not key:
         raise RuntimeError(f"no POS key for {location_slug}")
     now = now or datetime.now(timezone.utc)
-    since = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Dutchie's startDate filters on deliveredOn (the manifest date), but an arrival is dated by addedOn
+    # (received_index). Verified live 2026-10-06: an invoice entered Oct 5 with an Oct 1 manifest is absent when
+    # startDate = Oct 5. Ask for RECEIPT_LOOKBACK_EXTRA_DAYS more so a late-entered, old-dated order is still
+    # fetched; received_index then keeps only what was ADDED inside the window.
+    since = (now - timedelta(days=days + RECEIPT_LOOKBACK_EXTRA_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = _pos_get(key, "/inventory/receivedinventory", {"startDate": since})
     if not isinstance(data, list):
         raise RuntimeError(f"receivedinventory unavailable for {location_slug}")

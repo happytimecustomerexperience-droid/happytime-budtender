@@ -22,10 +22,11 @@ app.conf.beat_schedule = {
     # any store whose inventory is ≥24h old, so suggestions never come from stale
     # stock. Cheap no-op (timestamp check) when everything is already fresh.
     # New Drops (website /new-drops): brands received in the last 20 days, refreshed
-    # every 30 min; no-op outside the store-hours window (same gate as above).
+    # every 15 min (owner 2026-10-06: new entries must show quickly; a run takes ~3 min and
+    # holds the backoffice lock, so runs never overlap); no-op outside the store-hours window.
     "refresh-new-drops": {
         "task": "budtender.tasks.refresh_new_drops_all",
-        "schedule": 30 * 60.0,
+        "schedule": 15 * 60.0,
     },
     # Lab results (terpenes + %) per in-stock batch → BatchLab and the allowlisted product info
     # → ProductDetail, so every chat pick can carry real numbers. Paced, 100 of each per store
