@@ -73,7 +73,8 @@ def test_compliance_limits_and_doh_thread(convo, fake_bt):
     assert t.pick_names == ["DOH Compliant RSO 1g"], "the only DOH row in the catalog"
     assert t.grounded and t.next_action == "show_products"
     for pick in t.picks:
-        assert pick["price_otd"] > 0
+        # UPDATED 2026-10-06 (price gate): no size on a concentrate ask -> no price (thread 24).
+        assert "price_otd" not in pick and "price_spoken" not in pick
         assert "cost" not in pick and "margin" not in pick
 
     # The derived slot survived the schema wall and reached the budtender client as a hard filter.

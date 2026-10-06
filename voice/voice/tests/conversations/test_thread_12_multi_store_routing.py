@@ -23,7 +23,9 @@ SCRIPT = (
     "perfect. what is the address",
     "and what is your phone",
     "one more thing, any specials on edibles",
-    "ok, do you have any gummies",
+    # UPDATED 2026-10-06 (price gate): "10mg" added — these turns pin the price a store's shelf quotes,
+    # and a price is per size (a size-less gummies ask carries no price; thread 24 pins that side).
+    "ok, do you have any 10mg gummies",
 )
 
 
@@ -120,7 +122,8 @@ def test_mount_vernon_call_then_the_pullman_call(convo, fake_bt):
     assert t6.args("suggest_products")["store"] == "mount-vernon"
     assert fake_bt.calls["search"][-1]["location"] == "mount-vernon"
     assert fake_bt.calls["search"][-1]["slots"]["store"] == "mount-vernon"
-    assert t6.pick_names == ["Cannaquench Sparkling 5mg", "Wyld Raspberry Gummies 10mg"]
+    assert t6.args("suggest_products")["size"] == "10mg"
+    assert t6.pick_names == ["Wyld Raspberry Gummies 10mg"]
     mv_wyld = next(p for p in t6.picks if p["sku"] == "ED-WYLD-10")
     assert mv_wyld["price_otd"] == 15.0, "menu price, unchanged — tax-inclusive Dutchie account"
 

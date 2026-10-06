@@ -11,7 +11,9 @@ import uuid
 from voice.evals import adapters, golden, score
 from voice.evals.adapters import Answer
 
-INTERNAL_TOOLS = {"notify_n8n"}  # fired by the server, never by a caller's question
+# Never the answer to a caller's question: notify_n8n is fired by the server; remember_caller is
+# called on the phone after a caller gives their name (a CALLER line the text channels never carry).
+INTERNAL_TOOLS = {"notify_n8n", "remember_caller"}
 
 
 def ask(entry: golden.Entry, channel: str) -> Answer:

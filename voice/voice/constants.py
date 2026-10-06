@@ -100,6 +100,31 @@ MEMBER_TOOLS = {
 P0_ASSISTANT_NAME = "entry_faq"
 P0_ASSISTANT_ROLE = "faq"
 
+# The category enum of suggest_products / check_inventory (see the lockstep note on the
+# suggest_products ``category`` property below).
+PRODUCT_CATEGORIES = (
+    "flower", "concentrate", "cartridge", "edible", "tincture", "pre-roll",
+    "topical", "capsule", "mint", "blunt", "infused-blunt",
+)
+
+# The price gate (voice/tools/suggest.py): a price is per SIZE, so a search in one of these categories
+# that carries no ``size`` slot gets NO price in its result — it asks the size instead. Every other
+# category in the enum has no size concept and is exempt. A category that is blank or not in the enum
+# is NOT exempt: unknown fails closed.
+SIZE_REQUIRED_CATEGORIES = frozenset(
+    {"flower", "concentrate", "cartridge", "edible", "tincture", "pre-roll"}
+)
+SIZE_EXEMPT_CATEGORIES = frozenset(PRODUCT_CATEGORIES) - SIZE_REQUIRED_CATEGORIES
+# budtender's _size_match treats these as "no opinion" (they filter nothing) — never a real size.
+NO_SIZE_VALUES = frozenset({"", "any", "stock-up", "disposable"})
+
+# The five scents the questionnaire offers (the ``aroma`` slot). Mirrors the keys of budtender's
+# ``terpenes.AROMA_TERPENES`` (the one aroma map); budtender ignores any other value.
+AROMAS = ("citrus", "earthy", "pine", "floral", "spicy")
+# The light, skippable scent question — one string for the phone prompt (kb/seed.py) and the text brain
+# (chat.py, which also spots it on the agent's last line to read the caller's answer as the aroma slot).
+AROMA_QUESTION = f"Any scent you're drawn to — {', '.join(AROMAS[:-1])}, or {AROMAS[-1]}?"
+
 # ── Custom-tool JSON-Schema parameters (§4.5) — name → tool spec ──────────────
 # Each is provisioned as a Vapi `function` tool whose server.url is our webhook; the webhook
 # routes by function.name via TOOL_REGISTRY (ADR-020). P0 only ships faq_lookup; the others are
@@ -138,7 +163,10 @@ TOOL_SPECS = {
     "suggest_products": {
         "description": (
             "Return up to 3 in-stock, leak-safe product picks for the caller's slots, each "
-            "with a speakable why_this and an out-the-door price. NEVER returns cost or margin."
+            "with a speakable why_this and — once a size is given — an out-the-door price "
+            "(price_otd / price_spoken). With NO size slot the picks carry no price at all: the "
+            "result is needs_size:true with size_options and a spoken_summary that asks the size. "
+            "NEVER returns cost or margin."
         ),
         "parameters": {
             "type": "object",
@@ -156,10 +184,7 @@ TOOL_SPECS = {
                     # right here by _sanitize_args. Keep this list in lockstep with
                     # budtender/ranking.py CATEGORY_BY_SLOTKEY's keys (test_category_drift_alarm.py
                     # in the budtender repo asserts it).
-                    "enum": [
-                        "flower", "concentrate", "cartridge", "edible", "tincture", "pre-roll",
-                        "topical", "capsule", "mint", "blunt", "infused-blunt",
-                    ],
+                    "enum": list(PRODUCT_CATEGORIES),
                 },
                 "subcategory": {"type": "string"},
                 # A caller who names a brand and no category ("you guys still carrying Phat
@@ -167,12 +192,36 @@ TOOL_SPECS = {
                 # simply dropped by _sanitize_args and the search ran blind. budtender ranks on
                 # brand itself.
                 "brand": {"type": "string"},
+                # THE gate on every price (suggest.py): a size-required category searched with NO size
+                # carries no price at all. A price_max ceiling alone does not stand in for it.
                 "size": {"type": "string"},
                 "price_tier": {"type": "string", "enum": ["value", "mid", "top"]},
                 "price_min": {"type": "number"},
                 "price_max": {"type": "number"},
                 "effect_desired": {"type": "string", "enum": ["relaxed", "uplifted", "middle"]},
+                # The scent the caller is drawn to; omit it for "no preference". budtender nudges the
+                # ranking toward real batch-lab terpenes (its terpenes.AROMA_TERPENES keys) and
+                # ignores anything else — _sanitize_args drops a value outside this enum the same way.
+                "aroma": {"type": "string", "enum": list(AROMAS)},
                 "doh_only": {"type": "boolean"},
+                # "something stronger" / "something cheaper": the SAME slots again plus this, so the
+                # caller's budget, size and effect are kept and budtender only re-orders (Contract
+                # B). Without the slot the ask lost everything but the category — and _sanitize_args
+                # would silently drop any value not declared here.
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["potency", "price_asc"],
+                    "description": "potency = highest THC first (the caller wants something "
+                    "stronger); price_asc = cheapest first. Keep every other slot the caller gave.",
+                },
+                # "something different": the SKUs already offered. Never for "stronger"/"cheaper" —
+                # excluding them can hide the strongest or cheapest pick if it was already shown.
+                "exclude_skus": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "SKUs already offered, to leave out when the caller asks for "
+                    "something different.",
+                },
             },
             "required": ["store", "category"],
         },
@@ -180,14 +229,21 @@ TOOL_SPECS = {
     },
     "check_inventory": {
         "description": (
-            "Check whether a SKU is purchasable at a store. Returns "
-            "{in_stock, qty_band, price_otd} — NEVER cost or margin."
+            "Check whether a SKU is purchasable at a store. Returns {in_stock, qty_band} plus "
+            "price_otd / price_spoken ONLY when you pass the size the caller chose (pass the "
+            "category too — a category with no size concept needs none); without a size the price "
+            "is withheld and the result is needs_size:true. NEVER cost or margin."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "store": {"type": "string", "enum": ["yakima", "mount-vernon", "pullman"]},
                 "sku": {"type": "string"},
+                # The same size gate as suggest_products. budtender's by-sku row carries no category,
+                # so the caller says it: only a category with no size concept (topical, mint…) is priced
+                # without a size; a blank category with no size fails closed (price withheld).
+                "category": {"type": "string", "enum": list(PRODUCT_CATEGORIES)},
+                "size": {"type": "string"},
             },
             "required": ["store", "sku"],
         },
@@ -334,6 +390,24 @@ TOOL_SPECS = {
             "required": ["store", "summary"],
         },
         "async": True,
+    },
+    "remember_caller": {
+        "description": (
+            "Save the caller's FIRST NAME on their profile once they have told you what to call "
+            "them. Use it only after the CALLER line says their name is unknown and you asked once. "
+            "Pass just the first name. Returns only {saved}; say nothing about it either way."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "first_name": {
+                    "type": "string",
+                    "description": "The caller's first name only: one word, letters only, at most 30.",
+                },
+            },
+            "required": ["first_name"],
+        },
+        "async": False,
     },
 }
 

@@ -74,9 +74,11 @@ def test_everything_is_sold_out_then_the_shelf_comes_back(convo, fake_bt):
     assert t.sources
 
     # 5 — and the recovered state holds for a second, narrower ask.
-    t = c.say("nice. and is there a cart under 25")
+    # UPDATED 2026-10-06 (price gate): a half-gram cart — a size-less ask carries no price to check.
+    t = c.say("nice. and is there a half gram cart under 25")
     args = t.args("suggest_products")
     assert args["category"] == "cartridge"
+    assert args["size"] == "0.5g"
     assert args["price_max"] == 25.0
     assert t.pick_names == ["Avitas GSC 0.5g Cart"]
     for pick in t.picks:

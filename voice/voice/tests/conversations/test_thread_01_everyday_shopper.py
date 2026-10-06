@@ -32,9 +32,12 @@ def test_everyday_shopper(convo):
     assert t.picks, "the fake catalog has indica flower — a miss means slots never reached search"
     assert t.next_action == "show_products"
 
-    t = c.say("do you have a cartridge under $40")
+    # UPDATED 2026-10-06 (price gate): the ask names a SIZE, because a price is per size — without one
+    # the picks carry no price at all (thread 24 pins that side).
+    t = c.say("do you have a full gram cartridge under $40")
     args = t.args("suggest_products")
     assert args["category"] == "cartridge"
+    assert args["size"] == "1g"
     assert args["price_max"] == 40.0
     assert t.picks
     for pick in t.picks:

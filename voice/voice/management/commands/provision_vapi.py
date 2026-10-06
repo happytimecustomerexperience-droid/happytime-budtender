@@ -15,8 +15,9 @@ import json
 from django.core.management.base import BaseCommand, CommandError
 
 from core.services import vapi
+from voice import caller, provision
 from voice import constants as C
-from voice import provision
+from voice.models import VapiObject
 
 
 class Command(BaseCommand):
@@ -36,6 +37,12 @@ class Command(BaseCommand):
             help="Reconcile only one object kind.",
         )
         parser.add_argument(
+            "--per-store",
+            action="store_true",
+            help="Also provision one squad per store and attach each to that store's own number "
+            "(VAPI_PHONE_NUMBER_STORE_MAP). This re-routes live calls — run --dry-run first.",
+        )
+        parser.add_argument(
             "--verbose", action="store_true", help="Also print the full report JSON (redacted)."
         )
 
@@ -47,7 +54,7 @@ class Command(BaseCommand):
         if dry_run:
             self.stdout.write(self.style.WARNING("  (dry-run — no Vapi writes will be issued)"))
 
-        report = provision.provision_all(dry_run=dry_run, only=only)
+        report = provision.provision_all(dry_run=dry_run, only=only, per_store=opts["per_store"])
 
         if report.error:
             raise CommandError(report.error)
@@ -65,7 +72,7 @@ class Command(BaseCommand):
         if dry_run:
             self.stdout.write("")
             self.stdout.write("-- Planned payloads (redacted) " + "-" * 30)
-            self.stdout.write(self._dry_run_payloads(only))
+            self.stdout.write(self._dry_run_payloads(only, opts["per_store"]))
 
         if opts["verbose"]:
             self.stdout.write("")
@@ -78,26 +85,31 @@ class Command(BaseCommand):
             )
 
     # ── helpers ────────────────────────────────────────────────────────────────
-    def _dry_run_payloads(self, only: str | None) -> str:
+    def _dry_run_payloads(self, only: str | None, opts_per_store: bool = False) -> str:
         """Build + dump the full JSON bodies (redacted) so the operator sees exactly what would be
         sent. Mirrors the provision_all order: tool → assistant → squad → phone."""
         blocks: list[str] = []
-
-        if only in (None, "tool"):
+        dynamic = caller.dynamic_greeting()
+        if dynamic:
             blocks.append(
-                self._block(
-                    "POST/PATCH /tool  (faq_lookup)", provision.build_tool_payload("faq_lookup")
-                )
+                "# HHT_DYNAMIC_GREETING is ON: the inbound number(s) are unbound from the squad so Vapi\n"
+                "# sends assistant-request, every assistant prompt ends with {{caller_context}}, and\n"
+                "# entry_router/budtender gain remember_caller. Turn it off and re-run to roll back."
             )
 
+        tools = ["faq_lookup"] + (["remember_caller"] if dynamic else [])
+        if only in (None, "tool"):
+            for name in tools:
+                blocks.append(self._block(f"POST/PATCH /tool  ({name})", provision.build_tool_payload(name)))
+
+        assistants = [(C.P0_ASSISTANT_ROLE, C.P0_ASSISTANT_NAME)] + ([("entry_router", "entry_router")] if dynamic else [])
         if only in (None, "assistant"):
-            payload, warnings = provision.build_assistant_payload(
-                C.P0_ASSISTANT_ROLE, name=C.P0_ASSISTANT_NAME
-            )
-            title = "POST/PATCH /assistant  (entry_faq)"
-            if warnings:
-                title += f"   [warnings: {'; '.join(warnings)}]"
-            blocks.append(self._block(title, payload))
+            for role, name in assistants:
+                payload, warnings = provision.build_assistant_payload(role, name=name)
+                title = f"POST/PATCH /assistant  ({name})"
+                if warnings:
+                    title += f"   [warnings: {'; '.join(warnings)}]"
+                blocks.append(self._block(title, payload))
 
         if only in (None, "squad"):
             # In a dry run the assistant has a synthetic id; show the single-member container shape.
@@ -107,6 +119,24 @@ class Command(BaseCommand):
                     "POST/PATCH /squad  (Happy Time Voice)", provision.build_squad_payload(members)
                 )
             )
+            if opts_per_store:
+                for _key, slug in C.TRANSFER_STORES:
+                    blocks.append(
+                        self._block(
+                            f"POST/PATCH /squad  ({provision.squad_name(slug)})",
+                            provision.build_squad_payload(members, slug),
+                        )
+                    )
+
+        if only in (None, "phone"):
+            # The binding is what changes under HHT_DYNAMIC_GREETING: squadId null = Vapi asks us.
+            stores = [None] + ([slug for _key, slug in C.TRANSFER_STORES] if opts_per_store else [])
+            for store in stores:
+                label, number_id = provision.phone_number_target(store)
+                if number_id:
+                    squad = VapiObject.objects.filter(kind="squad", name=provision.squad_name(store)).first()
+                    payload = provision.phone_number_payload(label, squad.vapi_id if squad else "<squad id>")
+                    blocks.append(self._block(f"PATCH /phone-number/{number_id}  ({label})", payload))
 
         return "\n\n".join(blocks)
 

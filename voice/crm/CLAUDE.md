@@ -21,6 +21,9 @@ Run from `voice/` with `HHT_TEST_SQLITE=1 DJANGO_DEBUG=1 ALLOW_NON_EU_RESIDENCY=
   `xfer:<n>` (dedup) -> 3 per call -> `HHT_TRANSFER_NOTICE_DAILY_CAP` per rolling 24 h. A skipped
   notice writes no row, so it never counts against a cap.
 - The caller's number is used in-request (last 4 digits, known-customer lookup) and never stored.
+  Still true with the dynamic greeting (`voice/caller.py`): a first name + taste summary (no number) live
+  in the Django cache for <= 2 h keyed by call id (`caller:<call_id>`); the number goes to budtender only,
+  and `remember_caller`'s `first_name` argument is in the tool-call audit row like `caller_name` is.
 - Real SMS is unavailable to a cannabis retailer. "Text staff" = Pushover push + Slack + email.
 - A new outbound channel obeys its own `alerts.*` switch and has a mocked-`urlopen` test. The
   `alerts.*` switches read ON when the switchboard is unreadable (an outage must not hide an alert);
@@ -41,5 +44,5 @@ Run from `voice/` with `HHT_TEST_SQLITE=1 DJANGO_DEBUG=1 ALLOW_NON_EU_RESIDENCY=
   ~10 s when budtender hangs). Move it onto Celery if that ever shows in call latency.
 
 ## Related
-`voice/voice/webhooks.py` (`handle_status_update`), `voice/voice/capabilities.py`,
+`voice/voice/webhooks.py` (`handle_status_update`), `voice/voice/caller.py` (caller context + greeting), `voice/voice/capabilities.py`,
 `voice/dashboard/credentials.py` (Pushover keys), `voice/voice/provision.py::_transfer_tool`.

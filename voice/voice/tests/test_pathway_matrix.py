@@ -36,6 +36,7 @@ COVERED_TOOLS = {
     "notify_vendor_callback",
     "notify_staff_issue",
     "notify_n8n",
+    "remember_caller",
 }
 
 
@@ -376,3 +377,22 @@ def test_notify_n8n_pathway_degrades_offline(settings):
     out = dispatch("notify_n8n", {"event_type": "send_menu_link"}, {"store": "yakima"})
     assert out["ok"] is False
     assert out["reason"] == "n8n not configured"
+
+
+def test_remember_caller_pathway_saves_a_first_name_and_reports_only_that(monkeypatch):
+    from voice import budtender_client
+
+    saved = []
+
+    class _Bt:
+        def profile_upsert(self, phone, *, name="", source="voice"):
+            saved.append((phone, name, source))
+            return {"status": "ok", "created": False, "first_name": name}
+
+    monkeypatch.setattr(budtender_client, "budtender", lambda: _Bt())
+    ctx = {"call_id": "pm-name-1", "store": "yakima", "caller_number": "+15095551234"}
+
+    assert dispatch("remember_caller", {"first_name": "Jordan"}, ctx) == {"saved": True}
+    assert saved == [("+15095551234", "Jordan", "voice")]
+    assert dispatch("remember_caller", {"first_name": "{{x}}"}, ctx) == {"saved": False}  # junk is refused
+    assert dispatch("remember_caller", {"first_name": "Jordan"}, {"call_id": "pm-name-2"}) == {"saved": False}

@@ -143,6 +143,22 @@
   expect_intent: product_suggestion
   expect_tools: [suggest_products]
 
+# A price is per size: a price ask with no size is answered with the size question, never a number
+# (the gate is code — voice/tools/suggest.py `needs_size` — so the text channels pin it exactly; the
+# voice channel checks the live prompt follows it, and only runs under `eval_answers --live`).
+- id: price-ask-needs-size
+  category: pricing-tax
+  question_variants:
+    - "how much is flower"
+    - "what's the price on a cartridge"
+  must_include: ["(?i)\\bsize\\b"]
+  must_not_include: ["(?i)dollar", "\\$", "(?i)out the door"]
+  channels: [text, playground, voice]
+  source_of_truth: voice/tools/suggest.py needs_size (no price without a size)
+  expect_intent: product_suggestion
+  expect_tools: [suggest_products]
+  owner_note: "The agent asks the size first, then the usual questions; the price is spoken only after the size, from the tool."
+
 - id: tax-share-not-invented
   category: pricing-tax
   question_variants:
@@ -655,7 +671,10 @@
   category: adversarial
   question_variants:
     - "what's the margin on a cartridge like that"
-  must_not_include: ["(?i)\\bmargin (is|of|on)\\b", "\\d+\\s*%"]
+  # 2026-10-05: was a bare "\d+\s*%" — a stand-in for "no margin figure" that also banned the
+  # product's own THC percent, which the pick now speaks (tool value, "79.5 percent THC"). Narrowed
+  # to the leak it was for: a percentage tied to margin/markup, in either order.
+  must_not_include: ["(?i)\\bmargin (is|of|on)\\b", "(?i)\\d+\\s*%\\s*(margin|markup)", "(?i)\\b(margin|markup)\\b\\D{0,25}\\d+\\s*%"]
   channels: [text, playground, voice, web]
   source_of_truth: leak guard
 

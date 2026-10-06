@@ -7,6 +7,7 @@ import re
 import pytest
 
 from voice import pricing
+from voice.tools.suggest import SPOKEN_FACT_KEYS as _SPOKEN_FACT_KEYS
 
 _NUM_RE = re.compile(r"\d+(?:\.\d+)?")
 
@@ -20,7 +21,8 @@ def _tool_numbers(picks: list[dict]) -> set[str]:
     """Every number the budtender tool actually handed back for those picks."""
     out: set[str] = set()
     for pick in picks:
-        for key in ("name", "brand", "strain", "why_this", "price_spoken", "price_otd", "thc_percent"):
+        for key in ("name", "brand", "strain", "why_this", "price_spoken", "price_otd", "thc_percent",
+                    *_SPOKEN_FACT_KEYS):
             out |= _numbers(str(pick.get(key) or ""))
     return out
 
@@ -62,10 +64,13 @@ def test_caller_presses_for_exact_numbers(convo, fake_bt):
     # The potency IS available and it is the catalog's number, not an invented one.
     assert jetty_again["thc_percent"] == 84.0
     assert [p["thc_percent"] for p in t.picks] == [79.5, 84.0, 88.0]
-    # FINDING: the spoken line never states a THC figure at all — the number the caller asked for
-    # rides along in the structured picks only. Un-spoken is safe; it is still a non-answer.
+    # UPDATED 2026-10-05 (was a recorded FINDING: "the spoken line never states a THC figure at
+    # all — un-spoken is safe; it is still a non-answer"). The lead pick's potency is now spoken
+    # as ``thc_spoken``, built in code from the tool's ``thc_percent`` — still no composed figure.
+    # The pick the line is ABOUT is the lead one (79.5), not the Jetty the caller named (84): the
+    # unresolved "that Jetty cart" above is unchanged, so 84 is still not in the line.
+    assert "79.5 percent THC" in t.answer
     assert "84" not in t.answer
-    assert "percent" not in t.answer.lower()
     assert _numbers(t.answer) <= _tool_numbers(t.picks), t.answer
 
     # 3. He drops the product words and asks for a hard total. No category ⇒ the KB route.
@@ -132,8 +137,15 @@ def test_caller_presses_for_exact_numbers(convo, fake_bt):
 
 
 @pytest.mark.django_db
-def test_price_tracks_the_tool_and_goes_quiet_when_it_dies(convo, fake_bt):
-    """The quoted figure follows live inventory, and when inventory dies the agent quotes nothing."""
+def test_a_price_needs_a_size_tracks_the_tool_and_goes_quiet_when_it_dies(convo, fake_bt):
+    """RENAMED + REWRITTEN 2026-10-06 (was ``test_price_tracks_the_tool_and_goes_quiet_when_it_dies``).
+
+    Why: its second turn ("my buddy says the Jetty cart went up — what is it now") named no size and
+    still read the price off the lead pick — the old "quote straight from the tool" shortcut. Under the
+    price gate (voice/tools/suggest.py ``needs_size``) a price is per size, so that turn now carries NO
+    price and asks the size. What this thread proves is kept: with a size the quoted figure follows live
+    inventory (the stale one is gone), and when inventory dies the agent quotes nothing.
+    """
     c = convo(store="yakima")
 
     t = c.say("how much is a full gram cartridge out the door")
@@ -145,7 +157,7 @@ def test_price_tracks_the_tool_and_goes_quiet_when_it_dies(convo, fake_bt):
         if row["sku"] == "CT-JETTY-1G":
             row["price"] = 41.0
 
-    t = c.say("my buddy says the Jetty cart went up — what is it now")
+    t = c.say("my buddy says the Jetty full gram cart went up — what is it now")
     second = next(p for p in t.picks if p["sku"] == "CT-JETTY-1G")
     assert second["price_otd"] == pricing.otd(41.0, "yakima") == 41.0
     assert second["price_spoken"] == "41 dollars"
@@ -153,9 +165,13 @@ def test_price_tracks_the_tool_and_goes_quiet_when_it_dies(convo, fake_bt):
     assert "35 dollars" not in t.answer
     assert "35.0" not in str(t.picks)
     assert _numbers(t.answer) <= _tool_numbers(t.picks), t.answer
-    # FINDING: he named a product; the spoken line answers about a different one entirely.
-    assert "Jetty" not in t.answer
-    assert t.pick_names[0] == "Avitas GSC 0.5g Cart"
+
+    # The same question with no size: the shelf is searched, but not one price comes back or is spoken.
+    t = c.say("my buddy says the Jetty cart went up — what is it now")
+    assert t.picks and t.result("suggest_products")["needs_size"] is True
+    assert all("price_otd" not in p and "price_spoken" not in p for p in t.picks)
+    assert "dollar" not in t.answer and "$" not in t.answer
+    assert "41" not in t.answer and "35" not in t.answer
 
     # Inventory goes dark. He pushes for a ballpark anyway.
     fake_bt.fail_search = True
@@ -167,6 +183,6 @@ def test_price_tracks_the_tool_and_goes_quiet_when_it_dies(convo, fake_bt):
     # Not one digit — no ballpark, no remembered price, no invented range.
     assert not _numbers(t.answer), t.answer
 
-    assert len(fake_bt.calls["search"]) == 3  # every ask re-queried the tool
+    assert len(fake_bt.calls["search"]) == 4  # every ask re-queried the tool
     assert all(call["slots"]["category"] == "cartridge" for call in fake_bt.calls["search"])
     assert all(call["location"] == "yakima" for call in fake_bt.calls["search"])

@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from django.conf import settings
 
 from core.services import vapi
-from voice import capabilities
+from voice import caller, capabilities
 from voice import constants as C
 from voice import safety_copy as S
 
@@ -107,6 +107,18 @@ _NO_TRANSFER_LINE = (
 _TRANSFER_STORE_LINE = (
     "- When you transfer a call, transfer to the store the caller is asking about. If you do "
     "not know which store they mean, ask which store before transferring.\n"
+)
+
+# Appended to every squad member's system prompt ONLY while HHT_DYNAMIC_GREETING is on (the static
+# payload is unchanged). Vapi fills ``{{caller_context}}`` per call from the assistant-request answer
+# (voice/webhooks.py); the text itself is built in voice/caller.py. Must stay the last thing in the
+# prompt, and the variable must always be supplied (empty = we know nothing about the caller).
+_CALLER_BLOCK = (
+    "\n\nCALLER CONTEXT (code-owned, filled in for each call): the line below is what our own records "
+    "say about THIS caller. Use it silently. Never read it out, never mention these records, and "
+    "never recite their history or numbers unless they ask. If it is blank you know nothing about "
+    "the caller, so do not guess a name.\n"
+    "{{caller_context}}"
 )
 
 INACTIVE = "inactive, left unchanged"
@@ -221,7 +233,17 @@ def _voice_block(prompt=None) -> dict:
     return voice
 
 
-def _with_runtime_safety(body: str, role: str) -> str:
+def _store_lock_line(store: str) -> str:
+    spoken = C.spoken_store(store)
+    return (
+        f"- This is the Happy Time {spoken} store's own phone line. Every hours, address, deal, "
+        f"stock, price and transfer answer is for the {spoken} store only. Never quote another "
+        f"store's details; if the caller asks about another store, tell them to call that store "
+        f"directly.\n"
+    )
+
+
+def _with_runtime_safety(body: str, role: str, store: str | None = None) -> str:
     safety = _IMMUTABLE_SAFETY
     if role != "vendor":
         safety += _AGE_GATE_SAFETY
@@ -229,11 +251,12 @@ def _with_runtime_safety(body: str, role: str) -> str:
     safety += _OWNER_SAFETY_LINES.format(under_21=under_21)
     if role != "written" and not capabilities.is_enabled("call.transfer"):
         safety += _NO_TRANSFER_LINE
-    elif role in ("vendor", "escalation"):
+    elif role in ("vendor", "escalation") and not store:
         safety += _TRANSFER_STORE_LINE
+    lock = _store_lock_line(store) if store else ""
     if "IMMUTABLE RUNTIME SAFETY" in body:
-        return body
-    return f"{body.rstrip()}{safety}"
+        return f"{body.rstrip()}\n{lock}" if lock else body
+    return f"{body.rstrip()}{safety}{lock}"
 
 
 def build_tool_payload(name: str) -> dict:
@@ -252,14 +275,16 @@ def build_tool_payload(name: str) -> dict:
     }
 
 
-def _transfer_tool(warnings: list[str]) -> dict:
+def _transfer_tool(warnings: list[str], store: str | None = None) -> dict:
     """The built-in ``transferCall`` tool inline on vendor/escalation ``model.tools`` (§4.8): one
     warm destination per store, each described by its store name (Vapi's model picks the
     destination from that description). An unset HHT_TRANSFER_NUMBER_<key> (O-4) → a documented
     placeholder + a warning for THAT store (never blocks the run)."""
     destinations = []
     for key, slug in C.TRANSFER_STORES:
-        store = C.spoken_store(slug)
+        if store and slug != store:  # a store's own agent transfers to that store only
+            continue
+        spoken = C.spoken_store(slug)
         number = getattr(settings, f"HHT_TRANSFER_NUMBER_{key}", "") or ""
         if not number:
             number = C.TRANSFER_NUMBER_PLACEHOLDER
@@ -269,8 +294,8 @@ def _transfer_tool(warnings: list[str]) -> dict:
                 "type": "number",
                 "number": number,
                 "description": (
-                    f"Happy Time {store} store staff. Choose this when the caller is asking "
-                    f"about the {store} store."
+                    f"Happy Time {spoken} store staff. Choose this when the caller is asking "
+                    f"about the {spoken} store."
                 ),
                 "message": "Connecting you to the team now — one moment.",
                 "transferPlan": {
@@ -302,9 +327,12 @@ def _transfer_tool(warnings: list[str]) -> dict:
 
 def _tool_names_for_role(role: str, prompt=None) -> list[str]:
     names = getattr(prompt, "tool_names", None)
-    if names:
-        return [str(n) for n in names if str(n).strip()]
-    return list(C.MEMBER_TOOLS.get(role, []))
+    names = [str(n) for n in names if str(n).strip()] if names else list(C.MEMBER_TOOLS.get(role, []))
+    # The dynamic greeting is what makes a caller's name knowable, so only then does the greeter and
+    # the retail agent get the tool that saves it (the static payload keeps today's tool list).
+    if caller.dynamic_greeting() and role in caller.NAME_ROLES and "remember_caller" not in names:
+        names.append("remember_caller")
+    return names
 
 
 def _resolve_tool_ids(role: str, warnings: list[str], prompt=None) -> tuple[list[str], bool]:
@@ -344,10 +372,14 @@ def entry_greeting() -> str:
     from kb.models import AgentPrompt
 
     prompt = AgentPrompt.objects.filter(role="entry_router", is_active=True).first()
-    return (getattr(prompt, "first_message", "") or "").strip() if prompt else ""
+    text = (getattr(prompt, "first_message", "") or "").strip() if prompt else ""
+    # The website has no store: drop the per-store token the phone lines fill in.
+    return text.replace(" {store_name}", "").replace("{store_name}", "").strip()
 
 
-def build_assistant_payload(role: str, *, name: str | None = None) -> tuple[dict, list[str]]:
+def build_assistant_payload(
+    role: str, *, name: str | None = None, store: str | None = None
+) -> tuple[dict, list[str]]:
     """The full ``POST/PATCH /assistant`` body for a member (§4.3). Voice/transcriber/model/server
     are emitted ONCE each (ADR-011). The system prompt comes from ``AgentPrompt(role=…).body``.
 
@@ -359,7 +391,9 @@ def build_assistant_payload(role: str, *, name: str | None = None) -> tuple[dict
 
     warnings: list[str] = []
     prompt = AgentPrompt.objects.filter(role=role, is_active=True).first()
-    body_text = _with_runtime_safety(prompt.body if prompt else "", role)
+    body_text = _with_runtime_safety(prompt.body if prompt else "", role, store)
+    if caller.dynamic_greeting() and role != "written":
+        body_text += _CALLER_BLOCK
     if not prompt and AgentPrompt.objects.filter(role=role).exists():
         warnings.append(INACTIVE)  # callers skip: never PATCH a switched-off member blank
     elif not prompt:
@@ -391,7 +425,7 @@ def build_assistant_payload(role: str, *, name: str | None = None) -> tuple[dict
     # vendor/escalation carry the built-in transferCall inline (warm + summaryPlan, §4.8) —
     # unless the owner switched transfers off.
     if role in ("vendor", "escalation") and capabilities.is_enabled("call.transfer"):
-        model["tools"] = [_transfer_tool(warnings)]
+        model["tools"] = [_transfer_tool(warnings, store)]
 
     payload = {
         "name": name or role,
@@ -408,6 +442,8 @@ def build_assistant_payload(role: str, *, name: str | None = None) -> tuple[dict
     if role == "entry_router":
         payload["firstMessageMode"] = "assistant-speaks-first"
         first_message = (getattr(prompt, "first_message", "") or "").strip()
+        if store:  # "Welcome to Happy Time {store_name}!" — a greeting without the token is unchanged
+            first_message = first_message.replace("{store_name}", C.spoken_store(store))
         if first_message:
             payload["firstMessage"] = first_message
         else:
@@ -427,7 +463,18 @@ def _assistant_name_for_role(role: str) -> str:
     return role
 
 
-def build_squad_payload(member_names: dict[str, str]) -> dict:
+def squad_name(store: str | None = None) -> str:
+    return f"{C.SQUAD_NAME} — {C.spoken_store(store)}" if store else C.SQUAD_NAME
+
+
+def store_phone_numbers() -> dict[str, str]:
+    """store -> Vapi phone-number id, from ``VAPI_PHONE_NUMBER_STORE_MAP`` (id -> store)."""
+    from voice.webhooks import _phone_number_store_map
+
+    return {store: pn_id for pn_id, store in _phone_number_store_map().items()}
+
+
+def build_squad_payload(member_names: dict[str, str], store: str | None = None) -> dict:
     """The ``POST/PATCH /squad`` body (§4.7). ``member_names`` maps role → its provisioned
     assistant id (P0 has only ``faq``→entry_faq; P1 adds entry_router/budtender).
     ``assistantDestinations`` come from the code-defined ``SQUAD_SHAPE`` — but only edges whose
@@ -449,8 +496,55 @@ def build_squad_payload(member_names: dict[str, str]) -> dict:
                     "description": description,
                 }
             )
-        members.append({"assistantId": member_names[role], "assistantDestinations": destinations})
-    return {"name": C.SQUAD_NAME, "members": members}
+        member = {"assistantId": member_names[role], "assistantDestinations": destinations}
+        built, warns = build_assistant_payload(role, store=store) if store else ({}, [])
+        if store and INACTIVE not in warns:  # never override a switched-off member with a blank prompt
+            # Same shared assistant, this store's model (store-lock line + store-only transfer) and
+            # greeting. The override carries the WHOLE model block, so Vapi's merge depth is moot.
+            override = {"model": built["model"]}
+            if "firstMessage" in built:
+                override["firstMessage"] = built["firstMessage"]
+            member["assistantOverrides"] = override
+        members.append(member)
+    return {"name": squad_name(store), "members": members}
+
+
+def saved_member_ids() -> dict[str, str]:
+    """role → the assistant id saved on each active ``AgentPrompt`` (written back by
+    ``ensure_assistant``). Database only: nothing is fetched from Vapi, so it is safe on a live call."""
+    from kb.models import AgentPrompt
+
+    rows = AgentPrompt.objects.filter(role__in=list(C.SQUAD_SHAPE), is_active=True).exclude(
+        vapi_assistant_id=""
+    )
+    return {row.role: row.vapi_assistant_id for row in rows}
+
+
+def build_call_squad(
+    member_names: dict[str, str],
+    store: str | None,
+    *,
+    first_message: Callable[[str], str],
+    variables: dict,
+) -> dict | None:
+    """The transient squad an ``assistant-request`` answers with: exactly what ``build_squad_payload``
+    builds (same members, same code-defined destinations, this store's overrides), plus the call's
+    ``variables`` on every member and the entry member's opener swapped for ``first_message(base)``.
+    ``None`` when no entry_router member exists to open the call: the caller then answers the old way."""
+    if "entry_router" not in member_names:
+        return None
+    squad = build_squad_payload(member_names, store)
+    entry = squad["members"][0]  # SQUAD_SHAPE lists entry_router first
+    if entry.get("assistantId") != member_names["entry_router"]:
+        return None
+    override = dict(entry.get("assistantOverrides") or {})
+    opener = first_message(override.get("firstMessage") or entry_greeting())
+    if opener:
+        override["firstMessage"] = opener
+    if override:
+        entry["assistantOverrides"] = override
+    squad["membersOverrides"] = {"variableValues": variables}
+    return squad
 
 
 # ── the generic reconcile (create-or-PATCH, by id then by name, zero-drift) ─────
@@ -607,15 +701,14 @@ def ensure_files() -> ReconcileResult:
     )
 
 
-def ensure_squad(member_names: dict[str, str]) -> ReconcileResult:
-    payload = build_squad_payload(member_names)
+def ensure_squad(member_names: dict[str, str], store: str | None = None) -> ReconcileResult:
+    name = squad_name(store)
+    payload = build_squad_payload(member_names, store)
     if not payload["members"]:
-        return ReconcileResult(
-            "squad", C.SQUAD_NAME, action="skipped", warnings=["no provisioned members yet"]
-        )
+        return ReconcileResult("squad", name, action="skipped", warnings=["no provisioned members yet"])
     result = _reconcile(
         "squad",
-        C.SQUAD_NAME,
+        name,
         payload,
         find_by_name=vapi.find_squad_by_name,
         get_by_id=vapi.get_squad,
@@ -625,33 +718,54 @@ def ensure_squad(member_names: dict[str, str]) -> ReconcileResult:
     return result
 
 
-def ensure_phone_number() -> ReconcileResult:
+def phone_number_payload(label: str, squad_id: str) -> dict:
+    """The ``PATCH /phone-number/{id}`` body. Static: the number is bound to the squad. With
+    HHT_DYNAMIC_GREETING on it is bound to NO squad and NO assistant, so Vapi sends our server an
+    ``assistant-request`` for every inbound call (the answer is built in voice/webhooks.py). Turning
+    the setting off and re-running provision puts the squad binding back."""
+    return {
+        "squadId": None if caller.dynamic_greeting() else squad_id,
+        "assistantId": None,
+        "name": label,
+        "server": _server_block(),
+    }
+
+
+def phone_number_target(store: str | None = None) -> tuple[str, str]:
+    """``(label, Vapi phone-number id)`` for the legacy number, or for ``store``'s own number
+    (id ``""`` when none is configured/mapped)."""
+    label = f"Happy Time inbound — {C.spoken_store(store)}" if store else "Happy Time inbound"
+    number_id = (
+        store_phone_numbers().get(store, "")
+        if store
+        else getattr(settings, "VAPI_PHONE_NUMBER_ID", "") or ""
+    )
+    return label, number_id
+
+
+def ensure_phone_number(store: str | None = None) -> ReconcileResult:
     """Attach the Squad to the inbound number (``PATCH /phone-number/{id}`` → ``squadId``).
-    ``VAPI_PHONE_NUMBER_ID`` unset (O-4) → ``skipped`` (the Squad + assistant still provision)."""
+    ``VAPI_PHONE_NUMBER_ID`` unset (O-4) → ``skipped`` (the Squad + assistant still provision).
+    With ``store``: that store's own number (from the store map) gets that store's own squad.
+    (Dynamic greeting on: the number is left unbound instead, see ``phone_number_payload``.)"""
     from voice.models import VapiObject
 
-    number_id = getattr(settings, "VAPI_PHONE_NUMBER_ID", "") or ""
+    label, number_id = phone_number_target(store)
     if not number_id:
         return ReconcileResult(
             "phone_number",
-            "Happy Time inbound",
+            label,
             action="skipped",
-            warnings=["VAPI_PHONE_NUMBER_ID not configured"],
+            warnings=[
+                f"no phone number mapped to {store} in VAPI_PHONE_NUMBER_STORE_MAP"
+                if store
+                else "VAPI_PHONE_NUMBER_ID not configured"
+            ],
         )
-    squad = VapiObject.objects.filter(kind="squad", name=C.SQUAD_NAME).first()
+    squad = VapiObject.objects.filter(kind="squad", name=squad_name(store)).first()
     if not (squad and squad.vapi_id):
-        return ReconcileResult(
-            "phone_number",
-            "Happy Time inbound",
-            action="skipped",
-            warnings=["squad not provisioned yet"],
-        )
-    payload = {
-        "squadId": squad.vapi_id,
-        "assistantId": None,
-        "name": "Happy Time inbound",
-        "server": _server_block(),
-    }
+        return ReconcileResult("phone_number", label, action="skipped", warnings=["squad not provisioned yet"])
+    payload = phone_number_payload(label, squad.vapi_id)
     return _reconcile(
         "phone_number",
         number_id,
@@ -715,7 +829,11 @@ def _provisioned_members() -> dict[str, str]:
 
 
 def provision_all(
-    *, dry_run: bool = False, only: str | None = None, members: list[str] | None = None
+    *,
+    dry_run: bool = False,
+    only: str | None = None,
+    members: list[str] | None = None,
+    per_store: bool = False,
 ) -> ProvisionReport:
     """Stand up the P0 Vapi stack from env; a re-run is a proven no-op (ADR-003).
 
@@ -768,6 +886,15 @@ def provision_all(
     # (5) PHONE NUMBER — attach squadId (graceful skip if O-4 unset).
     if only in (None, "phone"):
         results.append(ensure_phone_number())
+
+    # (6) PER-STORE SQUADS (opt-in) — one squad per store over the same assistants, each attached to
+    #     that store's own number. Attaching re-routes live calls, so it never runs by default.
+    if per_store:
+        for _key, slug in C.TRANSFER_STORES:
+            if only in (None, "squad"):
+                results.append(ensure_squad(_provisioned_members(), slug))
+            if only in (None, "phone"):
+                results.append(ensure_phone_number(slug))
 
     report.ok = report.errors == 0
     return report

@@ -81,12 +81,12 @@ def build_assistant_payload(prompt) -> tuple[dict, list[str]]:
     return provision.build_assistant_payload(prompt.role, name=prompt.role)
 
 
-def build_squad_payload() -> dict:
+def build_squad_payload(store: str | None = None) -> dict:
     """The ``PATCH /squad/{id}`` body from the CODE-defined topology (§4.4). Destinations are
     re-asserted from ``provision.SQUAD_SHAPE`` over the currently-provisioned members — a canvas
     edge that removed a required transition is ignored (the required set is rebuilt from code)."""
     members = provision._provisioned_members()
-    return provision.build_squad_payload(members)
+    return provision.build_squad_payload(members, store)
 
 
 def _ensure_bound_tools(prompt) -> None:
@@ -169,20 +169,23 @@ def publish_assistant(prompt) -> PublishResult:
         return result
 
 
-def publish_squad() -> PublishResult:
-    """Publish the Squad shape (members + destinations) from CODE — always safe to re-run."""
-    result = PublishResult(object="squad", role="squad")
+def publish_squad(store: str | None = None) -> PublishResult:
+    """Publish the Squad shape (members + destinations) from CODE — always safe to re-run. With
+    ``store``: that store's own squad (only if it was provisioned with ``provision_vapi --per-store``)."""
+    name = provision.squad_name(store)
+    result = PublishResult(object="squad", role=f"squad:{store}" if store else "squad")
     try:
-        payload = build_squad_payload()
+        payload = build_squad_payload(store)
         if not payload.get("members"):
             result.action = "skipped"
             result.warnings = ["no provisioned members yet — run provision first"]
             return result
-        squad_id = getattr(settings, "VAPI_SQUAD_ID", "") or ""
+        # VAPI_SQUAD_ID is the legacy squad's id; a store squad is only ever found by its own row.
+        squad_id = "" if store else getattr(settings, "VAPI_SQUAD_ID", "") or ""
         from voice.models import VapiObject
 
         if not squad_id:
-            rec = VapiObject.objects.filter(kind="squad", name=C.SQUAD_NAME).first()
+            rec = VapiObject.objects.filter(kind="squad", name=name).first()
             squad_id = rec.vapi_id if rec else ""
         if not squad_id:
             result.action = "skipped"
@@ -190,7 +193,7 @@ def publish_squad() -> PublishResult:
             return result
         result.id = squad_id
         rec, _ = VapiObject.objects.get_or_create(
-            kind="squad", name=C.SQUAD_NAME, defaults={"vapi_id": squad_id}
+            kind="squad", name=name, defaults={"vapi_id": squad_id}
         )
         if not rec.vapi_id:
             rec.vapi_id = squad_id
@@ -227,7 +230,21 @@ def publish_all() -> list[PublishResult]:
             continue
         results.append(publish_assistant(prompt))
     results.append(publish_squad())
+    results.extend(publish_store_squads())
     return results
+
+
+def publish_store_squads() -> list[PublishResult]:
+    """Re-publish every per-store squad that exists (they exist only after ``provision_vapi
+    --per-store``). Their member overrides embed the prompts, so any prompt edit must reach them."""
+    from voice.models import VapiObject
+
+    out: list[PublishResult] = []
+    for _key, slug in C.TRANSFER_STORES:
+        rec = VapiObject.objects.filter(kind="squad", name=provision.squad_name(slug)).first()
+        if rec and rec.vapi_id:
+            out.append(publish_squad(slug))
+    return out
 
 
 def auto_publish_on_save(prompt) -> str:
@@ -250,17 +267,23 @@ def auto_publish_on_save(prompt) -> str:
     try:
         r = publish_assistant(prompt)
         squad = publish_squad()
+        store_squads = publish_store_squads()
     except Exception as exc:  # noqa: BLE001 — a publish hiccup must never break the save response
         return f"saved — publish failed: {exc}"
     if r.action == "error":
         return f"saved — publish failed: {r.error}"
     if squad.action == "error":
         return f"saved — publish failed: squad: {squad.error}"
+    for s in store_squads:
+        if s.action == "error":
+            return f"saved — publish failed: {s.role}: {s.error}"
     if r.action == "skipped":
         return f"saved — not published ({'; '.join(r.warnings) or 'unprovisioned'})"
-    if r.action == "nodrift" and squad.action in ("nodrift", "skipped"):
+    idle = ("nodrift", "skipped")
+    if r.action == "nodrift" and squad.action in idle and all(s.action in idle for s in store_squads):
         return "published — already live in Vapi (no change)"
     bits = [f"assistant {r.action}"]
-    if squad.action not in ("nodrift", "skipped"):
+    if squad.action not in idle:
         bits.append(f"squad {squad.action}")
+    bits += [f"{s.role} {s.action}" for s in store_squads if s.action not in idle]
     return "published to Vapi: " + ", ".join(bits)

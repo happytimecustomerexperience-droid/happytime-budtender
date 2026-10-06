@@ -233,6 +233,24 @@ def test_check_sku_uses_by_sku_endpoint_and_computes_otd():
     assert call["params"] == {"store": "yakima", "sku": "SKU1"}
 
 
+def test_check_sku_carries_potency_lab_info_and_size_untouched():
+    """The by-sku row is the same public_product a search pick is: its potency / lab / info / size
+    must survive the client (suggest._facts shapes them for speech), cost/margin still never do."""
+    lab = {"terpenes": [{"name": "Beta-Myrcene", "pct": 2.0}], "coa_url": "https://x.test/coa.pdf"}
+    fs = FakeSession()
+    fs.queue(
+        "/products/by-sku/",
+        {"product": {"sku": "SKU1", "name": "X", "price": 38.0, "stock_on_hand": 14,
+                     "thc_percent": 27.3, "size": "3.5g", "lab": lab, "info": {"allergens": "none"},
+                     "cost": 9.0, "margin": 4.0}},
+    )
+    out = _client(fs).check_sku("yakima", "SKU1")
+    assert (out["thc_percent"], out["size"], out["lab"], out["info"]) == (
+        27.3, "3.5g", lab, {"allergens": "none"},
+    )
+    assert "cost" not in out and "margin" not in out
+
+
 def test_check_sku_absent_is_not_in_stock():
     fs = FakeSession(default={})  # by-sku returns {} when the SKU isn't in stock
     out = _client(fs).check_sku("yakima", "NOPE")

@@ -19,7 +19,7 @@ import pytest
 
 
 @pytest.mark.django_db
-def test_price_refinement_carries_the_category_forward(convo):
+def test_price_refinement_carries_the_category_forward(convo, fake_bt):
     c = convo(store="yakima")
     first = c.say("I'm looking for some flower that helps me sleep")
     assert first.intent == "product_suggestion"
@@ -29,7 +29,11 @@ def test_price_refinement_carries_the_category_forward(convo):
     args = second.args("suggest_products")
     assert args["category"] == "flower", "category was not carried from the previous turn"
     assert args["price_max"] == 40.0
-    assert all(p["price_otd"] <= 40.0 for p in second.picks), second.pick_names
+    # UPDATED 2026-10-06 (price gate): neither ask names a size, so the picks carry no price to check
+    # the ceiling against. The ceiling still reached budtender, and what came back fits it.
+    assert fake_bt.calls["search"][-1]["slots"]["price_max"] == 40.0
+    shown = {p["sku"] for p in second.picks}
+    assert shown and all(r["price"] <= 40.0 for r in fake_bt.catalog if r["sku"] in shown), second.pick_names
 
 
 @pytest.mark.django_db

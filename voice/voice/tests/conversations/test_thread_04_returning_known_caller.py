@@ -39,10 +39,13 @@ def test_returning_caller_typed_number_is_never_an_identity(convo, fake_bt):
     assert "search" not in fake_bt.calls
 
     # 3. She names the category herself — an ordinary anonymous, margin-first search.
-    t = c.say("show me a cartridge under $25")
+    # UPDATED 2026-10-06 (price gate): a half-gram ask, because a price is per size — a size-less
+    # cartridge ask carries no price (thread 24 pins that side).
+    t = c.say("show me a half gram cartridge under $25")
     assert t.intent == "product_suggestion"
     args = t.args("suggest_products")
     assert args["category"] == "cartridge"
+    assert args["size"] == "0.5g"
     assert args["price_max"] == 25.0
     search = fake_bt.calls["search"][-1]
     assert search["slots"]["price_max"] == 25.0, "the budget must reach the client, not just the args"

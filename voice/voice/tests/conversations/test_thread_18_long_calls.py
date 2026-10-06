@@ -18,6 +18,8 @@ import sys
 
 import pytest
 
+from voice.tools.suggest import SPOKEN_FACT_KEYS as _SPOKEN_FACT_KEYS
+
 # Windows consoles default to cp1252, which chokes on the odd em-dash/approx-equal character a
 # grounded KB row can legitimately contain. Widen stdout so ``-s`` transcripts never crash on
 # encoding rather than on an actual assertion.
@@ -36,7 +38,8 @@ def _numbers(text: str) -> set[str]:
 def _tool_numbers(picks: list[dict]) -> set[str]:
     out: set[str] = set()
     for pick in picks:
-        for key in ("name", "brand", "strain", "why_this", "price_spoken", "price_otd", "thc_percent"):
+        for key in ("name", "brand", "strain", "why_this", "price_spoken", "price_otd", "thc_percent",
+                    *_SPOKEN_FACT_KEYS):
             out |= _numbers(str(pick.get(key) or ""))
     return out
 
@@ -538,14 +541,18 @@ def test_the_mixed_long_call_known_caller_intent_and_pii_floor_hold(convo, fake_
     # 4) Phone-cart style staging ask.
     # FIXED 2026-08-10: chat.py now has a stage_phone_cart branch — a known caller's staging ask
     # on a long call now actually reserves her most recently suggested pick (the last item from
-    # turn 3's refinement, "Sour Diesel 28g" — conservative SKU resolution, see voice/chat.py's
-    # ``_last_suggested_sku``) instead of getting generic FAQ/greeting copy.
+    # turn 3's refinement — conservative SKU resolution, see voice/chat.py's ``_last_suggested_sku``)
+    # instead of getting generic FAQ/greeting copy.
+    # UPDATED 2026-10-05: turn 3's "something cheaper" now keeps the caller's own "indica under $40"
+    # (it used to re-search flower alone, so the $99 "Sour Diesel 28g" ounce was the last pick shown
+    # and the one staged). The only indica flower under $40 is Blueberry OG 3.5g: that is what she was
+    # last offered, so that is what is set aside.
     t = _do("can you set that aside for me under my name so it's ready when I get there")
     assert "stage_phone_cart" in t.tools
     assert t.intent == "phone_cart_staged"
     assert t.grounded is True
-    assert t.args("stage_phone_cart")["sku"] == "FL-SD-28"
-    assert "Sour Diesel 28g" in t.answer, "names exactly which item it staged"
+    assert t.args("stage_phone_cart")["sku"] == "FL-BBOG-35"
+    assert "Blueberry OG 3.5g" in t.answer, "names exactly which item it staged"
 
     # 5) A vendor-sounding question dropped into an otherwise-retail call.
     # FIXED 2026-08-10: chat.py now routes a vendor-shaped aside to notify_vendor_callback instead

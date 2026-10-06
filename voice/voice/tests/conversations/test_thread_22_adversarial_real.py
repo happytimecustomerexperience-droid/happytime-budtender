@@ -172,7 +172,10 @@ def test_long_ramble_with_buried_ask(convo, fake_bt):
     assert args["category"] == "edible"
     assert args["price_max"] == 20.0
     assert t.picks, "the actual ask (a cheap low-dose gummy) must get a real answer"
-    assert all(p["price_otd"] > 0 for p in t.picks)
+    # UPDATED 2026-10-06 (price gate): the buried ask names no size, so the picks carry no price and the
+    # reply asks for one (an edible's size is its dose in the fake shelf).
+    assert all("price_otd" not in p for p in t.picks)
+    assert t.result("suggest_products")["needs_size"] is True
 
     # A short, ordinary refinement right after — the buried category must carry forward.
     t = c.say("hmm what about something a little stronger")

@@ -22,6 +22,10 @@ Forked from the `swedish-bot` chassis.
 - **Leak-guard is code-owned** — `faq_lookup`/suggestions can never emit `cost`/`margin` (central scrub +
   budtender allowlist + tests). Do not weaken.
 - **Numbers-Guard** — the agent never invents a price/stock/number; un-grounded → offer a human.
+- **Price gate** — a price is per size: `suggest_products`/`check_inventory` return NO price field for a
+  size-required category called with no `size` (`needs_size` in `voice/tools/suggest.py`; fails closed on a blank
+  category). Code-owned for the phone agent and the text brain alike — never add a second price rule in `chat.py`
+  or the prompts. See README "Price asks run through the questions".
 - **Dutchie keys live only in the budtender service.** This repo calls budtender over HTTP (Bearer).
 - **Voice/model/transcriber set once per assistant** (no per-node duplication — the export's bug).
 - Dashboard flow canvas is **config+docs only**; safety guardrails stay in Python, `_clean_graph` fail-closed.

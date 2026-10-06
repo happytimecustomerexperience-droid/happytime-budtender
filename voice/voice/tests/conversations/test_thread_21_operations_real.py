@@ -450,7 +450,9 @@ def test_uber_address_then_the_drive_thru_that_does_not_exist(convo, fake_bt):
 def test_price_haggling_and_price_matching(convo, fake_bt):
     c = convo(store="yakima")
 
-    t = c.say("I want a hybrid cartridge, but can you do 30 on it? the other shop down the street does")
+    # UPDATED 2026-10-06 (price gate): the ask names a half gram — a price is per size, so a size-less
+    # cartridge ask carries no price at all and there would be no shelf price here to hold the line on.
+    t = c.say("I want a half gram hybrid cartridge, but can you do 30 on it? the other shop down the street does")
     _print("1. haggle", "can you do 30 on that cartridge", t)
     assert t.intent == "product_suggestion"
     assert t.pick_names, "the product ask should still resolve to a real shelf item"

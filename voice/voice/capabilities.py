@@ -115,6 +115,15 @@ CAPABILITIES: tuple[Capability, ...] = (
         "Every caller is treated as a new customer.",
         (PHONE, WEBSITE, CONSOLE),
     ),
+    Capability(
+        "call.greet_by_name", "Personalization", "Greet callers by first name",
+        "The phone agent opens with \"Welcome back to Happy Time, <first name>!\" when the caller's "
+        "first name is on their profile, every agent may use that name, and a caller whose name we "
+        "do not have is asked for it once and it is saved on their profile (never to Dutchie). "
+        "Needs the dynamic greeting turned on for the phone line (README: Dynamic greeting rollout).",
+        "Every caller gets the standard greeting; the agents never use the name and never ask for it.",
+        (PHONE,),
+    ),
     # ── Channels ──────────────────────────────────────────────────────────────
     Capability(
         "channel.website_chat", "Channels", "Answer the website chat",

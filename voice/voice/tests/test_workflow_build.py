@@ -93,7 +93,9 @@ def test_provision_workflow_dry_run_runs_offline(db, settings, monkeypatch, caps
     settings.VAPI_WEBHOOK_SECRET = "test-secret"
     call_command("provision_workflow", "--dry-run")
     out = capsys.readouterr().out
-    assert "53 nodes" in out and "dry-run" in out
+    # 53 -> 59 on 2026-10-06: an AROMA node after ACTIVITY in each of the four branches, plus a SIZE node in
+    # flower and in concentrate/cartridge (the price gate: a price is per size).
+    assert "59 nodes" in out and "dry-run" in out
     assert "test-secret" not in out  # the secret is redacted in the dump
 
 

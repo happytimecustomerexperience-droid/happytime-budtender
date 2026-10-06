@@ -58,12 +58,11 @@ def resolve_caller(number: str, ctx: dict, *, client=None) -> dict:
     ``ctx['caller_phone_hash']`` is always the peppered hash (the only persisted key); the raw
     number is kept ONLY transiently on ``ctx['_caller_phone']`` to feed the budtender ``search``
     call (sent over Bearer/TLS, never persisted). A blocked/absent number → handshake skipped →
-    margin-first, no error (21-SPEC §7.2)."""
-    if client is None:
-        from voice.budtender_client import budtender
+    margin-first, no error (21-SPEC §7.2).
 
-        client = budtender()
-
+    When the call's caller context is already known (``ctx['caller']`` stamped by the webhook, or
+    cached under the call id by ``voice.caller``) the answer is derived from it with no second
+    budtender round trip; otherwise the ``resume_by_phone`` lookup above runs as before."""
     ctx["caller_phone_hash"] = phone_hash(number)
     ctx["recognition_resolved"] = True
 
@@ -76,6 +75,28 @@ def resolve_caller(number: str, ctx: dict, *, client=None) -> dict:
         ctx["profile_summary"] = {"has_history": False, "top_categories": [], "price_tier": ""}
         ctx["_caller_phone"] = None
         return ctx
+
+    from voice import caller
+
+    known_ctx = ctx.get("caller") or caller.cached(ctx.get("call_id", ""))
+    if known_ctx:
+        has_history = bool(known_ctx.get("has_history"))
+        ctx["profile_summary"] = {
+            "has_history": has_history,
+            "top_categories": list(known_ctx.get("top_categories") or []),
+            "price_tier": known_ctx.get("price_tier") or "",
+        }
+        ctx["known"] = has_history
+        # The same fields the resume_by_phone path sets: the token the caller-context request
+        # linked (``vc-<call id>``) and the transient phone, only for a caller with history.
+        ctx["session_token"] = (ctx.get("session_token") or f"vc-{ctx.get('call_id', '')}") if has_history else None
+        ctx["_caller_phone"] = e164 if has_history else None
+        return ctx
+
+    if client is None:
+        from voice.budtender_client import budtender
+
+        client = budtender()
 
     out = client.resume_by_phone(
         e164,

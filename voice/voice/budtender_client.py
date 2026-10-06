@@ -62,20 +62,29 @@ class BudtenderClient:
     def _url(self, path: str) -> str:
         return f"{self.base_url}{_API_PREFIX}{path}"
 
-    def _post(self, path: str, payload: dict, *, empty, require_token: bool = True):
-        """POST JSON; on any failure return ``empty`` (typed graceful-empty), never raise."""
+    def _post(
+        self, path: str, payload: dict, *, empty, require_token: bool = True, budget: float | None = None
+    ):
+        """POST JSON; on any failure return ``empty`` (typed graceful-empty), never raise.
+        ``budget`` caps connect + read together at that many seconds (a slow path that must answer
+        inside a hard deadline); the default is the client's own connect + read timeouts."""
         if require_token and not self._token:
             logger.warning("budtender token not configured; skipping POST %s", path)
             return empty
         if not self.base_url:
             logger.warning("budtender base url not configured; skipping POST %s", path)
             return empty
+        if budget:
+            connect = min(self._connect_timeout, budget / 2)
+            timeout = (connect, budget - connect)
+        else:
+            timeout = (self._connect_timeout, self.timeout)
         try:
             resp = self._session.post(
                 self._url(path),
                 json=payload,
                 headers=self._headers(),
-                timeout=(self._connect_timeout, self.timeout),
+                timeout=timeout,
             )
             if resp.status_code >= 300:
                 logger.warning("budtender POST %s → HTTP %s", path, resp.status_code)
@@ -195,6 +204,12 @@ class BudtenderClient:
                 # public_product's lab report + exact menu slug; suggest.check_inventory validates.
                 "coa_url": prod.get("coa_url"),
                 "menu_slug": prod.get("menu_slug"),
+                # ...and the potency / lab / product facts the same row carries. Passed through
+                # untouched: suggest._facts is the one place that validates and shapes them.
+                "thc_percent": prod.get("thc_percent"),
+                "size": prod.get("size"),
+                "lab": prod.get("lab"),
+                "info": prod.get("info"),
             }
         return {"in_stock": False}
 
@@ -321,6 +336,43 @@ class BudtenderClient:
         if not isinstance(summary, dict):
             out["profile_summary"] = {"has_history": False, "top_categories": [], "price_tier": ""}
         return out
+
+    def caller_context(
+        self,
+        phone_e164: str,
+        *,
+        store: str | None = None,
+        session_token: str | None = None,
+        timeout: float = 2.5,
+    ) -> dict:
+        """``POST /customer/caller-context`` (NO trailing slash): who is calling, DB-only. Creates a
+        "voice" profile for a number budtender has never seen. Returns ``{ok, created, known,
+        first_name, has_history, orders, days_since_last, top_categories, price_tier, brands,
+        flavors, terpenes}`` (no phone, no cost/margin). ``timeout`` caps connect + read together
+        (the assistant-request path answers inside Vapi's fixed 7.5 s, so it is not the client's
+        8 s default); it is a request budget, not a wall-clock kill. ``{}`` on ANY failure —
+        unknown, never "a new caller"."""
+        if not phone_e164:
+            return {}
+        payload: dict = {"phone": phone_e164}
+        if store:
+            payload["store"] = store
+        if session_token:
+            payload["session_token"] = session_token
+        out = self._post("/customer/caller-context", payload, empty={}, budget=timeout)
+        return out if isinstance(out, dict) and out.get("ok") else {}
+
+    def profile_upsert(self, phone_e164: str, *, name: str = "", source: str = "voice") -> dict:
+        """``POST /customer/profile-upsert``: create the profile for a phone budtender has not seen
+        and remember a first name (stored only when the row has none; never written to Dutchie).
+        Returns ``{status, created, first_name, profile_summary}``; ``{}`` on any failure."""
+        if not phone_e164:
+            return {}
+        payload: dict = {"phone": phone_e164, "source": source}
+        if name:
+            payload["name"] = name
+        out = self._post("/customer/profile-upsert", payload, empty={})
+        return out if isinstance(out, dict) else {}
 
     def persist_session(
         self,

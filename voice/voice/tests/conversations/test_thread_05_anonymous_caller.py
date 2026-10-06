@@ -38,10 +38,13 @@ def test_blocked_caller_is_served_without_ever_identifying_them(convo, fake_bt):
     assert t.raw["contact_hint"] == {"store": "yakima", "customer_phone": ""}
 
     # ── 2. The product ask — the margin-first half of the ADR-005 switch. ──
-    t = c.say("good to know. I'm after a cartridge that helps me relax, under $40")
+    # UPDATED 2026-10-06 (price gate): the ask names a full gram — a price is per size, and a size-less
+    # cartridge ask carries no price at all (thread 24 pins that side).
+    t = c.say("good to know. I'm after a full gram cartridge that helps me relax, under $40")
     assert t.intent == "product_suggestion"
     args = t.args("suggest_products")
     assert args["category"] == "cartridge"
+    assert args["size"] == "1g"
     assert args["effect_desired"] == "relaxed"
     assert args["price_max"] == 40.0
     assert t.picks, "an anonymous caller still gets real in-stock picks"
@@ -180,9 +183,12 @@ def test_junk_digits_are_rejected_until_a_real_number_lands(convo, fake_bt):
     assert call["session_token"] is None
 
     # ── 4. Budget follow-up on the same line. ──
-    t = c.say("nice — anything like that under $30?", phone="(509) 555-0142")
+    # UPDATED 2026-10-06 (price gate): "an eighth" added — the follow-up is a priced one, and a price
+    # is per size.
+    t = c.say("nice — anything like that eighth under $30?", phone="(509) 555-0142")
     args = t.args("suggest_products")
     assert args["category"] == "flower"
+    assert args["size"] == "3.5g"
     assert args["price_max"] == 30.0
     assert t.picks
     assert _searches(fake_bt)[-1]["phone"] is None

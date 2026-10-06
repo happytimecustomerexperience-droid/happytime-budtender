@@ -68,6 +68,17 @@ CATALOG = [
 ]
 
 
+def aroma_lab(terpenes, explain, aroma):
+    """A batch ``lab`` shaped like budtender's public ``lab`` for a row, ``profile.explain`` / ``profile.aroma``
+    included (the sentence budtender's terpenes.profile writes — the fake only carries it, never writes one)."""
+    return {
+        "total_terpenes": None, "terpenes": [{"name": n, "pct": p} for n, p in terpenes],
+        "cbd_total": None, "thc_total": None, "minor_cannabinoids": [], "tested_date": "2026-08-27",
+        "lab_name": None, "coa_url": None, "contaminants": {},
+        "profile": {"lean": None, "notes": [], "line": "", "explain": explain, "aroma": list(aroma)},
+    }
+
+
 class FakeBudtender:
     """Stand-in for the budtender HTTP client that FILTERS like the real one.
 
@@ -80,6 +91,13 @@ class FakeBudtender:
         self.catalog = [dict(row) for row in CATALOG]
         self.profile = {"has_history": False, "top_categories": [], "price_tier": ""}
         self.session_token = "sess-known-1"
+        # What POST /customer/caller-context answers for the caller: a number we have never seen.
+        self.caller = {
+            "created": True, "known": False, "first_name": "", "has_history": False, "orders": 0,
+            "days_since_last": None, "top_categories": [], "price_tier": "", "brands": [],
+            "flavors": [], "terpenes": [],
+        }
+        self.fail_caller = False  # budtender unreachable: the client's graceful-empty answer
         self.pairing = {"pairing": None, "strength": 0.0}
         self.calls: dict[str, list] = {}
         self.fail_search = False
@@ -124,7 +142,20 @@ class FakeBudtender:
             rows = [r for r in rows if r["category"] != str(blocked).lower()]
         for sku in (exclude_skus or []):
             rows = [r for r in rows if r["sku"] != sku]
-        rows = sorted(rows, key=lambda r: r["price"])
+        # budtender's Contract B: ``sort_by`` re-orders the already-filtered set; anything else is
+        # ignored and the default (cheapest first here) stands. Honoured for real, so a slot the
+        # router forgets to send leaves the order alone and the thread's assertion goes red.
+        sort_by = slots.get("sort_by")
+        if sort_by == "potency":  # highest THC first, no-potency rows last
+            rows = sorted(rows, key=lambda r: (r.get("thc_percent") is None, -(r.get("thc_percent") or 0)))
+        else:
+            rows = sorted(rows, key=lambda r: r["price"])
+        # budtender's ``aroma`` slot nudges a row whose real batch lab carries that aroma
+        # (``lab.profile.aroma``, from terpenes.profile) ahead of the rest; an unknown value or a row with
+        # no lab changes nothing. Stable, so everything else keeps the order above.
+        aroma = slots.get("aroma")
+        if aroma in ("citrus", "earthy", "pine", "floral", "spicy"):
+            rows = sorted(rows, key=lambda r: aroma not in (((r.get("lab") or {}).get("profile") or {}).get("aroma") or []))
         return {"results": [dict(r, rank=i + 1) for i, r in enumerate(rows[:limit])]}
 
     def check_sku(self, store, sku, *, category=None):
@@ -132,9 +163,12 @@ class FakeBudtender:
         row = next((r for r in self.catalog if r["sku"] == sku), None)
         if not row:
             return {"in_stock": False}
+        # What the real by-sku view returns: the same public_product row (lab/info/size/potency).
         return {"in_stock": True, "price_otd": round(row["price"] * 1.485, 2),
                 "stock_on_hand": row["stock_on_hand"], "name": row["name"],
-                "coa_url": row.get("coa_url"), "menu_slug": row.get("menu_slug")}
+                "coa_url": row.get("coa_url"), "menu_slug": row.get("menu_slug"),
+                "thc_percent": row.get("thc_percent"), "size": row.get("size"),
+                "lab": row.get("lab"), "info": row.get("info")}
 
     def pair_for_sku(self, store, anchor_sku, *, phone=None, session_token=None):
         self._record("pair_for_sku", {"store": store, "anchor": anchor_sku})
@@ -144,6 +178,18 @@ class FakeBudtender:
     def resume_by_phone(self, e164, *, location=None, current_session_token=None):
         self._record("resume_by_phone", {"phone": e164, "location": location})
         return {"profile_summary": self.profile, "session_token": self.session_token}
+
+    def caller_context(self, phone_e164, *, store=None, session_token=None, timeout=2.5):
+        self._record("caller_context", {"phone": phone_e164, "store": store,
+                                        "session_token": session_token, "timeout": timeout})
+        return {} if self.fail_caller else {"ok": True, **self.caller}
+
+    def profile_upsert(self, phone_e164, *, name="", source="voice"):
+        self._record("profile_upsert", {"phone": phone_e164, "name": name, "source": source})
+        if not self.caller["first_name"]:  # budtender stores a name only when the row has none
+            self.caller["first_name"] = name
+        return {"status": "ok", "created": False, "first_name": self.caller["first_name"],
+                "profile_summary": {"has_history": self.caller["has_history"]}}
 
     # -- phone cart -------------------------------------------------------
     def phone_cart_upsert(self, payload):
@@ -216,6 +262,12 @@ class Turn:
     @property
     def picks(self) -> list[dict]:
         return self.result("suggest_products").get("picks") or []
+
+    @property
+    def lookups(self) -> list[dict]:
+        """Every ``check_inventory`` result this turn — an earlier pick re-read by SKU."""
+        return [t.get("result") or {} for t in self.raw.get("tool_results") or []
+                if t.get("tool") == "check_inventory"]
 
     @property
     def pick_names(self) -> list[str]:

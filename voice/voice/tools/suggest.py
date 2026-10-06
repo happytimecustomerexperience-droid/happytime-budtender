@@ -10,6 +10,15 @@ wall behind budtender's allowlist serializer (ADR-008).
 House invariants (binding):
   * Leak-safe → ``_speakable_pick`` copies ONLY the §4.5 allowlist; ``price``→``price_otd`` relabel
     makes the OTD invariant explicit (ADR-009). Cost/margin physically never reach here.
+  * Lab facts → budtender's ``lab`` / ``info`` / ``size`` are never copied through; ``_facts`` builds
+    fresh speakable fields from them (``thc_spoken``, ``terpenes_spoken``, ``allergens`` …) and a
+    null lab yields no lab field at all. A figure the agent can read is a figure the tool returned.
+  * Price gate (2026-10-06) → a price is per SIZE. A ``suggest_products`` / ``check_inventory`` call for
+    a size-required category (``constants.SIZE_REQUIRED_CATEGORIES``; blank/unknown fails closed) with
+    NO ``size`` slot returns NO price of any kind — the pick is built without ``price_otd`` /
+    ``price_spoken`` — plus ``needs_size`` / ``size_options`` and a ``spoken_summary`` that asks the
+    size. A ``price_max`` ceiling is not a size. The phone agent and the text brain both pass through
+    here, so the guarantee is code, not prompt.
   * Margin-vs-taste switch = presence of a recognized caller (ADR-005). The handler passes the
     resolved phone/session to budtender; budtender owns the re-ranking — the voice repo never sorts.
   * ONE gated upsell (ADR-007) → ``pair_upsell`` voices a complement ONLY when
@@ -18,9 +27,13 @@ House invariants (binding):
 
 from __future__ import annotations
 
+import datetime
 import logging
+import math
 import re
+from decimal import Decimal
 
+from voice import constants as C
 from voice import pricing, recognition
 from voice.budtender_client import budtender
 from voice.tools import register
@@ -71,7 +84,8 @@ _SLUG_RE = re.compile(r"[A-Za-z0-9][\w.~-]*")
 
 
 def _safe_links(result: dict) -> dict:
-    coa = str(result.get("coa_url") or "").strip()
+    lab = result.get("lab") if isinstance(result.get("lab"), dict) else {}
+    coa = str(result.get("coa_url") or lab.get("coa_url") or "").strip()
     slug = str(result.get("menu_slug") or "").strip()
     links = {}
     if _HTTPS_URL_RE.fullmatch(coa):
@@ -79,6 +93,127 @@ def _safe_links(result: dict) -> dict:
     if _SLUG_RE.fullmatch(slug):
         links["menu_slug"] = slug
     return links
+
+
+# ── lab + product facts the agent may SAY (2026-10-05) ─────────────────────────────
+# budtender's public_product now carries ``lab`` (terpenes with %, THC/CBD, screens, COA, a hedged
+# ``profile``), ``info`` (allowlisted product-record facts) and ``size``. Neither dict is copied
+# through: ``_facts`` builds a handful of fresh, validated, speakable fields from them — the same
+# pattern as ``price_spoken`` — so the only figures the agent can read are tool values, a lab that
+# is null yields NO lab field (never a zero-fill, never a fallback to the old ``dominant_terpene``),
+# and nothing outside this allowlist (cost/margin/vendor included, however deeply nested) can ride.
+_PLAIN_TERPENE = {  # only the unambiguous four: alpha-/beta-pinene must never merge into "pinene"
+    "beta-myrcene": "myrcene", "beta-caryophyllene": "caryophyllene",
+    "alpha-humulene": "humulene", "alpha-bisabolol": "bisabolol",
+}
+_LAB_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ,'()+\-]{0,38}")
+_SCREENS = (  # budtender's contaminant key -> what the agent says it passed
+    ("pesticides", "pesticides"), ("heavy_metals", "heavy metals"), ("mycotoxin", "mycotoxins"),
+    ("microbiology", "microbials"), ("solvents", "residual solvents"),
+)
+_ALLERGEN_CAP = 1000  # budtender's own cap: an allergen list is spoken whole or not at all
+_PROFILE_LINE_CAP = 300
+_EXPLAIN_CAP = 300  # budtender's lab.profile.explain is <= 280 chars; a longer one is not its sentence
+_MAX_EXCLUDED = 100
+_SORT_MODES = ("potency", "price_asc")  # budtender's Contract B whitelist
+# The pick fields that carry a figure the agent may SAY (next to ``price_spoken``): the one list a
+# Numbers-Guard check traces a spoken number back through. Tests import it, so a new spoken field
+# cannot be added here without the guard seeing it.
+SPOKEN_FACT_KEYS = (
+    "size", "thc_spoken", "cbd_spoken", "total_terpenes_spoken", "terpenes_spoken",
+    "minor_cannabinoids_spoken", "profile_line", "profile_explain", "tested_date",
+)
+
+
+def percent(value) -> float | None:
+    """A real percentage — finite, > 0, ≤ 100 — else None. A bool is not a number and a string is
+    not a figure: a malformed lab value speaks nothing rather than a repaired guess."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) and 0 < value <= 100 else None
+
+
+def pct_text(value: float) -> str:
+    """The tool's own figure as text — 27.3 -> '27.3', 2.0 -> '2', 0.93 -> '0.93'. Never rounded."""
+    text = format(Decimal(repr(float(value))), "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _lab_name(value) -> str | None:
+    text = " ".join(value.split()) if isinstance(value, str) else ""
+    return text if _LAB_NAME_RE.fullmatch(text) else None
+
+
+def _ranked(items, *, terpene: bool, top: int) -> list[tuple[str, float]]:
+    """[{"name","pct"}] -> up to ``top`` (name, pct) pairs, biggest first, dropping any entry without
+    a usable name AND percentage. Terpene names are lower-cased and the common ones made plain."""
+    rows = []
+    for item in items if isinstance(items, list) else []:
+        name = _lab_name(item.get("name")) if isinstance(item, dict) else None
+        pct = percent(item.get("pct")) if isinstance(item, dict) else None
+        if name and pct is not None:
+            rows.append((_PLAIN_TERPENE.get(name.lower(), name.lower()) if terpene else name, pct))
+    rows.sort(key=lambda row: -row[1])  # stable: the lab's own order breaks ties
+    return rows[:top]
+
+
+def _said(rows: list[tuple[str, float]]) -> str:
+    return ", ".join(f"{name} at {pct_text(pct)} percent" for name, pct in rows)
+
+
+def _facts(result: dict) -> dict:
+    """The speakable size / potency / lab / allergen fields for one budtender row, built in code.
+    Every key is present ONLY when its source holds a real value."""
+    out: dict = {}
+    size = result.get("size")
+    if isinstance(size, str) and size.strip():
+        out["size"] = size.strip()
+    lab = result.get("lab") if isinstance(result.get("lab"), dict) else {}
+
+    # ONE potency number per fact: budtender's ``thc_percent`` (it already folds in the lab's total
+    # when the inventory has none). ``lab.thc_total`` is never read here — a second source.
+    thc = percent(result.get("thc_percent"))
+    if thc:
+        out["thc_spoken"] = f"{pct_text(thc)} percent THC"
+    cbd = percent(lab.get("cbd_total"))
+    if cbd:
+        out["cbd_spoken"] = f"{pct_text(cbd)} percent CBD"
+    total = percent(lab.get("total_terpenes"))
+    if total:
+        out["total_terpenes_spoken"] = f"{pct_text(total)} percent total terpenes"
+    terps = _ranked(lab.get("terpenes"), terpene=True, top=5)
+    if terps:
+        out["terpenes"] = [{"name": name, "pct": pct} for name, pct in terps]  # a "which has more" answer
+        out["terpenes_spoken"] = _said(terps[:3])  # never recite more than three aloud
+    minors = _ranked(lab.get("minor_cannabinoids"), terpene=False, top=3)
+    if minors:
+        out["minor_cannabinoids_spoken"] = _said(minors)
+    profile = lab.get("profile") if isinstance(lab.get("profile"), dict) else {}
+    line = profile.get("line")
+    if isinstance(line, str) and line.strip() and len(line) <= _PROFILE_LINE_CAP:
+        out["profile_line"] = line.strip()  # budtender's hedged, compliant line — verbatim
+    # What the pick should smell like / the experience people describe: budtender's terpenes.profile
+    # sentence (fixed phrases + the lab's own terpene names, already hedged, "everyone is different").
+    # Verbatim or absent — the agent never writes its own, and `lab`/`info` are still never copied.
+    explain = profile.get("explain")
+    if isinstance(explain, str) and explain.strip() and len(explain) <= _EXPLAIN_CAP:
+        out["profile_explain"] = explain.strip()
+    screens = lab.get("contaminants") if isinstance(lab.get("contaminants"), dict) else {}
+    passed = [label for key, label in _SCREENS if screens.get(key) == "pass"]
+    if passed:
+        out["lab_screens_passed"] = passed
+    tested = lab.get("tested_date")
+    if isinstance(tested, str):
+        try:
+            out["tested_date"] = datetime.date.fromisoformat(tested).isoformat()
+        except ValueError:
+            pass
+    info = result.get("info") if isinstance(result.get("info"), dict) else {}
+    allergens = info.get("allergens")
+    if isinstance(allergens, str) and allergens.strip() and len(allergens) <= _ALLERGEN_CAP:
+        out["allergens"] = allergens  # verbatim, whole — never inferred, never cut
+    return out
+
 
 _HONEST_EMPTY = "I'm not finding that in stock right now."
 
@@ -130,6 +265,71 @@ def _normalize_category(value) -> str:
     return raw
 
 
+# ── the price gate ──────────────────────────────────────────────────────────────
+# A price is per SIZE: an eighth and an ounce of the same flower cost very differently, so "how much is
+# flower" has no single answer and a bare number would be a wrong one. ``needs_size`` is the ONE
+# predicate; both handlers below build their result without any price when it holds.
+SIZE_ASK = "Prices depend on the size"  # opens every size question — chat.py spots it on the agent's last line
+SIZE_REASK = "I want to give you the right price"  # the same question, reworded
+_SIZE_SPOKEN = {  # the everyday names; any other size is read from its own digits, never invented
+    "0.5g": "a half gram", "1g": "a gram", "3.5g": "an eighth", "7g": "a quarter",
+    "14g": "a half ounce", "28g": "an ounce",
+}
+_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)(g|mg)")
+
+
+def needs_size(args: dict) -> bool:
+    """True when this call may not carry a price: its category needs a size and none was given. A
+    blank or unknown category is not exempt (fail closed); ``price_max`` is not a size; neither are
+    budtender's own no-opinion values ("any", "stock-up", "disposable")."""
+    if _normalize_category(args.get("category")) in C.SIZE_EXEMPT_CATEGORIES:
+        return False
+    return str(args.get("size") or "").strip().lower() in C.NO_SIZE_VALUES
+
+
+def _size_phrase(size: str) -> str:
+    if size in _SIZE_SPOKEN:
+        return _SIZE_SPOKEN[size]
+    match = _SIZE_RE.fullmatch(size)
+    return f"{match[1]} {'grams' if match[2] == 'g' else 'milligrams'}" if match else size
+
+
+def _size_options(rows: list[dict]) -> list[str]:
+    """The distinct shelf sizes budtender's rows actually carry, smallest first — never a size the
+    shelf does not have. (Edibles and tinctures carry none: budtender states no per-unit size for them.)"""
+    sizes = {r["size"].strip() for r in rows if isinstance(r.get("size"), str) and r["size"].strip()}
+
+    def order(size: str):
+        match = _SIZE_RE.match(size)
+        return (float(match[1]) if match else math.inf, size)
+
+    return sorted(sizes, key=order)
+
+
+def _or_list(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else (
+        f"{names[0]} or {names[1]}" if len(names) == 2 else f"{', '.join(names[:-1])}, or {names[-1]}"
+    )
+
+
+def size_question(options: list[str], *, again: bool = False) -> str:
+    """The question that stands in for a price: built from ``options`` only. With none to offer it
+    asks the open question rather than listing a size nobody confirmed. ``again`` is the same ask in
+    other words (the caller pressed for a price without answering) — text chat sends it once, then
+    hands the caller to a team member."""
+    names = [_size_phrase(s) for s in options]
+    if again:
+        return f"{SIZE_REASK} — which size should I look up{': ' + _or_list(names) if names else ''}?"
+    if not names:
+        return f"{SIZE_ASK} — what size are you thinking?"
+    return f"{SIZE_ASK} — are you thinking {_or_list(names)}?"
+
+
+def is_size_question(line: str) -> bool:
+    """Whether an agent line is one of our own size questions (either wording)."""
+    return SIZE_ASK in (line or "") or SIZE_REASK in (line or "")
+
+
 def _slots_from_args(args: dict, store: str) -> dict:
     """Fold the Vapi tool args into the budtender ``slots`` dict (11-P1 §4.1 mapping). Only
     explicitly-provided slots are forwarded (budtender treats each as a HARD filter). The
@@ -139,7 +339,7 @@ def _slots_from_args(args: dict, store: str) -> dict:
     cat = args.get("category")
     if cat not in (None, ""):
         slots["category"] = _normalize_category(cat)
-    for key in ("subcategory", "brand", "size", "price_tier", "effect_desired"):
+    for key in ("subcategory", "brand", "size", "price_tier", "effect_desired", "aroma"):
         val = args.get(key)
         if val not in (None, ""):
             slots[key] = val
@@ -149,26 +349,57 @@ def _slots_from_args(args: dict, store: str) -> dict:
             slots[key] = val
     if isinstance(args.get("doh_only"), bool):
         slots["doh_only"] = args["doh_only"]
+    # "stronger" / "cheaper": budtender re-orders the already-filtered set (Contract B). Only its
+    # two known modes are forwarded; it ignores anything else, and so do we.
+    if args.get("sort_by") in _SORT_MODES:
+        slots["sort_by"] = args["sort_by"]
     return slots
 
 
-def _speakable_pick(result: dict, store: str) -> dict:
+def _clean_skus(value) -> list[str] | None:
+    """The SKUs to leave out of a search — a bounded list of plain strings, else None."""
+    if not isinstance(value, list):
+        return None
+    skus = [str(s).strip() for s in value
+            if isinstance(s, (str, int)) and not isinstance(s, bool) and str(s).strip()]
+    return skus[:_MAX_EXCLUDED] or None
+
+
+def _speakable_pick(result: dict, store: str, *, priced: bool = True) -> dict:
     """Map a budtender result to the leak-safe spoken shape (11-P1 §4.5).
 
     Copies ONLY the ``_SPEAKABLE_FIELDS`` allowlist + relabels the (OTD-uplifted) ``price`` →
-    ``price_otd`` (ADR-009). Drops everything else (image_url/dutchie_link/stock_on_hand/price_was —
-    irrelevant on a voice channel) AND, defensively, anything outside the allowlist even though
-    budtender already serialized leak-safe. The raw pre-tax ``price`` is NEVER copied through."""
+    ``price_otd`` (ADR-009) + adds the code-built lab/size/potency fields of ``_facts``. Drops
+    everything else (image_url/dutchie_link/stock_on_hand/price_was — irrelevant on a voice channel)
+    AND, defensively, anything outside the allowlist even though budtender already serialized
+    leak-safe — the raw ``lab``/``info`` dicts included. The raw pre-tax ``price`` is NEVER copied.
+    ``priced=False`` (the price gate) builds the pick WITHOUT ``price_otd`` / ``price_spoken``: the
+    price is never computed, so no later step can speak it."""
     pick = {k: result.get(k) for k in _SPEAKABLE_FIELDS}
     pick.update(_safe_links(result))
-    pick["price_otd"] = pricing.otd(result.get("price"), store)
-    pick["price_spoken"] = pricing.spoken(pick["price_otd"])  # voice reads THIS, never the digits
+    pick.update(_facts(result))
+    if priced:
+        pick["price_otd"] = pricing.otd(result.get("price"), store)
+        pick["price_spoken"] = pricing.spoken(pick["price_otd"])  # voice reads THIS, never the digits
+    else:
+        pick["why_this"] = _why_without_dollars(pick.get("why_this"))
     return pick
 
 
-def _spoken_summary(picks: list[dict]) -> str:
+def _why_without_dollars(why):
+    """budtender's ``why_this`` can carry a dollar figure ("On sale — save $5 · …", engine.why). That is
+    a price-derived number too, so a pick built without a price drops those segments (they are
+    ``" · "``-joined) and keeps the rest of the reason."""
+    if not isinstance(why, str) or "$" not in why:
+        return why
+    kept = " · ".join(part.strip() for part in why.split("·") if "$" not in part and part.strip())
+    return kept[:1].upper() + kept[1:]
+
+
+def _spoken_summary(picks: list[dict], lead: str = "My top pick is") -> str:
     """A short spoken lead-in built from the top pick's real fields (Numbers-Guard — every value is
-    a budtender field, not invented). Empty picks → the honest-miss line."""
+    a budtender field, not invented). Empty picks → the honest-miss line. ``lead`` lets a follow-up
+    ("stronger", "cheaper") open with its own acknowledgement instead of a fresh introduction."""
     if not picks:
         return _HONEST_EMPTY
     top = picks[0]
@@ -185,18 +416,26 @@ def _spoken_summary(picks: list[dict]) -> str:
     else:
         brand_repeated = False
     if brand and not brand_repeated:
-        lead = f"My top pick is the {brand} {name}"
+        line = f"{lead} the {brand} {name}"
     else:
-        lead = f"My top pick is the {name}"
+        line = f"{lead} the {name}"
     why = (top.get("why_this") or "").strip()
     if why:
-        lead += f" — {why}"
+        line += f" — {why}"
+    # Potency and the top terpenes, exactly as ``_facts`` built them; absent → not mentioned.
+    if top.get("thc_spoken"):
+        line += f", {top['thc_spoken']}"
+    if top.get("terpenes_spoken"):
+        line += f", with {top['terpenes_spoken']}"
     spoken_price = pricing.spoken(price)
     if spoken_price:
-        lead += f", and it's {spoken_price} out the door."
+        line += f", and it's {spoken_price} out the door."
     else:
-        lead += "."
-    return lead
+        line += "."
+    return line
+
+
+spoken_summary = _spoken_summary  # public: chat.py words its own follow-up lead-ins with it
 
 
 def _maybe_resolve_recognition(args: dict, ctx: dict) -> None:
@@ -270,7 +509,7 @@ def handle_suggest_products(args: dict, ctx: dict) -> dict:
     _maybe_resolve_recognition(args, ctx)
 
     slots = _slots_from_args(args, store)
-    exclude = args.get("exclude_skus") if isinstance(args.get("exclude_skus"), list) else None
+    exclude = _clean_skus(args.get("exclude_skus"))
     out = budtender().search(
         slots,
         limit=12,
@@ -280,18 +519,30 @@ def handle_suggest_products(args: dict, ctx: dict) -> dict:
         location=store,
     )
     results = out.get("results") or []
+    # The price gate: no size on a size-required category -> the picks carry NO price (never computed)
+    # and the result asks the size instead. Nothing found stays the honest miss, not a size question.
+    gated = needs_size(args)
     # Fetch a bit wider than the final limit so dedupe can still return 3 useful options.
     # ponytail: one-wide fetch window; adjust the limit here if upstream quality drops.
-    picks = [_speakable_pick(r, store) for r in _dedupe_results(results, limit=6)][:3]
+    picks = [_speakable_pick(r, store, priced=not gated) for r in _dedupe_results(results, limit=6)][:3]
     _stamp_suggested(ctx, [p["sku"] for p in picks if p.get("sku")])
 
+    if gated and picks:
+        options = _size_options(results)  # every real size the search found, not just the three shown
+        return {
+            "picks": picks, "needs_size": True, "size_options": options,
+            "spoken_summary": size_question(options),
+        }
     return {"picks": picks, "spoken_summary": _spoken_summary(picks)}
 
 
 @register("check_inventory")
 def handle_check_inventory(args: dict, ctx: dict) -> dict:
-    """Purchasability + OTD price for one SKU (never cost/margin). Returns
-    ``{in_stock, qty_band, price_otd}``; an out-of-stock/zombie SKU → ``in_stock:false``."""
+    """Purchasability for one SKU (never cost/margin), plus its OTD price ONLY under the price gate:
+    the call must carry the ``size`` the caller chose (or the ``category`` of a product with no size
+    concept), else the price is withheld and the result is ``needs_size`` (a SKU taken from an unsized
+    search must not become a way around the gate). Returns ``{in_stock, qty_band, price_otd, …}``; an out-of-stock/zombie SKU →
+    ``in_stock:false``."""
     args = args or {}
     ctx = ctx or {}
     sku = (args.get("sku") or "").strip()
@@ -301,14 +552,21 @@ def handle_check_inventory(args: dict, ctx: dict) -> dict:
     out = budtender().check_sku(store, sku)
     if not out.get("in_stock"):
         return {"in_stock": False}
-    return {
+    result = {
         "in_stock": True,
         "qty_band": _qty_band(out.get("stock_on_hand")),
-        "price_otd": out.get("price_otd"),
-        "price_spoken": pricing.spoken(out.get("price_otd")),  # voice reads THIS, never the digits
         "name": out.get("name"),
+        "thc_percent": out.get("thc_percent"),
         **_safe_links(out),
+        **_facts(out),  # the same speakable size / THC / lab / allergen fields a pick carries
     }
+    if needs_size(args):
+        options = _size_options([out])  # the SKU's own shelf size, when budtender states one
+        return {**result, "needs_size": True, "size_options": options,
+                "spoken_summary": size_question(options)}
+    result["price_otd"] = out.get("price_otd")
+    result["price_spoken"] = pricing.spoken(out.get("price_otd"))  # voice reads THIS, never the digits
+    return result
 
 
 @register("pair_upsell")

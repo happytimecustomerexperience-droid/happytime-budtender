@@ -51,6 +51,7 @@ import time
 from urllib.parse import quote
 
 from voice import capabilities, guardrails, vendor_flow
+from voice.constants import AROMA_QUESTION
 from voice.safety_copy import (
     CANNOT_ANSWER_SAFELY,
     CRISIS,
@@ -63,6 +64,7 @@ from voice.safety_copy import (
     UNDER_21,
 )
 from voice.tools import dispatch
+from voice.tools import suggest as suggest_tool
 
 # A cart that leaks, clogs, died or gives no vapor is a DEFECT — the commonest way a dead cart is
 # described, and none of it was dispute vocabulary, so "my cart is leaking" was read as a cart ask
@@ -222,6 +224,8 @@ _PRODUCT_SLOT_KEYS = (
     "price_max",
     "category_blocklist",
     "doh_only",
+    "sort_by",
+    "aroma",
 )
 
 
@@ -376,7 +380,8 @@ def _brand_from_text(text: str, *, loose: bool = False) -> str:
 _DOSING_QUESTION_RE = re.compile(r"\bhow\s+(?:much|many)\b[^.?!]{0,30}\btake\b", re.I)
 _SIZE_ALIASES = (
     ("0.5g", re.compile(r"\b(0\.5\s*g|\.5\s*g|half\s*gram)\b", re.I)),
-    ("1g", re.compile(r"\b(1\s*g|one\s*gram|full\s*gram)\b", re.I)),
+    # "a gram" is the plain answer to the size question's own wording ("a gram, an eighth, ...").
+    ("1g", re.compile(r"\b(1\s*g|one\s*gram|full\s*gram|a\s+gram)\b", re.I)),
     ("3.5g", re.compile(r"\b(3\.5\s*g|eighth|1/8\s*oz)\b", re.I)),
     ("7g", re.compile(r"\b(7\s*g|quarter)\b", re.I)),
     # "halves"/"a half" is how a flower shopper says half-ounce; only the spelled-out forms
@@ -659,6 +664,51 @@ def _size_from_text(text: str) -> str:
         if pattern.search(text or ""):
             return size
     return ""
+
+
+# The scent the caller names (the ``aroma`` slot). Only the five words the aroma question offers (and
+# their plain "-y" forms) — never a strain or product word that happens to read like one ("pineapple",
+# "Lemon Tree"). budtender ignores anything outside its five, so a miss here only loses the nudge.
+_AROMA_ALIASES = (
+    ("citrus", re.compile(r"\bcitrus(?:y)?\b", re.I)),
+    ("earthy", re.compile(r"\bearthy\b", re.I)),
+    ("pine", re.compile(r"\bpine(?:y)?\b", re.I)),
+    ("floral", re.compile(r"\b(?:floral|flowery)\b", re.I)),
+    ("spicy", re.compile(r"\b(?:spicy|peppery)\b", re.I)),
+)
+# A short brush-off to the aroma question ("no preference", "surprise me"): the slot stays omitted.
+_NO_PREFERENCE_RE = re.compile(
+    r"\b(?:no\s+preference|don'?t\s+(?:care|mind)|doesn'?t\s+matter|surprise\s+me|not\s+really|"
+    r"any(?:thing)?(?:\s+is)?\s+(?:fine|good|works?)|none|nope|no)\b",
+    re.I,
+)
+# Words that say the caller wants a PRICE. Presentation only: the price itself is withheld by the gate in
+# voice/tools/suggest.py (``needs_size``) whatever this regex does or does not catch — it only decides
+# whether a reply with no price leads with the size question or just describes the pick.
+_PRICE_ASK_RE = re.compile(
+    r"\b(?:how\s+much|prices?|pricing|costs?|out[\s-]the[\s-]door|how\s+expensive|"
+    r"what\s+(?:do|are)\s+you\s+charg\w*)\b",
+    re.I,
+)
+
+
+def _category_without_size_words(text: str) -> str:
+    """The category a message names once its size words are set aside: "an eighth" reads as flower
+    (the word is in that category's lexicon) but only SAYS a size."""
+    for _size, pattern in _SIZE_ALIASES:
+        text = pattern.sub(" ", text or "")
+    return _category_from_text(text)
+
+
+def _aroma_from_text(text: str) -> str:
+    for aroma, pattern in _AROMA_ALIASES:
+        if pattern.search(text or ""):
+            return aroma
+    return ""
+
+
+def _asks_price(text: str) -> bool:
+    return bool(_PRICE_ASK_RE.search(text or "") or _PRICE_BACKREF_RE.search(text or ""))
 
 
 def _profile_top_category(profile_summary: dict | None) -> str:
@@ -1988,6 +2038,264 @@ def _carried_category(history) -> str:
     return ""
 
 
+# ── "stronger / cheaper / different" keep the thread, and lab-aware follow-ups (2026-10-05) ──
+# "Something stronger" used to re-run the search with the category alone: the caller's budget, size
+# and effect were gone and nothing told budtender what "stronger" meant. Now the follow-up carries
+# what the caller already said (``_carried_slots``) and names the ordering (``sort_by``). stronger /
+# cheaper do NOT exclude what was already shown — excluding it hides the strongest or cheapest pick
+# when it was one of those; only "something different" excludes.
+_STRONGER_RE = re.compile(
+    r"\b(?:stronger|strongest|more\s+potent|most\s+potent|higher\s+thc|highest\s+thc|hits?\s+harder)\b",
+    re.I,
+)
+_CHEAPER_RE = re.compile(r"\b(?:cheaper|cheapest|less\s+expensive)\b", re.I)
+_DIFFERENT_RE = re.compile(
+    r"\b(?:something|anything)\s+else\b|\bother\s+options?\b|\bdifferent\b|\balternatives?\b", re.I
+)
+# "which one has more myrcene" — a question about the picks just shown, naming a terpene. Only the
+# terpenes whose lab name has no alpha-/beta- variants (budtender's names are matched exactly).
+_COMPARE_RE = re.compile(
+    r"\bwhich\s+(?:one|ones|of\s+(?:those|them|these)|has|have|is|do|does)\b[^.?!]{0,40}"
+    r"\b(?:more|most|higher|highest)\b",
+    re.I,
+)
+_TERPENE_RE = re.compile(
+    r"\b(myrcene|limonene|linalool|caryophyllene|terpinolene|humulene|bisabolol|guaiol|camphene|"
+    r"borneol|fenchol|geraniol|eucalyptol|valencene|sabinene)\b",
+    re.I,
+)
+
+
+def _follow_up(ask: str) -> tuple[str, bool]:
+    """(``sort_by`` budtender should apply, whether the caller wants something DIFFERENT)."""
+    sort_by = "potency" if _STRONGER_RE.search(ask) else "price_asc" if _CHEAPER_RE.search(ask) else ""
+    return sort_by, bool(_DIFFERENT_RE.search(ask))
+
+
+def _shelf_turns(history) -> list[tuple[str, str]]:
+    """The caller's own turns as (shelf, text): the shelf each was ABOUT — its own category word,
+    else the one before it (a bare "keep it under $40" belongs to the carts the caller was just
+    looking at)."""
+    about, turns = "", []
+    for msg in history[-20:] if isinstance(history, list) else []:
+        if isinstance(msg, dict) and msg.get("role") == "user":
+            text = str(msg.get("content") or "")
+            about = _normalize_category(_category_from_text(text)) or about
+            turns.append((about, text))
+    return turns
+
+
+def _carried_slots(history, category: str, *, brand: bool = False) -> dict:
+    """What the caller already told us about THIS shelf: the price ceiling, effect, strain type, scent
+    and size from their own most recent turns that named them. The walk stops where the shelf changes
+    (a cart budget never follows the caller onto flower) and at a correction ("I meant…", "never
+    mind…"): what was said before it was taken back, not carried. A named ``brand`` is carried only
+    when asked for (``brand=True``): the answer to a size question completes the search for THAT
+    product, while "something different" / "an alternative" must be free to leave it."""
+    carried: dict = {}
+    for shelf, text in reversed(_shelf_turns(history)):
+        if shelf != category:
+            break
+        said = _NEGATED_SPAN_RE.sub(" ", _CORRECTION_RE.split(text)[-1])
+        effect = _effect_from_text(said)
+        for key, value in (
+            ("price_max", _price_max_from_text(said)),
+            ("subcategory", _subcategory_from_text(said)),
+            ("size", _size_from_text(said)),
+            ("effect_desired", _EFFECT_TO_BUDTENDER.get(effect, effect)),
+            ("aroma", _aroma_from_text(said)),
+            ("brand", _brand_from_text(said) if brand else ""),
+        ):
+            if value and key not in carried:
+                carried[key] = value
+        if said != text:
+            break
+    return carried
+
+
+# ── the price gate's questions, answered on the NEXT turn ───────────────────────────────
+# The one-shot router has no state of its own, so a question it asked is recognised on the agent's own
+# last line (the trusted record): the size question (a price ask with no size) and the scent question
+# (asked once, after a price is spoken). The answer then completes the SAME search from what the caller
+# already said (``_carried_slots``) instead of falling out of the product path.
+def _pending_question(history) -> str:
+    """"size" | "aroma" when the agent's last line was one of those two questions, else ""."""
+    last = _last_agent_line(history)
+    if suggest_tool.is_size_question(last):
+        return "size"
+    return "aroma" if AROMA_QUESTION in last else ""
+
+
+def _answers_pending(pending: str, ask: str) -> bool:
+    """Whether ``ask`` actually answers (or re-presses) the pending question — only then is the turn
+    carried onto the shelf, so an unrelated "thanks" or "what are your hours" keeps its own route."""
+    if pending == "size":
+        return bool(_size_from_text(ask) or _asks_price(ask))
+    if pending == "aroma":
+        return bool(
+            _aroma_from_text(ask)
+            or (len(ask.split()) <= 6 and _NO_PREFERENCE_RE.search(ask))
+        )
+    return False
+
+
+def _size_asks_in_a_row(history) -> int:
+    """How many of the agent's most recent lines, back to back, were the size question."""
+    count = 0
+    for msg in reversed(history if isinstance(history, list) else []):
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
+            if not suggest_tool.is_size_question(str(msg.get("content") or "")):
+                break
+            count += 1
+    return count
+
+
+def _aroma_asked(history) -> bool:
+    return any(
+        isinstance(m, dict) and m.get("role") == "assistant" and AROMA_QUESTION in str(m.get("content") or "")
+        for m in (history if isinstance(history, list) else [])
+    )
+
+
+def _size_question_reply(suggest: dict, history, store: str, phone: str) -> tuple[str, bool]:
+    """The reply to a price ask the gate answered with ``needs_size``: the gate's own question (its
+    ``spoken_summary``, built from the sizes the shelf really has); the same question reworded when the
+    caller pressed on without answering; a team member the third time. Never a price from memory.
+    Returns (text, handed_to_a_team_member)."""
+    asked = _size_asks_in_a_row(history)
+    options = suggest.get("size_options") or []
+    if asked == 0:
+        return str(suggest.get("spoken_summary") or suggest_tool.size_question(options)), False
+    if asked == 1:
+        return suggest_tool.size_question(options, again=True), False
+    # NEW COPY — REQUIRES OWNER APPROVAL.
+    return (
+        "I don't want to guess at a price. A team member can give you the exact price. "
+        + _staff_followup_hint(store, phone),
+        True,
+    )
+
+
+def _lookup_pick(sku: str, store: str, ctx: dict, tool_results: list) -> dict | None:
+    """One earlier-suggested SKU re-read from budtender (``check_inventory``) — a text turn cannot
+    see what an earlier turn showed (tool results are not stored), only the SKUs. A switched-off,
+    unreachable or out-of-stock lookup is None: it contributes nothing, and no claim is made."""
+    args = {"sku": sku, "store": store}
+    check = dispatch("check_inventory", args, ctx)
+    tool_results.append({"tool": "check_inventory", "args": args, "result": check})
+    return check if check.get("in_stock") else None
+
+
+def _previous_top(history, skus: list[str], store: str, ctx: dict, tool_results: list) -> dict | None:
+    """The pick this session's agent led with last turn: the recent SKU whose name it said."""
+    said = _last_agent_line(history).lower()
+    if not said:
+        return None
+    for sku in list(reversed(skus))[:4]:
+        check = _lookup_pick(sku, store, ctx, tool_results)
+        name = str((check or {}).get("name") or "")
+        if name and name.lower() in said:
+            return check
+    return None
+
+
+def _follow_up_answer(
+    sort_by, wants_different, prior_skus, category, picks, history, store, ctx, tool_results
+) -> str:
+    """The spoken line for a stronger / cheaper / different turn, or "" for any other turn. It
+    acknowledges the thread — and compares only against a THC it can actually read back, for a pick
+    on the SAME shelf the caller was just looking at. Comparatives only: "stronger" is data here
+    (a THC figure against a THC figure), never a "strongest" claim about the product."""
+    if sort_by == "potency":
+        turns = _shelf_turns(history)
+        same_shelf = bool(category and turns and turns[-1][0] == category)
+        prev = _previous_top(history, prior_skus, store, ctx, tool_results) if same_shelf else None
+        prev_thc = suggest_tool.percent((prev or {}).get("thc_percent"))
+        top_thc = suggest_tool.percent(picks[0].get("thc_percent"))
+        if prev_thc and top_thc:
+            shown = f"the {prev['name']} at {suggest_tool.pct_text(prev_thc)} percent THC"
+            if top_thc <= prev_thc:  # nothing above it within what the caller asked for
+                return f"I don't have anything with higher THC than {shown} that fits what you've asked for."
+            lead = f"Stepping up from {shown}, a higher-THC pick that fits is"
+        elif top_thc:
+            lead = "Going by THC, the top pick that fits is"
+        else:  # no potency number on the lead pick (an edible, say): no claim about "stronger"
+            lead = "The closest I have is"
+    elif sort_by == "price_asc":
+        lead = "The lowest price I have that fits is"
+    elif wants_different and prior_skus:
+        lead = "Another option is"
+    else:
+        return ""
+    return suggest_tool.spoken_summary(picks, lead)
+
+
+def _terpene_compare_reply(term: str, picks: list[dict], store: str, phone: str, tool_results: list) -> dict:
+    """"Which has more myrcene" answered from the shown picks' own lab numbers — nothing composed.
+    A pick with no lab on file, or none listing the terpene, is said so, never given a figure."""
+    listed, unlisted, no_lab = [], [], []
+    for pick in picks:
+        name = str(pick.get("name") or "that one")
+        terpenes = pick.get("terpenes")
+        if not terpenes:
+            no_lab.append(name)
+            continue
+        pct = next((t["pct"] for t in terpenes if t["name"] == term), None)
+        (listed if pct is not None else unlisted).append((name, pct))
+
+    def names(items, joiner: str = "and") -> str:
+        return f" {joiner} ".join(f"the {n}" for n in items)
+
+    def cap(text: str) -> str:  # sentence case WITHOUT lower-casing the product name after it
+        return text[:1].upper() + text[1:]
+
+    parts = []
+    if listed:
+        listed.sort(key=lambda row: -row[1])
+        top_pct = listed[0][1]
+        tied = [n for n, p in listed if p == top_pct]
+        rest = [(n, p) for n, p in listed if p < top_pct]
+        if len(tied) > 1:
+            line = cap(f"{names(tied)} are even on {term} at {suggest_tool.pct_text(top_pct)} percent")
+        else:
+            line = f"The {tied[0]} has the most {term} at {suggest_tool.pct_text(top_pct)} percent"
+        if rest:
+            line += ", ahead of " + " and ".join(
+                f"the {n} at {suggest_tool.pct_text(p)} percent" for n, p in rest
+            )
+        parts.append(line + ".")
+        if unlisted:
+            many = len(unlisted) > 1
+            parts.append(
+                cap(f"{names([n for n, _ in unlisted])} {'don' if many else 'doesn'}'t list ")
+                + f"{term} among {'their' if many else 'its'} top terpenes."
+            )
+    elif unlisted:
+        parts.append(
+            f"I don't see {term} listed in the lab results I have for those, so I can't say which has more."
+        )
+    if no_lab:
+        parts.append(
+            f"I don't have lab results on file for {names(no_lab, 'or')}"
+            + ("." if listed or unlisted else f", so I can't compare {term}.")
+        )
+    grounded = bool(listed)
+    return {
+        "ok": True,
+        "intent": "product_suggestion",
+        "answer": " ".join(parts),
+        "grounded": grounded,
+        "sources": [{"kind": "tool", "title": "Live budtender inventory"}] if grounded else [],
+        "tool_results": tool_results,
+        "escalation_required": False,
+        "escalation_flag": False,
+        "safe_next_action": "answer" if grounded else "ask_staff",
+        "safe_suggested_next_action": _suggested_next_action("answer" if grounded else "ask_staff"),
+        "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
+        "store": store,
+    }
+
+
 # A long, rambling message carries vocabulary from every subject the caller touched on, and the
 # product-vs-FAQ preference is decided by a scan of the WHOLE blob — so "driving around for like
 # three hours" outranked the request the caller actually ended on ("do you guys have a low dose
@@ -2421,6 +2729,14 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         ask = product_half
     category = str(slots.get("category") or _category_from_text(ask)).strip()
     category = _normalize_category(category)
+    # The caller answering (or pressing past) the size / scent question this brain asked last turn:
+    # the same shelf search, completed (see ``_pending_question``).
+    pending = _pending_question(history)
+    answers_pending = _answers_pending(pending, ask)
+    # "an eighth" answering the size question names a size, not a new shelf: the shelf is the one the
+    # question was about (carried below — possibly none, for a named product).
+    if pending == "size" and answers_pending and not slots.get("category") and not _category_without_size_words(ask):
+        category = ""
     # A refinement belongs to the ask before it. Carry the category so "keep it under 40 though"
     # re-runs the search instead of falling through to whatever the FAQ ranks first.
     # ...but only when the message is a bare refinement. A question that also reads as an FAQ
@@ -2428,7 +2744,7 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
     # on the FAQ path — same guard _prefers_products uses.
     if (
         not category
-        and _is_refinement(ask)
+        and (_is_refinement(ask) or answers_pending)
         and not _COMPETITOR_RE.search(ask)
         and not _requires_sources(ask)
         and not _faq_first(ask)
@@ -2456,6 +2772,9 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             # "keep it under 40 though" is a refinement of something and is left to the carry,
             # so it never reaches the shelf on its own.
             or (_price_max_from_text(ask) is not None and _BROAD_OBJECT_RE.search(ask))
+            # "an eighth" after "how much is the Blueberry OG": a named product has no category word
+            # to carry, so its brand (from the earlier turn) is what the size answer completes.
+            or (answers_pending and _carried_slots(history, "", brand=True).get("brand"))
         )
         and not _requires_sources(ask)
         and not _faq_first(ask)
@@ -2659,6 +2978,20 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
         if skus or (_COA_RE.search(message) and _BACKREF_RE.search(message)):
             return _pick_link_reply(message, history, skus, store, phone, ctx, tool_results)
 
+    # "which one has more myrcene" about the picks this session was just shown: answered from those
+    # products' own lab numbers (re-read by SKU), never a fresh search and never a composed figure.
+    # Placed before the FAQ speak decision — the KB's terpene guides share the word "myrcene".
+    if not escalation and _COMPARE_RE.search(message) and _TERPENE_RE.search(message):
+        recent = [
+            pick for pick in (
+                _lookup_pick(sku, store, ctx, tool_results)
+                for sku in list(reversed(_suggested_skus(ctx.get("call_id") or session_token)))[:3]
+            ) if pick
+        ]
+        if recent:
+            term = _TERPENE_RE.search(message).group(1).lower()
+            return _terpene_compare_reply(term, recent, store, phone, tool_results)
+
     # The text channel had no equivalent of the Vapi escalation member's ``notify_staff_issue``
     # call at all (grep: the tool was registered and reachable from the phone squad, and this
     # module never named it) — a genuine dispute raised the escalation flag and asked for a
@@ -2832,8 +3165,28 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             size = _size_from_text(ask)
             if size:
                 suggest_args["size"] = size
+        if "aroma" not in suggest_args:
+            aroma = _aroma_from_text(ask)
+            if aroma:
+                suggest_args["aroma"] = aroma
         if "doh_only" not in suggest_args and _DOH_ONLY_RE.search(ask):
             suggest_args["doh_only"] = True
+        # "stronger" / "cheaper" / "different" keep what the caller already said (budget, size, effect,
+        # strain type) and name the ordering; only "different" leaves out what was already shown.
+        sort_by, wants_different = _follow_up(ask)
+        prior_skus = _suggested_skus(ctx.get("call_id") or session_token) if (sort_by or wants_different) else []
+        carried_used: dict = {}  # slots filled from earlier turns (not this one) — the ones that may be relaxed
+        # ...and so do the answer to the size / scent question and "how much was it": the same search
+        # again, from what the caller already said (so a size they gave is not asked for twice).
+        completing = bool(answers_pending or _PRICE_BACKREF_RE.search(ask))
+        if sort_by or wants_different or completing:
+            for key, value in _carried_slots(history, category, brand=completing).items():
+                if key not in suggest_args:
+                    suggest_args[key] = carried_used[key] = value
+        if sort_by:
+            suggest_args["sort_by"] = sort_by
+        if wants_different and prior_skus:
+            suggest_args.setdefault("exclude_skus", prior_skus)
         suggest_args["category"] = category
         if isinstance(suggest_args.get("category_blocklist"), (list, tuple)):
             suggest_args["category_blocklist"] = [
@@ -2848,6 +3201,17 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             ctx,
         )
         picks = _normalize_suggest_picks(suggest.get("picks"), category)
+        # What the caller said earlier is carried, not enforced against what they say NOW: "stronger
+        # ones, like 10mg" after "under $10" may name something the old budget can't meet. Nothing
+        # fits all of it -> search again on this turn's own words, and SAY the earlier ones were set
+        # aside (below) — never a silent drop of the budget, never a dead end.
+        relaxed = False
+        if not picks and carried_used and not wants_different and not suggest.get("disabled"):
+            for key in carried_used:
+                suggest_args.pop(key, None)
+            suggest = dispatch("suggest_products", suggest_args, ctx)
+            picks = _normalize_suggest_picks(suggest.get("picks"), category)
+            relaxed = bool(picks)
         # A ceiling the CARRIED category cannot meet is not an honest miss: answering "anything
         # under twenty bucks" with "nothing in stock" while three things on the shelf are under
         # twenty is just the previous question's category still clamped on. Drop it and search the
@@ -2874,7 +3238,46 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             suggest = dict(suggest)
             suggest["picks"] = picks
             policy_context = _requires_sources(message) and not (faq.get("grounded") and faq.get("sources"))
-            compound_answer = suggest.get("spoken_summary") or "I found a few in-stock options."
+            # The price gate (voice/tools/suggest.py): a search with no size comes back priceless. A
+            # PRICE ask then leads with the gate's size question (reworded the second time, a team
+            # member the third — never a number); any other ask still hears about the pick, just no price.
+            priceless = bool(suggest.get("needs_size"))
+            explicit_price = _asks_price(ask)
+            asks_price = (
+                explicit_price or sort_by == "price_asc"
+                or (suggest_args.get("price_max") is not None and sort_by != "potency")
+            )
+            handed_to_team = False
+            follow_up = ""
+            if priceless and asks_price:
+                compound_answer, handed_to_team = _size_question_reply(suggest, history, store, phone)
+            else:
+                if priceless:
+                    compound_answer = suggest_tool.spoken_summary(picks)
+                else:
+                    compound_answer = suggest.get("spoken_summary") or "I found a few in-stock options."
+                # A follow-up acknowledges the thread instead of re-introducing the shelf (a no-op
+                # for any other turn).
+                follow_up = _follow_up_answer(
+                    sort_by, wants_different, prior_skus, category, picks, history, store, ctx, tool_results
+                )
+                compound_answer = follow_up or compound_answer
+            # A price ask carries the consultation forward: once the price is spoken, ONE light next
+            # question — the scent (never a wall of questions, never asked twice in a session).
+            if (
+                not priceless and not follow_up
+                and (explicit_price or pending == "size")
+                and any(p.get("price_otd") for p in picks)
+                and "aroma" not in suggest_args
+                and not _aroma_asked(history)
+            ):
+                compound_answer += f" {AROMA_QUESTION}"
+            if relaxed:
+                # NEW COPY — REQUIRES OWNER APPROVAL.
+                compound_answer = (
+                    "I don't have anything that fits everything you've told me so far, so here's what "
+                    f"I have for what you just asked. {compound_answer}"
+                )
             if faq_half and faq.get("grounded") and str(faq.get("answer") or "").strip():
                 compound_answer = f"{faq['answer']} {compound_answer}"
             # "add a single pre-roll to that" after a hold: the pick is shown, but nothing was added
@@ -2882,24 +3285,32 @@ def _route_chat_turn(data: dict, history: list[dict], escalation_state: bool = F
             if _ADD_TO_HOLD_RE.search(ask):
                 # NEW COPY — REQUIRES OWNER APPROVAL.
                 compound_answer += ' That one isn\'t on your hold yet — say "hold that one" and I\'ll set it aside too.'
+            next_action = "ask_staff" if handed_to_team else "show_products"
             return {
                 "ok": True,
                 "intent": "product_suggestion",
                 "answer": compound_answer,
-                "grounded": not policy_context,
+                "grounded": not policy_context and not handed_to_team,
                 "sources": [{"kind": "tool", "title": "Live budtender inventory"}],
                 "tool_results": tool_results,
                 "escalation_required": False,
                 "escalation_flag": False,
-                "safe_next_action": "show_products",
-                "safe_suggested_next_action": _suggested_next_action("show_products"),
+                "safe_next_action": next_action,
+                "safe_suggested_next_action": _suggested_next_action(next_action),
                 "contact_hint": {"store": store, "customer_phone": phone} if phone or store else None,
                 "store": store,
             }
+        # NEW COPY — REQUIRES OWNER APPROVAL. "Something different" with every match already shown is
+        # not a miss on the shelf — say so, and say what the caller can change.
+        exhausted = wants_different and bool(prior_skus)
         return {
             "ok": True,
             "intent": "product_suggestion",
-            "answer": "I can't find any matching items in stock right now. I can help my team check options manually if you share the best contact method.",
+            "answer": (
+                "I don't have anything else that fits what we've talked about right now — want to change the budget or try a different type?"
+                if exhausted else
+                "I can't find any matching items in stock right now. I can help my team check options manually if you share the best contact method."
+            ),
             "grounded": False,
             "sources": [{"kind": "tool", "title": "Live budtender inventory"}],
             "tool_results": tool_results,

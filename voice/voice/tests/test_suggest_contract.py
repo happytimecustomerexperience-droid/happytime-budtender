@@ -120,6 +120,8 @@ def _suggest_payload(call_id, number=None):
                         "arguments": {
                             "store": "yakima",
                             "category": "flower",
+                            # The price gate (suggest.needs_size): a price comes back only with a size.
+                            "size": "3.5g",
                             "effect_desired": "relaxed",
                             "price_max": 40,
                         },

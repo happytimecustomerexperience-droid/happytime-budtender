@@ -105,7 +105,7 @@ def test_idaho_tourist_asks_what_she_can_take_home(convo):
 
 # ── 4) budget shopper: cheapest eighth, under $20, "the deal on halves" ─────────────────
 @pytest.mark.django_db
-def test_budget_shopper_cheapest_and_under_twenty(convo):
+def test_budget_shopper_cheapest_and_under_twenty(convo, fake_bt):
     c = convo(store="yakima")
 
     t = c.say("what's the cheapest eighth you got")
@@ -124,7 +124,10 @@ def test_budget_shopper_cheapest_and_under_twenty(convo):
     assert args.get("price_max") == 20.0, (
         f"'under twenty bucks' did not derive a $20 ceiling: args={args}"
     )
-    assert t.picks and all(p["price_otd"] <= 20.0 for p in t.picks), t.pick_names
+    # UPDATED 2026-10-06 (price gate): "anything under twenty bucks" names no size, so the picks carry
+    # no price; what came back is checked against the shelf's own price instead.
+    shown = {p["sku"] for p in t.picks}
+    assert shown and all(r["price"] <= 20.0 for r in fake_bt.catalog if r["sku"] in shown), t.pick_names
 
     t = c.say("and what's the deal on halves")
     # "halves" is real dispensary slang for a half-ounce of flower.
@@ -267,7 +270,7 @@ def test_changes_mind_then_asks_what_the_price_was_again(convo):
 
 # ── 9) slang and typos ───────────────────────────────────────────────────────────────────
 @pytest.mark.django_db
-def test_slang_and_typos_still_route_correctly(convo):
+def test_slang_and_typos_still_route_correctly(convo, fake_bt):
     c = convo(store="yakima")
 
     t = c.say("yo u got any zaza")
@@ -295,7 +298,10 @@ def test_slang_and_typos_still_route_correctly(convo):
     args = t.args("suggest_products")
     assert args.get("category") == "cartridge"
     assert args.get("price_max") == 30.0
-    assert t.picks and all(p["price_otd"] <= 30.0 for p in t.picks), t.pick_names
+    # UPDATED 2026-10-06 (price gate): no size on the ask -> no price on the picks; the ceiling is
+    # checked against the shelf's own price.
+    shown = {p["sku"] for p in t.picks}
+    assert shown and all(r["price"] <= 30.0 for r in fake_bt.catalog if r["sku"] in shown), t.pick_names
 
 
 # ── 10) wants a text/call when something is back in stock ───────────────────────────────

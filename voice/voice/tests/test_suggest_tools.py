@@ -75,8 +75,10 @@ _ROW = {
 # ── B1. valid call → ≤3 picks, in-stock, why_this, price_otd ────────────────────
 def test_suggest_returns_speakable_picks(fake_bt):
     fake_bt.search_results = [_ROW]
+    # The price gate (suggest.needs_size): a price is per size, so the ask names one.
     out = suggest.handle_suggest_products(
-        {"store": "yakima", "category": "flower", "effect_desired": "relaxed", "price_max": 40},
+        {"store": "yakima", "category": "flower", "size": "3.5g", "effect_desired": "relaxed",
+         "price_max": 40},
         {"call_id": "", "store": "yakima"},
     )
     assert len(out["picks"]) == 1
@@ -84,6 +86,7 @@ def test_suggest_returns_speakable_picks(fake_bt):
     assert pick["name"] == "Blueberry OG 3.5g"
     assert pick["why_this"]  # non-empty spoken reason
     assert pick["price_otd"] == 38.0  # menu price is the OTD price; relabeled from price
+    assert "needs_size" not in out
     assert out["spoken_summary"]  # a real spoken lead-in
 
 
@@ -99,6 +102,7 @@ def test_speakable_pick_drops_non_allowlist_fields():
         "sku",
         "price_otd",
         "price_spoken",  # derived TTS-safe wording of price_otd (leak-safe — no cost/margin)
+        "thc_spoken",  # "27.3 percent THC" — built from thc_percent; only when a real number exists
     }
     assert pick["price_otd"] == 38.0  # otd(38.0, yakima)
     assert pick["price_spoken"] == "38 dollars"  # voiced, never "$38.00"
@@ -268,11 +272,16 @@ def test_suggest_forwards_product_context_like_website_search(fake_bt):
 
 def test_check_inventory_in_stock(fake_bt):
     fake_bt.check = {"in_stock": True, "price_otd": 41.2, "stock_on_hand": 14, "name": "X"}
-    out = suggest.handle_check_inventory({"store": "yakima", "sku": "SKU1"}, {"store": "yakima"})
+    # The price gate (suggest.needs_size) applies to a SKU lookup too: the price is released only when
+    # the call carries the size the caller chose and the category.
+    out = suggest.handle_check_inventory(
+        {"store": "yakima", "sku": "SKU1", "category": "flower", "size": "3.5g"}, {"store": "yakima"}
+    )
     assert out["in_stock"] is True
     assert out["price_otd"] == 41.2
     assert out["qty_band"] == "in stock"
     assert "cost" not in out and "margin" not in out
+    assert "needs_size" not in out
 
 
 def test_check_inventory_out_of_stock(fake_bt):

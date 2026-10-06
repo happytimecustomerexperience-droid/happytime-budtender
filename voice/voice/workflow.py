@@ -41,8 +41,14 @@ GLOBAL_PROMPT = (
     "as words ('1:1' is 'one to one', '1:50' is 'one to fifty'); say 'D-O-H' not 'doh'; read a slash "
     "as 'or'; never read SKU numbers or links aloud. "
     "When you reach a product step, CALL the tool with every slot you've gathered (store, category and "
-    "the caller's preferences) — that's how you fetch real, in-stock picks. Always call check_inventory "
-    "before you promise a specific product is available. "
+    "the caller's preferences, size and aroma) — that's how you fetch real, in-stock picks. Always call "
+    "check_inventory (with the category and the size the caller chose) before you promise a specific "
+    "product is available. "
+    "PRICE ASKS RUN THROUGH THE QUESTIONS: a price is per size, so when the caller asks a price (a "
+    "named product, a category, an 'under forty bucks' ceiling) never quote first — ask the size, then "
+    "carry on with the questions. A tool result with needs_size:true carries no price: ask the "
+    "question in its spoken_summary, never a number from memory. If the caller pushes for 'just the "
+    "price', ask the size once more in different words, then offer a teammate. "
     "If the caller asks for a human twice, or reports a defective product or a return/billing dispute, "
     "move to the escalation step: listen, gather the details, and send them to the team. "
     "AGE GATE (Washington law): before recommending or steering any purchase, confirm out loud that "
@@ -72,7 +78,8 @@ def _conv(name, say, props=None, *, is_start=False, glob=None, present=False):
             "The previous tool returned up to 3 in-stock picks, each with a product name, an "
             "out-the-door price, and a SKU. Present them warmly using ONLY the tool's product names, "
             "and read each price using the tool's price_spoken wording exactly (never the price_otd "
-            f"digits, and never read a SKU aloud), like this: {say} When the caller chooses one, "
+            "digits, and never read a SKU aloud); a pick with no price_spoken has no price yet, so ask "
+            f"the size instead of giving a number. Like this: {say} When the caller chooses one, "
             "capture that pick's exact SKU string from the tool result into chosen_sku — never the "
             "spoken product name."
         )
@@ -124,6 +131,8 @@ def _edge(frm, to, cond):
 
 EFFECT = ["relaxed", "uplifted", "middle"]
 ACTIVITY = ["chill", "socialize", "creative"]
+# The light, skippable scent question every category asks right after ACTIVITY (the aroma slot).
+AROMA = ("aroma", C.AROMA_QUESTION, {"aroma": list(C.AROMAS)})
 
 
 def _branch(prefix, questions, *, present_say, tool_suffix="", extra=None, dosing=None, wrap_say):
@@ -195,8 +204,12 @@ def build_workflow_payload() -> dict:
                        "uplifted, or somewhere in the middle?", {"effect": EFFECT}),
             ("activity", "And what are you planning to do afterward — chill at home, socialize, "
                          "or get creative?", {"activity": ACTIVITY}),
+            AROMA,
             ("preferences", "What matters most to you when buying flower — THC percentage, nug size, "
                             "the trim, or the smell?", {"flower_priority": "string"}),
+            # A price is per size (suggest_products withholds it without one): asked before the pick.
+            ("size", "How much are you thinking — a gram, an eighth, a quarter, a half ounce, or an "
+                     "ounce?", {"size": ["1g", "3.5g", "7g", "14g", "28g"]}),
             ("past_wins", "What products really hit the spot for you recently, and what did you like "
                           "about them?", {"past_wins": "string"}),
             ("budget", "Are you looking to keep it cheap, get the best, or somewhere in the middle?",
@@ -219,6 +232,7 @@ def build_workflow_payload() -> dict:
                        "a mix of both?", {"effect": EFFECT}),
             ("activity", "What are you planning to do afterward — chill at home, socialize, or get "
                          "creative?", {"activity": ACTIVITY}),
+            AROMA,
             ("flavor", "Do you enjoy the natural taste of cannabis more, or do you prefer a fruitier "
                        "flavor?", {"flavor": ["cannabis", "fruit", "either"]}),
             ("solvents", "Do you mind butane-processed products, or are you looking for something "
@@ -230,6 +244,8 @@ def build_workflow_payload() -> dict:
                           {"pesticide_free": "boolean"}),
             ("past_wins", "What products really hit the spot for you recently, and what did you like "
                           "about them?", {"past_wins": "string"}),
+            ("size", "How much are you thinking — a half gram or a full gram?",
+                     {"size": ["0.5g", "1g"]}),
             ("budget", "And what price range feels comfortable for you?", {"budget": "number"}),
         ],
         present_say="I've found a few that fit — I'll go through each one with its name and "
@@ -266,6 +282,7 @@ def build_workflow_payload() -> dict:
                        "in the middle?", {"effect": EFFECT}),
             ("activity", "What are you planning to do afterward — chill at home, socialize, or get "
                          "creative?", {"activity": ACTIVITY}),
+            AROMA,
             ("flavor", "Do you like chocolate, or do you prefer gummies?",
                        {"flavor": ["chocolate", "gummies", "either"]}),
             ("ratios", "Are you looking for THC only, or some body effects too? THC-only tends to feel "
@@ -296,6 +313,7 @@ def build_workflow_payload() -> dict:
                        "in the middle?", {"effect": EFFECT}),
             ("activity", "What are you planning to do afterward — chill at home, socialize, or get "
                          "creative?", {"activity": ACTIVITY}),
+            AROMA,
             ("ratios", "Are you looking for THC only, or some body effects too? Same options as "
                        "edibles — THC only, one-to-one, one-to-fifty, or THC-CBD-CBN, which folks "
                        "usually reach for to wind down. Effects vary person to person.",

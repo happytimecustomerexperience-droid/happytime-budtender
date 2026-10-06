@@ -126,8 +126,11 @@ def test_defective_cartridge_return_thread(convo, fake_bt):
     assert fake_bt.calls["search"][-1]["slots"]["price_max"] == 40.0, "the budget reached the client"
     assert t.pick_names == ["Avitas GSC 0.5g Cart", "Jetty Blue Dream 1g Cart"]
     for pick in t.picks:
-        assert pick["price_otd"] > 0
+        # UPDATED 2026-10-06 (price gate): the ask names no size, so the picks carry no price yet and
+        # the reply asks for one; this thread is about leaving the dispute, not about the figure.
+        assert "price_otd" not in pick and "price_spoken" not in pick
         assert "cost" not in pick and "margin" not in pick
+    assert t.result("suggest_products")["needs_size"] is True
 
     assert len(c.turns) == 5
     assert c.transcript.count("user:") == 5

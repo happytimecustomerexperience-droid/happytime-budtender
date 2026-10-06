@@ -62,6 +62,12 @@ def _resolve_store(message: dict) -> str:
     return _phone_number_store_map().get(phone_number_id, default)
 
 
+def _store_is_locked(message: dict) -> bool:
+    """True when the dialed number is mapped to a store: that number IS the store's own agent, so
+    the model may not steer a tool to another store."""
+    return _phone_number_id(message) in _phone_number_store_map()
+
+
 def _valid_store(value: object) -> str:
     store = str(value or "").strip()
     return store if store in _VALID_STORES else ""
@@ -175,17 +181,47 @@ def handle_assistant_request(message: dict) -> JsonResponse:
         "pullman": getattr(settings, "HHT_TRANSFER_NUMBER_PULLMAN", ""),
     }.get(store, "")
 
-    overrides = {
-        "variableValues": {
-            "store_name": store_name,
-            "store_hours": hours,
-            "transfer_number": transfer,
-        }
+    variables = {
+        "store_name": store_name,
+        "store_hours": hours,
+        "transfer_number": transfer,
     }
-    body: dict = {"assistantOverrides": overrides}
+    from voice import caller
+
+    if caller.dynamic_greeting():
+        squad = _dynamic_squad(message, store, variables)
+        if squad is not None:
+            return JsonResponse({"squad": squad})
+        # Not buildable: answer the old way, but the prompts carry {{caller_context}}, so fill it
+        # (empty = we know nothing about the caller) rather than let a literal brace pair be spoken.
+        variables = {**variables, **caller.variable_values({})}
+
+    body: dict = {"assistantOverrides": {"variableValues": variables}}
     if assistant_id:
         body["assistantId"] = assistant_id
     return JsonResponse(body)
+
+
+def _dynamic_squad(message: dict, store: str, variables: dict) -> dict | None:
+    """The per-call squad for HHT_DYNAMIC_GREETING: the caller looked up (<= 2.5 s, any failure = no
+    name = the standard greeting), the squad built from the saved assistant ids with no Vapi call,
+    the caller's name in the entry greeting and their context on every member. The phone number
+    is used for the lookup only and is not in the answer. ``None`` (never an exception) when it
+    cannot be built, so the call is still answered."""
+    try:
+        from voice import caller, provision
+
+        call = message.get("call") or {}
+        ctx = caller.for_call(call.get("id", ""), (call.get("customer") or {}).get("number", ""), store)
+        return provision.build_call_squad(
+            provision.saved_member_ids(),
+            store if _store_is_locked(message) else None,  # an unmapped number is the legacy squad
+            first_message=lambda base: caller.greeting(ctx, base),
+            variables={**variables, **caller.variable_values(ctx)},
+        )
+    except Exception:  # noqa: BLE001 - a greeting problem must never cost the call
+        logger.warning("dynamic greeting failed; answering with the static assistant", exc_info=True)
+        return None
 
 
 def handle_tool_calls(message: dict) -> JsonResponse:
@@ -209,9 +245,14 @@ def handle_tool_calls(message: dict) -> JsonResponse:
         "caller_number": customer.get("number", ""),
     }
 
+    calls = _extract_tool_calls(message)
+    _stamp_caller(ctx, [tc["name"] for tc in calls])
+    locked = _store_is_locked(message)
     results = []
-    for tc in _extract_tool_calls(message):
+    for tc in calls:
         args = _apply_correction(tc["arguments"])
+        if locked:  # the tools read args["store"] before ctx["store"] — the number wins
+            args = {**args, "store": store}
         ctx["tool_call_id"] = tc["id"]
         result = dispatch_tool(tc["name"], args, ctx)
         # Belt-and-suspenders: the central scrub already ran in dispatch; assert the wall held.
@@ -219,6 +260,29 @@ def handle_tool_calls(message: dict) -> JsonResponse:
         results.append({"toolCallId": tc["id"], "result": result})
         _log_tool_call(ctx["call_id"], store, tc, args, result)
     return JsonResponse({"results": results})
+
+
+def _stamp_caller(ctx: dict, tool_names: list[str]) -> None:
+    """Every tool of this POST reads the call's cached caller context off ``ctx['caller']`` (the
+    ctx is rebuilt per POST, the cache is per call). When a tool depends on who is calling, resolve
+    the caller now, so ``pair_upsell`` and ``stage_phone_cart`` see the identity ``suggest_products``
+    does whatever order they run in. With HHT_DYNAMIC_GREETING off nothing is fetched or created
+    here (the cache is empty and recognition takes its ``resume_by_phone`` path, as before); on, a
+    cache miss is one caller-context lookup and every later POST reuses it. Never raises into the turn."""
+    try:
+        from voice import caller, recognition
+
+        needs_identity = any(name in caller.IDENTITY_TOOLS for name in tool_names)
+        ctx["caller"] = caller.for_call(
+            ctx["call_id"],
+            ctx["caller_number"],
+            ctx["store"],
+            fetch=needs_identity and caller.dynamic_greeting(),
+        )
+        if needs_identity:
+            recognition.resolve_caller(ctx["caller_number"], ctx)
+    except Exception:  # noqa: BLE001 - recognition is an enhancement, never a reason to fail a tool
+        logger.warning("caller context could not be attached to the tool call", exc_info=True)
 
 
 def _log_tool_call(call_id: str, store: str, tc: dict, args: dict, result) -> None:

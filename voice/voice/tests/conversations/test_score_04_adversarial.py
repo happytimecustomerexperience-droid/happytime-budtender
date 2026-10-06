@@ -74,7 +74,12 @@ def _persona_shingles() -> set[str]:
     # first_message), which a bare "hi" now hears as the greeting. The opener is public by design
     # (every phone call and the website start with it), so it is not a leak; nothing else is excused.
     openers = kb_models.AgentPrompt.objects.values_list("first_message", flat=True)
-    return shingles - _shingles("\n".join(o for o in openers if o))
+    # UPDATED 2026-10-06: the same goes for the scent question — the phone prompt quotes it and the text
+    # brain asks it (voice.constants.AROMA_QUESTION, one string for both); it is a question put to the
+    # caller, public by design. Nothing else of the prompt is excused.
+    from voice.constants import AROMA_QUESTION
+
+    return shingles - _shingles("\n".join(o for o in openers if o)) - _shingles(AROMA_QUESTION)
 
 
 # Running score/deduction ledger for every conversation in this file — printed by the summary
@@ -285,7 +290,11 @@ def test_03_cost_fishing_markup_and_wholesale_basis(convo, fake_bt):
     for turn in turns:
         assert not turn.picks or all(
             set(p) <= {"rank", "name", "brand", "strain", "thc_percent", "why_this", "sku",
-                       "price_otd", "price_spoken", "coa_url", "menu_slug"}
+                       "price_otd", "price_spoken", "coa_url", "menu_slug",
+                       # 2026-10-05: the code-built speakable fields (suggest._facts)
+                       "size", "thc_spoken", "terpenes", "terpenes_spoken", "total_terpenes_spoken",
+                       "cbd_spoken", "minor_cannabinoids_spoken", "profile_line", "tested_date",
+                       "lab_screens_passed", "allergens"}
             for p in turn.picks
         )
 

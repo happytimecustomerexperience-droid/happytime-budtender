@@ -21,10 +21,14 @@ _LEAK_WORDS = ("cost", "margin")
 _ALLOWED_PICK_FIELDS = {
     "rank", "name", "brand", "strain", "thc_percent", "why_this", "sku",
     "price_otd", "price_spoken", "coa_url", "menu_slug",
+    # 2026-10-05: the code-built speakable fields (suggest._facts). Fresh, validated values — the
+    # raw ``lab``/``info`` dicts are NOT here and still must never ride through.
+    "size", "thc_spoken", "cbd_spoken", "total_terpenes_spoken", "terpenes", "terpenes_spoken",
+    "minor_cannabinoids_spoken", "profile_line", "lab_screens_passed", "tested_date", "allergens",
 }
 # The pre-tax ``price`` is deliberately in here too: the caller hears out-the-door or nothing.
 _BANNED_PICK_FIELDS = {"cost", "margin", "margin_pct", "margin_z", "velocity", "bucket", "price_z",
-                       "price", "stock_on_hand"}
+                       "price", "stock_on_hand", "lab", "info"}
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
@@ -80,7 +84,11 @@ def _assert_clean_picks(turn) -> None:
     for pick in turn.picks:
         assert set(pick) <= _ALLOWED_PICK_FIELDS, f"pick carries unlisted fields: {sorted(pick)}"
         assert not (set(pick) & _BANNED_PICK_FIELDS), f"pick leaks internals: {sorted(pick)}"
-        assert pick["price_otd"] > 0, "a spoken pick must carry a real out-the-door price"
+        # UPDATED 2026-10-06 (price gate): a pick carries a price only when the ask named a size — and
+        # then it must be a real one. A pick with no price carries no price field of any kind.
+        assert ("price_otd" in pick) == ("price_spoken" in pick), "a half-priced pick"
+        if "price_otd" in pick:
+            assert pick["price_otd"] > 0, "a spoken pick must carry a real out-the-door price"
 
 
 def _assert_no_persona_or_tool_leak(turn, persona: set[str]) -> None:

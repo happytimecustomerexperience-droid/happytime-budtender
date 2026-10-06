@@ -39,6 +39,8 @@ import sys
 
 import pytest
 
+from voice.tools.suggest import SPOKEN_FACT_KEYS as _SPOKEN_FACT_KEYS
+
 # Windows consoles default to cp1252, which chokes on odd characters a grounded KB row can
 # legitimately contain (em-dash, etc.) — widen stdout so ``-s`` transcripts never crash on
 # encoding rather than on an actual assertion (same guard as test_thread_18_long_calls.py).
@@ -72,7 +74,8 @@ def _numbers(text: str) -> set[str]:
 def _tool_numbers(picks: list[dict]) -> set[str]:
     out: set[str] = set()
     for pick in picks:
-        for key in ("name", "brand", "strain", "why_this", "price_spoken", "price_otd", "thc_percent"):
+        for key in ("name", "brand", "strain", "why_this", "price_spoken", "price_otd", "thc_percent",
+                    *_SPOKEN_FACT_KEYS):
             out |= _numbers(str(pick.get(key) or ""))
     return out
 
@@ -127,7 +130,9 @@ def _auto_checks(scorer: Scorer, n: int, turn) -> None:
         scorer.deduct(n, "LEAK", "cost/margin present in the serialized turn")
 
     if turn.grounded and turn.picks:
-        allowed = _tool_numbers(turn.picks)
+        # A follow-up ("something stronger") re-reads the pick it is comparing against by SKU; that
+        # ``check_inventory`` result is as much a tool result as the picks are.
+        allowed = _tool_numbers(turn.picks + turn.lookups)
         extra = _numbers(turn.answer) - allowed
         if extra:
             scorer.deduct(n, "HALLUCINATION", f"number(s) {extra} in the answer not traceable to a tool result")
