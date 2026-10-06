@@ -177,14 +177,20 @@ def fetch_receipts(location_slug: str, days: int = WINDOW_DAYS, now: datetime | 
 
 
 def received_index(receipts: list[dict], now: datetime, days: int = WINDOW_DAYS) -> dict[str, str]:
-    """Pure: {"p:<productId>" / "b:<batchId>" -> latest delivery time} over the
+    """Pure: {"p:<productId>" / "b:<batchId>" -> latest arrival time} over the
     transactions that really happened: status "Received" (not a "Saved" draft),
-    delivered inside the window and not in the future."""
+    arrived inside the window and not in the future.
+
+    The arrival time is when the entry was ADDED to Dutchie (`addedOn`, a system
+    timestamp), not `deliveredOn`: that one is the date typed on the manifest and can
+    be days older than the day the order was actually entered (owner, 2026-10-05:
+    invoices entered today showed as "Received Thu, Oct 1"). `deliveredOn` is only the
+    fallback when `addedOn` is missing."""
     lo = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     hi = now.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     out: dict[str, str] = {}
     for tx in receipts:
-        when = _iso_utc(tx.get("deliveredOn"))
+        when = _iso_utc(tx.get("addedOn")) or _iso_utc(tx.get("deliveredOn"))
         if tx.get("status") != "Received" or not when or not lo <= when <= hi:
             continue
         for item in tx.get("items") or []:

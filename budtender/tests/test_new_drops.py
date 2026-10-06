@@ -173,6 +173,16 @@ class ReceivedIndexTests(SimpleTestCase):
                     delivered(5, "2026-10-01T05:00:00.0000000", batch=50))
         self.assertEqual(idx, {"p:5": "2026-10-01T05:00:00.000Z", "b:50": "2026-10-01T05:00:00.000Z"})
 
+    def test_arrival_is_when_the_entry_was_added_not_the_manifest_date(self):
+        # Real data 2026-10-05: DOPE SYNERGY invoice 2090 - manifest dated Oct 1, entered in Dutchie days later.
+        entered_later = {"status": "Received", "deliveredOn": "2026-09-26T09:00:00.0000000",
+                         "addedOn": "2026-10-01T15:30:00.0000000", "vendor": "DOPE SYNERGY",
+                         "items": [{"productId": 7, "batchId": 70}]}
+        self.assertEqual(index(entered_later), {"p:7": "2026-10-01T15:30:00.000Z", "b:70": "2026-10-01T15:30:00.000Z"})
+        self.assertEqual(index(dict(entered_later, addedOn=None))["p:7"], "2026-09-26T09:00:00.000Z")  # fallback
+        # an entry added outside the window is not new, whatever the manifest says
+        self.assertEqual(index(dict(entered_later, addedOn="2026-08-01T00:00:00.0000000")), {})
+
     def test_latest_delivery_wins_and_junk_rows_are_skipped(self):
         idx = index(delivered(1, "2026-09-25T10:00:00.0000000"), delivered(1, "2026-09-29T10:00:00.0000000"),
                     delivered(2, "not a date"), {"status": "Received", "deliveredOn": "2026-09-29T10:00:00.0000000"})
