@@ -754,6 +754,33 @@ def refresh_new_drops_all(force: bool = False) -> dict:
     return out
 
 
+@shared_task
+def coa_followup_all(force: bool = False) -> dict:
+    """COA follow-up for the website's New Drops "View COA" buttons. returns-ops writes each received order's
+    lab data + COA link into Dutchie in its hourly lab-dispatch (at :00), so this runs at :15 and :45 (15 and
+    45 minutes after it, "just to be sure"): re-ask Dutchie for every recent drop still without a COA and
+    rebuild the snapshot. Same store-hours gate and the same backoffice lock as the refresh."""
+    if not force and not any_store_open_or_warming():
+        return {"skipped": "stores_closed"}
+    from . import new_drops
+
+    token = backoffice_lock.acquire(50 * 60)
+    if not token:
+        return {"skipped": "another_backoffice_job_running"}
+    out: dict = {}
+    try:
+        for slug in STORE_SLUGS:
+            try:
+                out[slug] = new_drops.coa_followup(slug)
+            except Exception as exc:  # noqa: BLE001 - one store failing never blocks the others
+                logger.warning("coa_followup %s failed: %s", slug, exc)
+                out[slug] = f"error: {type(exc).__name__}"
+        logger.info("coa_followup: %s", out)
+    finally:
+        backoffice_lock.release(token)
+    return out
+
+
 WARM_IDS_DEFERRALS = 3  # how many times a held lock is waited out before the beat is left to cover it
 
 

@@ -1,6 +1,7 @@
 import os
 
 from celery import Celery
+from celery.schedules import crontab
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
 
@@ -27,6 +28,13 @@ app.conf.beat_schedule = {
     "refresh-new-drops": {
         "task": "budtender.tasks.refresh_new_drops_all",
         "schedule": 15 * 60.0,
+    },
+    # COA follow-up: returns-ops (C:\returns-ops, vercel.json crons) writes lab data + COA links into Dutchie in
+    # lab-dispatch at minute 0 of every hour (lab-auto-match at :50 before it). Look again 15 and 45 minutes
+    # later and refill the New Drops "View COA" buttons. Same gate/lock as the refresh above.
+    "coa-followup": {
+        "task": "budtender.tasks.coa_followup_all",
+        "schedule": crontab(minute="15,45"),
     },
     # Lab results (terpenes + %) per in-stock batch → BatchLab and the allowlisted product info
     # → ProductDetail, so every chat pick can carry real numbers. Paced, 100 of each per store

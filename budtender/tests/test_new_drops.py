@@ -297,7 +297,7 @@ class PacingAndBudgetTests(SimpleTestCase):
         with mock.patch.object(new_drops, "_client"), \
              mock.patch.object(new_drops, "fetch_received", return_value=packages), \
              mock.patch.object(new_drops, "fetch_receipts", return_value=[]), \
-             mock.patch.object(new_drops, "lab_for_batch", side_effect=lambda c, b: looked_up.append(b) or LAB_FLOWER), \
+             mock.patch.object(new_drops, "lab_for_batch", side_effect=lambda c, b, **kw: looked_up.append(b) or LAB_FLOWER), \
              mock.patch.object(new_drops, "menu_map", return_value={}), \
              mock.patch.object(new_drops.Setting.objects, "update_or_create"):
             new_drops.refresh_store("yakima", now=NOW, max_lookups=2)
@@ -355,3 +355,81 @@ class ChatCoaTests(TestCase):
         cache.set("newdrops:menu:yakima", {"555": "blue-dream-3-5g"})
         self.assertEqual(public_product(self._product(sku="A", product_id="555"))["menu_slug"], "blue-dream-3-5g")
         self.assertIsNone(public_product(self._product(sku="B", product_id="556"))["menu_slug"])
+
+
+NO_LAB = {"HasLabData": False, "Cannabinoids": {"Thc": {"Value": None, "UnitId": None}},
+          "Terpenes": {}, "TestDetails": {"CoaUrl": None}}
+
+
+@override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}})
+class CoaFollowupTests(TestCase):
+    """returns-ops writes lab data + the COA link into Dutchie AFTER an order is received (hourly lab-dispatch).
+    The follow-up (:15 / :45) must pick that up; a cached "no COA yet" must not hide it for 30 days."""
+
+    def setUp(self):
+        cache.clear()
+        self.client_fake = mock.Mock()
+        self.client_fake.session_block.return_value = {}
+        receipt = {"status": "Received", "deliveredOn": "2026-09-30T10:00:00.0000000",
+                   "addedOn": "2026-09-30T10:00:00.0000000", "items": [{"productId": 1, "batchId": 1}]}
+        patches = [
+            mock.patch.object(new_drops, "fetch_receipts", return_value=[receipt]),
+            mock.patch.object(new_drops, "_client", return_value=self.client_fake),
+            mock.patch.object(new_drops, "fetch_received",
+                              return_value=[pkg(1, "Flower A 3.5g", "B", "2026-09-30T10:00:00.000Z", batch=1)]),
+            mock.patch.object(new_drops, "menu_map", return_value={}),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def answers(self, *data):
+        self.client_fake.post.side_effect = [{"Data": d} for d in data]
+
+    def test_an_answer_without_a_coa_is_cached_briefly_and_one_with_a_coa_for_30_days(self):
+        self.answers(NO_LAB, LAB_FLOWER)
+        with mock.patch.object(new_drops.cache, "set") as put:
+            new_drops.lab_for_batch(self.client_fake, 1)
+            new_drops.lab_for_batch(self.client_fake, 2)
+        self.assertEqual([c.args[2] for c in put.call_args_list],
+                         [new_drops.LAB_PENDING_TTL_RECENT, new_drops.LAB_TTL_DONE])
+        self.assertLess(new_drops.LAB_PENDING_TTL_RECENT, 3600)
+
+    def test_followup_fills_the_coa_that_returns_ops_wrote_after_the_first_look(self):
+        self.answers(NO_LAB, LAB_FLOWER)
+        first = new_drops.refresh_store("yakima", now=NOW)
+        self.assertEqual(new_drops.count_coas(first), (0, 1))          # arrived before its lab data
+        # an ordinary refresh does NOT re-ask: the "no COA yet" answer is cached for the next hour
+        new_drops.refresh_store("yakima", now=NOW)
+        self.assertEqual(self.client_fake.post.call_count, 1)
+        # the follow-up ignores that cached answer, asks again and finds the COA
+        out = new_drops.coa_followup("yakima", now=NOW)
+        self.assertEqual(self.client_fake.post.call_count, 2)
+        self.assertEqual((out["coa_before"], out["coa_after"], out["gained"]), (0, 1, 1))
+        self.assertEqual(new_drops.get_snapshot("yakima")["brands"][0]["products"][0]["coa_url"],
+                         "https://certs.conflabs.com/x.pdf")
+
+    def test_followup_does_not_re_ask_batches_that_already_have_a_coa(self):
+        self.answers(LAB_FLOWER)
+        new_drops.refresh_store("yakima", now=NOW)
+        new_drops.coa_followup("yakima", now=NOW)
+        self.assertEqual(self.client_fake.post.call_count, 1)
+
+    def test_old_batches_without_a_coa_are_re_asked_every_6_hours_not_every_hour(self):
+        old = pkg(1, "Flower A 3.5g", "B", "2026-09-10T10:00:00.000Z", batch=1)   # 3 weeks old
+        self.answers(NO_LAB)
+        with mock.patch.object(new_drops, "fetch_received", return_value=[old]):
+            with mock.patch.object(new_drops.cache, "set") as put:
+                new_drops.refresh_store("yakima", now=NOW)
+        self.assertEqual(put.call_args_list[0].args[2], new_drops.LAB_PENDING_TTL_OLD)
+
+    def test_the_task_respects_the_store_hours_gate_and_the_backoffice_lock(self):
+        from budtender import tasks
+        with mock.patch.object(tasks, "any_store_open_or_warming", return_value=False):
+            self.assertEqual(tasks.coa_followup_all(), {"skipped": "stores_closed"})
+        token = backoffice_lock.acquire(60)
+        try:
+            with mock.patch.object(tasks, "any_store_open_or_warming", return_value=True):
+                self.assertEqual(tasks.coa_followup_all(), {"skipped": "another_backoffice_job_running"})
+        finally:
+            backoffice_lock.release(token)

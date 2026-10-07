@@ -52,6 +52,16 @@ logger = logging.getLogger(__name__)
 
 WINDOW_DAYS = 20  # owner, 2026-10-01: "keep info for 20 days"
 RECEIPT_LOOKBACK_EXTRA_DAYS = 30  # manifest dates can trail the day an order is entered by weeks
+
+# A batch's lab result is only final once it carries the COA link. returns-ops writes lab data (and the COA
+# URL) into Dutchie in its hourly lab-dispatch (:00, after lab-auto-match at :50), AFTER the order is received,
+# so an answer asked for sooner says "no lab / no COA yet" and must not be remembered for long (it used to be
+# cached 30 days, which hid every COA that landed later).
+LAB_TTL_DONE = 30 * 24 * 3600        # has a COA link: final
+LAB_PENDING_TTL_RECENT = 55 * 60     # no COA yet, arrived <= RECENT_DAYS ago: ask again about once an hour
+LAB_PENDING_TTL_OLD = 6 * 3600       # no COA yet, older: a batch that never gets one must not eat the call budget
+RECENT_DAYS = 3
+FOLLOWUP_MAX_LOOKUPS = 80            # per store per follow-up run (paced; the backoffice allows ~60 calls/min)
 PAGE_SIZE = 500
 
 # Dutchie backoffice allows 60 calls/min per login ("Too many requests - only 60
@@ -341,8 +351,16 @@ def summarize_lab(data: dict, category: str, top: int = 3, detail: bool = False)
     return out
 
 
-def lab_for_batch(client: BackofficeClient, batch_id: int, strict: bool = False) -> dict | None:
-    """Raw lab-results Data for a batch, cached 30 days. Failures and anomalies are NOT cached.
+def has_coa(data: dict | None) -> bool:
+    """True when a raw lab-results Data carries a usable COA link."""
+    return bool(https_url(((data or {}).get("TestDetails") or {}).get("CoaUrl")))
+
+
+def lab_for_batch(client: BackofficeClient, batch_id: int, strict: bool = False,
+                  pending_ttl: int = LAB_PENDING_TTL_RECENT) -> dict | None:
+    """Raw lab-results Data for a batch. Cached 30 days once it carries a COA link; an answer without one
+    (no lab yet, or a lab without its certificate) is only cached `pending_ttl`, so a COA written into
+    Dutchie later is picked up. Failures and anomalies are NOT cached.
     A failed call returns None, unless `strict`: then it raises, so a caller that loops over many ids
     (lab_enrich.warm) can tell a transport/throttle/auth failure from an id that simply has no answer."""
     key = f"newdrops:lab:{batch_id}"
@@ -364,7 +382,7 @@ def lab_for_batch(client: BackofficeClient, batch_id: int, strict: bool = False)
         logger.warning("new_drops lab-results batch=%s: empty/odd Data (%s); not cached", batch_id,
                        type(data).__name__)
         return None
-    cache.set(key, data, 30 * 24 * 3600)
+    cache.set(key, data, LAB_TTL_DONE if has_coa(data) else pending_ttl)
     return data
 
 
@@ -519,29 +537,63 @@ def build_snapshot(location_slug: str, packages: list[dict], labs: dict[int, dic
 
 
 def refresh_store(location_slug: str, now: datetime | None = None,
-                  max_lookups: int = MAX_LAB_LOOKUPS_PER_RUN) -> dict:
+                  max_lookups: int = MAX_LAB_LOOKUPS_PER_RUN, recheck_recent: bool = False) -> dict:
+    """Rebuild a store's New Drops snapshot. `recheck_recent` (the COA follow-up) ignores the cached copy of
+    any recent batch that still has no COA link and asks Dutchie again, newest first within `max_lookups`."""
     now = now or datetime.now(timezone.utc)
     receipts = received_index(fetch_receipts(location_slug, now=now), now)  # first: a failure costs no backoffice call
     client = _client(location_slug)
     packages = fetch_received(client, now=now)
     labs: dict = {}
     lookups = 0
+    recent_cutoff = (now - timedelta(days=RECENT_DAYS)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    newest_pkg: dict = {}   # batch id -> its newest package stamp (packages arrive newest first)
+    for p in packages:
+        bid = (p.get("batch") or {}).get("id")
+        if bid is not None and bid not in newest_pkg:
+            newest_pkg[bid] = p.get("receivedDate") or ""
     # Packages arrive newest first; dict.fromkeys keeps that order, so the newest
     # drops get their lab numbers first when the per-run budget runs out.
     for bid in dict.fromkeys((p.get("batch") or {}).get("id") for p in packages):
         if bid is None:
             continue
+        recent = newest_pkg[bid] >= recent_cutoff
         cached = cache.get(f"newdrops:lab:{bid}")
+        if cached is not None and recheck_recent and recent and not has_coa(cached) and lookups < max_lookups:
+            cache.delete(f"newdrops:lab:{bid}")   # a cached "no COA yet" cannot answer a follow-up
+            cached = None
         if cached is not None:
             labs[bid] = cached
         elif lookups < max_lookups:
-            labs[bid] = lab_for_batch(client, bid)
+            labs[bid] = lab_for_batch(client, bid, pending_ttl=LAB_PENDING_TTL_RECENT if recent else LAB_PENDING_TTL_OLD)
             lookups += 1
+        elif recheck_recent:
+            labs[bid] = cache.get(f"newdrops:lab:{bid}")   # budget spent: keep what we had
     needed = {str((p.get("product") or {}).get("id")) for p in packages if (p.get("product") or {}).get("id")}
     snap = build_snapshot(location_slug, packages, labs, menu_map(location_slug, needed), receipts, now)
     Setting.objects.update_or_create(key=f"new_drops:{location_slug}", defaults={"value": snap})
     logger.info("new_drops %s: %d packages -> %d brands", location_slug, len(packages), len(snap["brands"]))
     return snap
+
+
+def count_coas(snap: dict | None) -> tuple[int, int]:
+    """(products with a COA link, products) in a snapshot."""
+    rows = [p for b in (snap or {}).get("brands", []) for p in b.get("products", [])]
+    return sum(1 for p in rows if p.get("coa_url")), len(rows)
+
+
+def coa_followup(location_slug: str, now: datetime | None = None,
+                 max_lookups: int = FOLLOWUP_MAX_LOOKUPS) -> dict:
+    """The COA follow-up for one store. returns-ops writes lab data + the COA link into Dutchie on its own
+    hourly schedule (lab-dispatch at :00), after the order is received, so this runs 15 and 45 minutes later:
+    it re-asks Dutchie for every recent drop still without a COA link and rebuilds the snapshot, so the
+    website's "View COA" buttons fill in without waiting for the next full refresh. Returns the before/after
+    COA counts so a run proves itself."""
+    before_with, _ = count_coas(get_snapshot(location_slug))
+    snap = refresh_store(location_slug, now=now, max_lookups=max_lookups, recheck_recent=True)
+    after_with, total = count_coas(snap)
+    return {"store": location_slug, "products": total, "coa_before": before_with, "coa_after": after_with,
+            "gained": after_with - before_with}
 
 
 _SLUG_MEMO: dict[str, tuple[float, dict]] = {}
