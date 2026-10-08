@@ -43,6 +43,12 @@ class Command(BaseCommand):
             "(VAPI_PHONE_NUMBER_STORE_MAP). This re-routes live calls — run --dry-run first.",
         )
         parser.add_argument(
+            "--force-squad-id",
+            action="store_true",
+            help="When VAPI_SQUAD_ID disagrees with the squad id provision_vapi recorded, trust "
+            "VAPI_SQUAD_ID: re-record it and PATCH only that squad (the run refuses otherwise).",
+        )
+        parser.add_argument(
             "--verbose", action="store_true", help="Also print the full report JSON (redacted)."
         )
 
@@ -54,7 +60,12 @@ class Command(BaseCommand):
         if dry_run:
             self.stdout.write(self.style.WARNING("  (dry-run — no Vapi writes will be issued)"))
 
-        report = provision.provision_all(dry_run=dry_run, only=only, per_store=opts["per_store"])
+        report = provision.provision_all(
+            dry_run=dry_run,
+            only=only,
+            per_store=opts["per_store"],
+            force_squad_id=opts["force_squad_id"],
+        )
 
         if report.error:
             raise CommandError(report.error)
@@ -114,11 +125,13 @@ class Command(BaseCommand):
         if only in (None, "squad"):
             # In a dry run the assistant has a synthetic id; show the single-member container shape.
             members = provision._p0_members() or {C.P0_ASSISTANT_ROLE: "dryrun-assistant"}
-            blocks.append(
-                self._block(
-                    "POST/PATCH /squad  (Happy Time Voice)", provision.build_squad_payload(members)
-                )
+            pinned = provision.pinned_squad_id()
+            title = (
+                f"PATCH /squad/{pinned}  (Happy Time Voice, VAPI_SQUAD_ID; never POST)"
+                if pinned
+                else "POST/PATCH /squad  (Happy Time Voice)"
             )
+            blocks.append(self._block(title, provision.build_squad_payload(members)))
             if opts_per_store:
                 for _key, slug in C.TRANSFER_STORES:
                     blocks.append(
@@ -135,7 +148,8 @@ class Command(BaseCommand):
                 label, number_id = provision.phone_number_target(store)
                 if number_id:
                     squad = VapiObject.objects.filter(kind="squad", name=provision.squad_name(store)).first()
-                    payload = provision.phone_number_payload(label, squad.vapi_id if squad else "<squad id>")
+                    squad_id = provision.pinned_squad_id(store) or (squad.vapi_id if squad else "<squad id>")
+                    payload = provision.phone_number_payload(label, squad_id)
                     blocks.append(self._block(f"PATCH /phone-number/{number_id}  ({label})", payload))
 
         return "\n\n".join(blocks)

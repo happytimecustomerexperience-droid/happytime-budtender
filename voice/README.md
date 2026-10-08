@@ -110,7 +110,7 @@ name for is asked once and saved to **our** budtender profile (never Dutchie). C
 5. **One live test call from a known number and one from a new number.** Each costs Vapi minutes: the
    owner approves them. Known: greeted by name, the agent never reads the history aloud. New: standard
    greeting, asked for a name once, a second call from that number greets by name.
-6. The name rule in `kb/seed.py` (`CALLER_NAME_RULE`) reaches live prompts only through `seed_kb`, which also
+6. The name rule in `kb/seed.py` (`CALLER_NAME_RULE`) reaches live prompts only through `seed_kb --refresh`, which also
    resets dashboard prompt edits, or by pasting that paragraph into the entry_router and budtender prompts
    on the dashboard. The per-call `CALLER` line carries the same instruction, so the flow works without it.
 7. **Rollback**: unset `HHT_DYNAMIC_GREETING`, restart, run `provision_vapi` (re-binds the squad, drops the
@@ -142,7 +142,7 @@ what the agent reads when asked what a pick smells like, as a *beta* feature, ne
 
 **Reaching the live assistants:** the `kb/seed.py` prompt changes (the `PRICE ASKS RUN THROUGH THE QUESTIONS`
 rule, the flower SIZE and the AROMA questions, the LAB TALK paragraph) and the new tool schema (the `aroma` /
-`size` / `category` parameters in `TOOL_SPECS`) only reach Vapi through `seed_kb` (which also resets dashboard
+`size` / `category` parameters in `TOOL_SPECS`) only reach Vapi through `seed_kb --refresh` (which also resets dashboard
 prompt edits) followed by `provision_vapi`, or by pasting the paragraphs into the dashboard prompts; the guided
 Workflow also needs `provision_workflow` (59 nodes now). Until then the live agents keep the old
 "quote a price straight from the tool" behaviour — but with the gate deployed in code, `suggest_products` already

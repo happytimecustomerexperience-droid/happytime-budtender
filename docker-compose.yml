@@ -318,6 +318,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 40s
+    # seed_kb is create-only: it inserts missing KB rows and never overwrites dashboard edits (reset on purpose: seed_kb --refresh).
     command: >
       sh -c "python manage.py migrate --noinput &&
              ( python manage.py seed_kb || true ) &&

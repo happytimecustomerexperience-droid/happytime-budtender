@@ -2,18 +2,23 @@
 out concretely. Numbers-Guard: every figure the agent can speak lives in a row here, so the
 LLM quotes it and never invents it.
 
-Idempotent — every block is ``update_or_create`` by the model's natural key (P0 acceptance
-D1: run twice → no duplicate rows). ``seed_all()`` runs blocks 1–16 (§7 mapping) in order;
-``manage.py seed_kb`` calls it.
+Idempotent and CREATE-ONLY by default — every block writes through ``_seed()`` by the model's
+natural key (P0 acceptance D1: run twice → no duplicate rows): a missing row is inserted, an existing
+row is left exactly as it is, so owner dashboard edits survive the ``seed_kb`` that the root
+docker-compose runs at every voice-web start. ``seed_all(refresh=True)`` (``seed_kb --refresh``)
+overwrites existing rows with the code defaults — the deliberate reset / new-seed-content deploy.
+``seed_all()`` runs blocks 1–16 (§7 mapping) in order; ``manage.py seed_kb`` calls it.
 
 Provenance tags from _research-education-blogs.md: [CONFIRMED] confirmed store facts;
 [WA-LAW] statutory; [SITE]/[GENERAL] distilled/general knowledge. Education + blog rows are
-provisional=True (verbatim house copy blocked by the Vercel wall — re-run seed_kb to update).
+provisional=True (verbatim house copy blocked by the Vercel wall — ``seed_kb --refresh`` to update).
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
+from collections import Counter
 from pathlib import Path
 
 from kb import models as m
@@ -28,6 +33,47 @@ from voice.constants import ASSISTANT_PROVIDER as MODEL_PROVIDER
 
 VOICE_ID = "a3520a8f-226a-428d-9fcd-b0a4711a6829"  # Cartesia sonic-3 voice (default; switchable to 11labs in dashboard)
 VOICE_PROVIDER = "cartesia"  # default voice provider; dashboard can switch a role to "11labs"
+
+
+# ── The one write path every block uses (create-only unless refreshing) ─────────
+#
+# Every KB row below is owner-editable on the dashboard (prompts, model, voice, greeting, tools,
+# hours/address/phone, FAQ/policy/education text, is_active/confirmed toggles). The seed used to
+# ``update_or_create`` them at every boot, which reset those edits and — with publish-on-save on —
+# pushed the defaults to Vapi. Now no field is force-updated on an existing row: re-forcing
+# ``is_active`` would undo an owner's deactivation and re-forcing ``confirmed`` would turn an
+# owner's "call to confirm" back into a spoken fact (Numbers-Guard). Specials are not seeded at all.
+# New seed content reaches an existing DB only through ``seed_kb --refresh``.
+_refresh = False
+LAST_RUN: Counter = Counter()  # created / kept / refreshed by the most recent seed run
+
+
+@contextlib.contextmanager
+def seed_mode(*, refresh: bool):
+    """Run the blocks inside in create-only (``refresh=False``) or overwrite (``refresh=True``)
+    mode. The mode is module-level so no block can forget it: they all call ``_seed``."""
+    global _refresh
+    previous, _refresh = _refresh, bool(refresh)
+    try:
+        yield
+    finally:
+        _refresh = previous
+
+
+def _seed(model, lookup: dict, defaults: dict) -> bool:
+    """Insert ``lookup + defaults`` when no row matches ``lookup``; otherwise keep the existing row
+    untouched (create-only), or overwrite its ``defaults`` fields in refresh mode. Returns True
+    when a row was created."""
+    if _refresh:
+        _obj, created = model.objects.update_or_create(**lookup, defaults=defaults)
+        LAST_RUN["created" if created else "refreshed"] += 1
+        return created
+    if model.objects.filter(**lookup).exists():
+        LAST_RUN["kept"] += 1
+        return False
+    model.objects.create(**lookup, **defaults)
+    LAST_RUN["created"] += 1
+    return True
 
 
 # ── 1. FAQ Q&As (§8.1) ────────────────────────────────────────────────────────
@@ -317,9 +363,10 @@ FAQ_ROWS = [
 
 def seed_faq() -> int:
     for r in FAQ_ROWS:
-        m.FAQEntry.objects.update_or_create(
-            key=r["key"],
-            defaults={
+        _seed(
+            m.FAQEntry,
+            {"key": r["key"]},
+            {
                 "question": r["question"],
                 "answer": r["answer"],
                 "topic": r["topic"],
@@ -370,9 +417,10 @@ def seed_site_education() -> int:
     except (OSError, ValueError):
         return 0
     for r in rows:
-        m.EducationDoc.objects.update_or_create(
-            slug=r["slug"],
-            defaults={
+        _seed(
+            m.EducationDoc,
+            {"slug": r["slug"]},
+            {
                 "title": r["title"],
                 "topic": r.get("topic", ""),
                 "body": r["body"],
@@ -400,9 +448,10 @@ def seed_site_faqs() -> int:
     rows = rows + _FOOTER_FAQ_ROWS
     for r in rows:
         r = {**r, "paraphrases": r.get("paraphrases") or _SITE_FAQ_PARAPHRASES.get(r["key"], [])}
-        m.FAQEntry.objects.update_or_create(
-            key=r["key"],
-            defaults={
+        _seed(
+            m.FAQEntry,
+            {"key": r["key"]},
+            {
                 "question": r["question"],
                 "answer": r["answer"],
                 "topic": r.get("topic", "general"),
@@ -444,9 +493,10 @@ POLICY_CATEGORY_ROWS = [
 def seed_policy_categories() -> int:
     n = 0
     for slug, label, topic, weight in POLICY_CATEGORY_ROWS:
-        m.PolicyCategory.objects.update_or_create(
-            slug=slug,
-            defaults={"label": label, "topic": topic, "weight": weight, "is_active": True},
+        _seed(
+            m.PolicyCategory,
+            {"slug": slug},
+            {"label": label, "topic": topic, "weight": weight, "is_active": True},
         )
         n += 1
     return n
@@ -455,9 +505,10 @@ def seed_policy_categories() -> int:
 def seed_return_policy() -> int:
     seed_policy_categories()
     category = m.PolicyCategory.objects.get(slug="return_policy")
-    m.PolicyDocument.objects.update_or_create(
-        category=category,
-        defaults={
+    _seed(
+        m.PolicyDocument,
+        {"category": category},
+        {
             "title": "Return policy",
             "body": RETURN_POLICY_BODY,
             "citation": "WAC 314-55-079",
@@ -549,11 +600,10 @@ VENDOR_FACT_ROWS = [
 def seed_store_facts() -> int:
     n = 0
     for store, kind, label, value, confirmed in STORE_FACT_ROWS:
-        m.StoreFact.objects.update_or_create(
-            store=store,
-            kind=kind,
-            label=label,
-            defaults={"value": value, "confirmed": confirmed, "is_active": True},
+        _seed(
+            m.StoreFact,
+            {"store": store, "kind": kind, "label": label},
+            {"value": value, "confirmed": confirmed, "is_active": True},
         )
         n += 1
     return n  # never touches kind="special" rows — see the note above VENDOR_FACT_ROWS
@@ -564,11 +614,10 @@ def seed_vendor_facts() -> int:
     member speaks on the no-answer leg, KB-grounded (Numbers-Guard)."""
     n = 0
     for store, kind, label, value, confirmed in VENDOR_FACT_ROWS:
-        m.StoreFact.objects.update_or_create(
-            store=store,
-            kind=kind,
-            label=label,
-            defaults={"value": value, "confirmed": confirmed, "is_active": True},
+        _seed(
+            m.StoreFact,
+            {"store": store, "kind": kind, "label": label},
+            {"value": value, "confirmed": confirmed, "is_active": True},
         )
         n += 1
     return n
@@ -590,25 +639,23 @@ def seed_wa_limits() -> int:
     n = 0
     for term, value, notes in WA_LIMIT_ROWS:
         # As a StoreFact (so a "limits" FAQ query hits them).
-        m.StoreFact.objects.update_or_create(
-            store="",
-            kind="limit",
-            label=f"WA limit: {term}",
-            defaults={"value": f"{value} per visit. {notes}", "confirmed": True, "is_active": True},
+        _seed(
+            m.StoreFact,
+            {"store": "", "kind": "limit", "label": f"WA limit: {term}"},
+            {"value": f"{value} per visit. {notes}", "confirmed": True, "is_active": True},
         )
         # As a WeightTypeTaxonomy axis=limit row (so a "flower limit" weights query hits them).
-        m.WeightTypeTaxonomy.objects.update_or_create(
-            axis="limit",
-            term=term,
-            defaults={"value": value, "notes": notes, "is_active": True},
+        _seed(
+            m.WeightTypeTaxonomy,
+            {"axis": "limit", "term": term},
+            {"value": value, "notes": notes, "is_active": True},
         )
         n += 2
     # The age/ID rule note: DOH-Approved maps to budtender's doh_only filter.
-    m.StoreFact.objects.update_or_create(
-        store="",
-        kind="limit",
-        label="WA limit: age and ID",
-        defaults={
+    _seed(
+        m.StoreFact,
+        {"store": "", "kind": "limit", "label": "WA limit: age and ID"},
+        {
             "value": "21+, valid government photo ID; purchases are tracked so limits can't "
             "be exceeded in a transaction. We can filter to DOH-Compliant products if you'd like.",
             "confirmed": True,
@@ -778,10 +825,10 @@ def seed_weights_types() -> int:
 
     def _tax(axis, term, value, synonyms, notes):
         nonlocal n
-        m.WeightTypeTaxonomy.objects.update_or_create(
-            axis=axis,
-            term=term,
-            defaults={"value": value, "synonyms": synonyms, "notes": notes, "is_active": True},
+        _seed(
+            m.WeightTypeTaxonomy,
+            {"axis": axis, "term": term},
+            {"value": value, "synonyms": synonyms, "notes": notes, "is_active": True},
         )
         n += 1
 
@@ -862,9 +909,10 @@ EDUCATION_ROWS = [
 
 def seed_education() -> int:
     for r in EDUCATION_ROWS:
-        m.EducationDoc.objects.update_or_create(
-            slug=r["slug"],
-            defaults={
+        _seed(
+            m.EducationDoc,
+            {"slug": r["slug"]},
+            {
                 "title": r["title"],
                 "topic": r["topic"],
                 "body": r["body"],
@@ -906,9 +954,10 @@ BLOG_ROWS = [
 
 def seed_blogs() -> int:
     for r in BLOG_ROWS:
-        m.BlogDoc.objects.update_or_create(
-            slug=r["slug"],
-            defaults={
+        _seed(
+            m.BlogDoc,
+            {"slug": r["slug"]},
+            {
                 "title": r["title"],
                 "body": r["body"],
                 "source_url": r.get("source_url", ""),
@@ -1370,12 +1419,13 @@ def seed_agent_prompts() -> int:
             body += UNDER_21_DECLINE
         if role in CALLER_NAME_ROLES:
             body += CALLER_NAME_RULE
-        # ponytail: seed sets the provider DEFAULTS; a dashboard edit overrides per-row and is the
-        # live source of truth. Re-running seed_kb resets these to defaults (same as body) — that's
-        # the intended "reset" behavior, not a bug. Add seed-vs-edit reconciliation only if asked.
-        m.AgentPrompt.objects.update_or_create(
-            role=role,
-            defaults={
+        # ponytail: seed sets the provider DEFAULTS for a role that has no row yet; a dashboard edit
+        # is the live source of truth and survives every boot-time seed_kb (create-only). Only an
+        # explicit ``seed_kb --refresh`` resets prompt/model/voice/tools/greeting to these defaults.
+        _seed(
+            m.AgentPrompt,
+            {"role": role},
+            {
                 "body": body,
                 "model_provider": MODEL_PROVIDER,
                 "vapi_model": VAPI_MODEL,
@@ -1392,14 +1442,20 @@ def seed_agent_prompts() -> int:
 # ── seed_all (blocks 1–16) ────────────────────────────────────────────────────
 
 
-def seed_all() -> dict[str, int]:
-    """Run every seed block in order (idempotent). Returns per-block row counts.
+def seed_all(*, refresh: bool = False) -> dict[str, int]:
+    """Run every seed block in order (idempotent). Returns per-block seed-row counts (the same
+    numbers whether a row was created or kept); ``LAST_RUN`` holds this run's created / kept /
+    refreshed split.
+
+    ``refresh=False`` (the boot-time default) only inserts missing rows; ``refresh=True``
+    (``seed_kb --refresh``) also overwrites existing rows with the code defaults.
 
     Wrapped in ``kb.signals.bulk()`` so the boot-time seed sends one downstream nudge per
     system at the end instead of one per row."""
     from kb import signals
 
-    with signals.bulk():
+    LAST_RUN.clear()
+    with seed_mode(refresh=refresh), signals.bulk():
         return _seed_all_inner()
 
 

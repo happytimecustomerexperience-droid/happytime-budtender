@@ -596,9 +596,9 @@ class Doctor:
             return
         self.add("thinking.vapi", WARN, "Phone agents may think (OWNER DECISION)",
                  f"{detail}. Vapi's Google model settings have no thinking switch",
-                 "Owner decision: for no thinking use gemini-2.5-flash-lite (durably: ASSISTANT_MODEL in voice/constants.py, then provision_vapi).",
+                 "Owner decision: for no thinking use gemini-2.5-flash-lite (on the dashboard Agents page per agent; it survives restarts).",
                  f"gemini-2.5-flash thinks by default at Google; whether Vapi turns it off is not documented. {DOC_THINKING}. "
-                 "A model typed on the dashboard Agents page is reset by seed_kb, which the root docker-compose runs at every voice-web start. "
+                 "seed_kb at voice-web start is create-only, so a dashboard model edit is kept; ASSISTANT_MODEL in voice/constants.py only reaches existing agents via seed_kb --refresh, which also resets every other dashboard prompt edit. "
                  "This doctor never changes models.")
 
     def _numbers(self, squad_id: str, ours: str) -> None:

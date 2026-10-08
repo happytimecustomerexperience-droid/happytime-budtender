@@ -78,4 +78,4 @@ The brand's **voice** is the "Koptza" persona — finalized as KB copy in `kb/se
 via **Publish-to-Vapi** (`PATCH /assistant/{id}`, the P4 path — no new mechanism). The tone:
 **warm, family/community, no-pressure, conservative on dosing**; spoken 21+ confirm (never "let me
 peek at your ID"); out-the-door prices only; numbers/facts only from the KB (Numbers-Guard). Edit
-`KOPTZA_TONE` and re-run `manage.py seed_kb`, then Publish.
+`KOPTZA_TONE` and re-run `manage.py seed_kb --refresh` (it resets dashboard prompt edits), then Publish.

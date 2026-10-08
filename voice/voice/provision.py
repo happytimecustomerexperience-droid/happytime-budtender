@@ -134,12 +134,14 @@ class ReconcileResult:
     changed_fields: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     error: str | None = None
+    note: str = ""  # e.g. "adopt squad ...06e7 from VAPI_SQUAD_ID" (printed only when set)
 
     def line(self) -> str:
         tag = self.vapi_id or "-"
+        note = f"  ({self.note})" if self.note else ""
         warn = f"  (warn: {'; '.join(self.warnings)})" if self.warnings else ""
         err = f"  ERROR: {self.error}" if self.error else ""
-        return f"  {self.kind:<13} {self.name:<26} {self.action:<8} {tag}{warn}{err}"
+        return f"  {self.kind:<13} {self.name:<26} {self.action:<8} {tag}{note}{warn}{err}"
 
 
 @dataclass
@@ -188,6 +190,7 @@ class ProvisionReport:
                     "changed_fields": r.changed_fields,
                     "warnings": r.warnings,
                     "error": r.error,
+                    **({"note": r.note} if r.note else {}),
                 }
                 for r in self.results
             ],
@@ -701,11 +704,90 @@ def ensure_files() -> ReconcileResult:
     )
 
 
-def ensure_squad(member_names: dict[str, str], store: str | None = None) -> ReconcileResult:
+# ── VAPI_SQUAD_ID: the owner's live squad is ADOPTED by id, never duplicated ──────
+# Without VAPI_SQUAD_ID the squad is found by its VapiObject record, else by name (unchanged). With
+# it set, the default (non-per-store) squad is pinned to that id: a missing record adopts it (PATCH,
+# never POST), a record holding a DIFFERENT id stops the run (no silent pick), and a 404 on the id is
+# an error rather than a create. Per-store squads never use VAPI_SQUAD_ID.
+def _tail(value: str) -> str:
+    return f"...{value[-4:]}" if value else "missing"
+
+
+def pinned_squad_id(store: str | None = None) -> str:
+    """``VAPI_SQUAD_ID`` for the default squad (``""`` when unset, or for a per-store squad)."""
+    return "" if store else (getattr(settings, "VAPI_SQUAD_ID", "") or "").strip()
+
+
+def _recorded_squad_id(store: str | None = None) -> str:
+    """The squad id provision recorded, ignoring a synthetic ``dryrun-…`` id an old dry run wrote."""
+    from voice.models import VapiObject
+
+    rec = VapiObject.objects.filter(kind="squad", name=squad_name(store)).first()
+    vapi_id = (rec.vapi_id if rec else "") or ""
+    return "" if vapi_id.startswith("dryrun-") else vapi_id
+
+
+def squad_id_mismatch(store: str | None = None, *, force: bool = False) -> str:
+    """The refusal message when VAPI_SQUAD_ID and the recorded squad id disagree (else ``""``)."""
+    pinned, recorded = pinned_squad_id(store), _recorded_squad_id(store)
+    if force or not pinned or not recorded or recorded == pinned:
+        return ""
+    return (
+        f"VAPI_SQUAD_ID ({pinned}) disagrees with the squad provision_vapi recorded for "
+        f'"{squad_name(store)}" ({recorded}); refusing to pick one. Nothing was changed. Resolve it: '
+        f"if VAPI_SQUAD_ID is the live squad, re-run with --force-squad-id (it re-records that id and "
+        f"PATCHes only that squad; the other squad is left as it is in Vapi); if the recorded squad is "
+        f"the live one, set VAPI_SQUAD_ID={recorded} in voice/.env (or on Credentials) and re-run."
+    )
+
+
+def _ensure_pinned_squad(name: str, payload: dict, pinned: str, *, force: bool = False) -> ReconcileResult:
+    """Reconcile the default squad onto ``VAPI_SQUAD_ID``: GET-then-PATCH that id only."""
+    from voice.models import VapiObject
+
+    conflict = squad_id_mismatch(force=force)
+    if conflict:
+        return ReconcileResult("squad", name, _recorded_squad_id(), action="error", error=conflict)
+    rec = VapiObject.objects.filter(kind="squad", name=name).first()
+    adopting = not (rec and rec.vapi_id == pinned)
+    note = f"adopt squad {_tail(pinned)} from VAPI_SQUAD_ID, PATCH only" if adopting else ""
+    dry = vapi.is_dry_run()
+    missing = (
+        f"VAPI_SQUAD_ID {pinned} was not found in this Vapi account; refusing to create a second "
+        "squad. Check VAPI_SQUAD_ID, and that VAPI_PRIVATE_KEY is for the same Vapi org."
+    )
+    h = _payload_hash(payload)
+    try:
+        try:
+            obj = vapi.get_squad(pinned)
+        except vapi.VapiError as exc:
+            if exc.status == 404:
+                return ReconcileResult("squad", name, pinned, action="error", error=missing, note=note)
+            raise
+        if obj is None and not dry:  # only the offline dry run has nothing to read
+            return ReconcileResult("squad", name, pinned, action="error", error=missing, note=note)
+        if obj and not adopting and rec.last_provision_hash == h:
+            return ReconcileResult("squad", name, pinned, action="nodrift")
+        vapi.patch_squad(pinned, payload)
+        if not dry:  # a dry run records nothing (a synthetic id here would trip the mismatch check)
+            VapiObject.objects.update_or_create(
+                kind="squad", name=name, defaults={"vapi_id": pinned, "last_provision_hash": h}
+            )
+        return ReconcileResult("squad", name, pinned, action="patched", note=note)
+    except vapi.VapiError as exc:
+        return ReconcileResult("squad", name, action="error", error=str(exc), note=note)
+
+
+def ensure_squad(
+    member_names: dict[str, str], store: str | None = None, *, force_squad_id: bool = False
+) -> ReconcileResult:
     name = squad_name(store)
     payload = build_squad_payload(member_names, store)
     if not payload["members"]:
         return ReconcileResult("squad", name, action="skipped", warnings=["no provisioned members yet"])
+    pinned = pinned_squad_id(store)
+    if pinned:
+        return _ensure_pinned_squad(name, payload, pinned, force=force_squad_id)
     result = _reconcile(
         "squad",
         name,
@@ -743,7 +825,7 @@ def phone_number_target(store: str | None = None) -> tuple[str, str]:
     return label, number_id
 
 
-def ensure_phone_number(store: str | None = None) -> ReconcileResult:
+def ensure_phone_number(store: str | None = None, *, force_squad_id: bool = False) -> ReconcileResult:
     """Attach the Squad to the inbound number (``PATCH /phone-number/{id}`` → ``squadId``).
     ``VAPI_PHONE_NUMBER_ID`` unset (O-4) → ``skipped`` (the Squad + assistant still provision).
     With ``store``: that store's own number (from the store map) gets that store's own squad.
@@ -762,10 +844,18 @@ def ensure_phone_number(store: str | None = None) -> ReconcileResult:
                 else "VAPI_PHONE_NUMBER_ID not configured"
             ],
         )
-    squad = VapiObject.objects.filter(kind="squad", name=squad_name(store)).first()
-    if not (squad and squad.vapi_id):
-        return ReconcileResult("phone_number", label, action="skipped", warnings=["squad not provisioned yet"])
-    payload = phone_number_payload(label, squad.vapi_id)
+    pinned = pinned_squad_id(store)
+    if pinned:  # the number is bound to the owner's squad id, never to a different recorded one
+        conflict = squad_id_mismatch(store, force=force_squad_id)
+        if conflict:
+            return ReconcileResult("phone_number", label, action="error", error=conflict)
+        squad_id = pinned
+    else:
+        squad = VapiObject.objects.filter(kind="squad", name=squad_name(store)).first()
+        if not (squad and squad.vapi_id):
+            return ReconcileResult("phone_number", label, action="skipped", warnings=["squad not provisioned yet"])
+        squad_id = squad.vapi_id
+    payload = phone_number_payload(label, squad_id)
     return _reconcile(
         "phone_number",
         number_id,
@@ -834,11 +924,13 @@ def provision_all(
     only: str | None = None,
     members: list[str] | None = None,
     per_store: bool = False,
+    force_squad_id: bool = False,
 ) -> ProvisionReport:
     """Stand up the P0 Vapi stack from env; a re-run is a proven no-op (ADR-003).
 
     Order is mandatory (§6.2): tools → files → assistants → squad → phone. ``--dry-run`` (auto when
-    VAPI_PRIVATE_KEY is unset) records writes without issuing them."""
+    VAPI_PRIVATE_KEY is unset) records writes without issuing them. A VAPI_SQUAD_ID that disagrees
+    with the recorded squad id stops the run before any write unless ``force_squad_id``."""
     # Auto-engage dry-run when no key (the command also forces it on --dry-run).
     if not vapi.configured():
         dry_run = True
@@ -851,6 +943,13 @@ def provision_all(
         report.ok = False
         report.error = auth["error"] or "VAPI_PRIVATE_KEY not configured"
         return report
+
+    if only in (None, "squad", "phone"):
+        conflict = squad_id_mismatch(force=force_squad_id)
+        if conflict:
+            report.ok = False
+            report.error = conflict
+            return report
 
     results = report.results
 
@@ -881,11 +980,11 @@ def provision_all(
     # (4) SQUAD — every provisioned member; the code-defined edges (entry_router →(retail)→
     #     budtender, budtender →(human)→ escalation) are emitted only when BOTH endpoints exist.
     if only in (None, "squad"):
-        results.append(ensure_squad(_provisioned_members()))
+        results.append(ensure_squad(_provisioned_members(), force_squad_id=force_squad_id))
 
     # (5) PHONE NUMBER — attach squadId (graceful skip if O-4 unset).
     if only in (None, "phone"):
-        results.append(ensure_phone_number())
+        results.append(ensure_phone_number(force_squad_id=force_squad_id))
 
     # (6) PER-STORE SQUADS (opt-in) — one squad per store over the same assistants, each attached to
     #     that store's own number. Attaching re-routes live calls, so it never runs by default.

@@ -154,11 +154,15 @@ any of this, switch off "Greet callers by first name" on `/dashboard/capabilitie
 ### 5.2 Squad
 Set `VAPI_SQUAD_ID=2b132e78-6b37-4b12-b99a-17d23f8906e7` in `voice/.env`.
 
-> **Warning.** `provision_vapi` finds the squad by the id it recorded in its own database, or else by
-> the name `Happy Time Voice`; it does **not** read `VAPI_SQUAD_ID` (the dashboard Publish button
-> does). If the live squad has another name and was never recorded, `provision_vapi` would create a
-> second squad and attach the number to it. The doctor's `config.squad_id` line warns when the three
-> ids disagree, and the dry run shows `created` for the squad. Do not apply a run that says that.
+> **How `provision_vapi` picks the squad.** With `VAPI_SQUAD_ID` set, it updates **that** squad only
+> (`PATCH`, never a new squad), whatever its name: if it has no record of its own yet it adopts the id
+> (the dry run shows `adopt squad ...06e7 from VAPI_SQUAD_ID, PATCH only`) and binds the number to it;
+> an id Vapi does not know is an error, not a create. If its own record holds a **different** id it
+> stops before changing anything and prints both ids: if `VAPI_SQUAD_ID` is the live squad, re-run
+> with `--force-squad-id`; if the recorded one is, put that id in `VAPI_SQUAD_ID`. The doctor's
+> `config.squad_id` line warns about the same disagreement. Without `VAPI_SQUAD_ID` it falls back to
+> its record, then the name `Happy Time Voice`, then creates one (the dry run then shows `created`
+> for the squad: do not apply such a run against a live account).
 
 ### 5.3 Webhook security
 Our server accepts a Vapi event only with the shared secret (`VAPI_WEBHOOK_SECRET`) in the
@@ -206,10 +210,10 @@ there, so those lines fail or warn.
   OpenAI. Whether Vapi turns Gemini's thinking off by itself is not documented.
 * **OWNER DECISION:** Google's `gemini-2.5-flash-lite` does not think unless asked (Google's
   documentation; **NOT VERIFIED** here, Google's site was unreachable), and Vapi lists it as a
-  supported model. Switching is a quality/speed trade-off you decide. The durable way is to have
-  your developer change `ASSISTANT_MODEL` in `voice/voice/constants.py` and run `provision_vapi`:
-  a model typed on the dashboard Agents page is reset at the next restart (section 7.1). The doctor
-  never changes models.
+  supported model. Switching is a quality/speed trade-off you decide. Set it per agent on the
+  dashboard Agents page (it survives restarts, section 7.1). Changing `ASSISTANT_MODEL` in
+  `voice/voice/constants.py` only reaches agents that already exist through `seed_kb --refresh`,
+  which also resets every other dashboard prompt edit. The doctor never changes models.
 
 ---
 
@@ -219,7 +223,7 @@ there, so those lines fail or warn.
 |---|---|---|---|
 | **Publish all** | `/dashboard/publish/` | every active agent (`PATCH /assistant`: prompt, model, voice, transcriber, server URL + secret, tools list) and the squad (`VAPI_SQUAD_ID`) plus any per-store squads | the phone number, tool definitions (except a newly bound one), knowledge files |
 | **Publish on save** | automatic when "Publish prompt edits to the phone instantly" is on (Capabilities) | the same, for the agent you saved | same |
-| `provision_vapi` | VPS command line | tools, KB files mirror, all agents, the squad (by recorded id/name, see 5.2), **and the phone number binding** | nothing outside Vapi |
+| `provision_vapi` | VPS command line | tools, KB files mirror, all agents, the squad (`VAPI_SQUAD_ID`, else recorded id/name, see 5.2), **and the phone number binding** | nothing outside Vapi |
 
 Anything you change directly in Vapi's dashboard on those agents (prompt, voice, model) is
 overwritten by the next Publish or `provision_vapi`. Make changes on our dashboard instead.
@@ -227,17 +231,19 @@ overwritten by the next Publish or `provision_vapi`. Make changes on our dashboa
 Safe routine: `provision_vapi --dry-run` first, read it, then `provision_vapi` when the line is quiet,
 then `vapi_doctor`.
 
-### 7.1 Important: the restart resets prompts and the three hours rows
+### 7.1 The restart keeps your dashboard edits (`seed_kb` is create-only)
 The repo-root `docker-compose.yml` starts `voice-web` with `python manage.py seed_kb` every time.
-`seed_kb` (`kb/seed.py`) rewrites, on **every restart or rebuild**:
-* each agent's **prompt, model, voice, tools and greeting** back to the code defaults (prompt edits
-  made on the dashboard are lost; with publish-on-save on, the defaults are then pushed to Vapi);
-* the three seeded hours rows named **"Yakima hours"**, **"Mt Vernon hours"**, **"Pullman hours"**
-  (and the seeded address/phone rows) back to the values in `kb/seed.py`.
+`seed_kb` (`kb/seed.py`) only **adds rows that are missing** (a fresh database, or a seeded row that
+was deleted). It never overwrites an existing row, so your edits to each agent's **prompt, model,
+voice, tools and greeting**, the seeded hours/address/phone rows (**"Yakima hours"** etc.) and the
+FAQ, policy and education rows, including switching a row off or unticking Confirmed, survive every
+restart or rebuild. Deals (kind "special") are never touched by the seed.
 
-Deals (kind "special") are **never** touched by the seed, so deals you type are safe. Until your
-developer changes this, ask them to put permanent hours/prompt changes into `kb/seed.py`, or re-type
-your edits after each restart. (**This is a code behaviour, not something the doctor can fix.**)
+The reset is deliberate only: `docker compose exec voice-web python manage.py seed_kb --refresh`
+(same as `--overwrite`) puts **every** seeded row back to the values in `kb/seed.py`, wiping those
+dashboard edits (deals excepted; with publish-on-save on, the reset prompts then go to Vapi). Your
+developer uses it to deploy changed seed content, because new text in `kb/seed.py` does not reach an
+existing row otherwise.
 
 ---
 
@@ -283,8 +289,8 @@ Pages you asked about (all under `/dashboard/`):
 
 ### 8.2 Change hours
 Same page, filter **Hours**, **Edit** the store's row, change **Value**, keep **Confirmed** ticked,
-save. Live on the next call. **Read 7.1:** the three seeded rows ("Yakima hours" etc.) go back to the
-code values at the next restart of `voice-web`.
+save. Live on the next call, and kept across restarts of `voice-web` (7.1); only
+`seed_kb --refresh` puts the code values back.
 
 ### 8.3 How the vendor allowlist works
 * On `/dashboard/vendor-allowlist/`: set **Owner phone** (owner only), add each vendor's exact number.
@@ -370,7 +376,7 @@ should come from the same in-stock list. Ask both for today's deals; both should
 | Tools fail, agent says it cannot check stock | webhook secret mismatch (401) or budtender down | `vapi_doctor` lines `vapi.member.*`, `budtender.*` |
 | Transfer fails | `HHT_TRANSFER_NUMBER_*` missing (a placeholder `+10000000000` is sent), or "Transfer phone calls to a person" off | Credentials page or `.env`, then `provision_vapi` |
 | Deal not spoken | row not Confirmed, not active, or outside its dates | Specials page badges |
-| Hours or prompt edits came back old | `seed_kb` at restart (section 7.1) | developer change to `kb/seed.py` |
+| Hours or prompt edits came back old | someone ran `seed_kb --refresh` (section 7.1) | re-type the edit on the dashboard |
 | Dashboard Publish says "tool not provisioned: remember_caller" | dynamic greeting on but `provision_vapi` not run yet | run `provision_vapi` |
 | `provision_vapi` prints "dry-run" though you have a key | the key is only on the Credentials page, not in `voice/.env` | put it in `voice/.env` on the VPS |
 | Doctor: budtender unreachable | ran on Windows, or `web` container down | run it on the VPS with `docker compose exec voice-web ...` |
