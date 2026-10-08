@@ -30,7 +30,8 @@ def numbers(settings):
 # ── the tool: three destinations, one per store ──────────────────────────────────────────────────
 
 
-def test_transfer_tool_has_one_described_destination_per_store(numbers):
+def test_transfer_tool_has_one_described_destination_per_store(numbers, settings):
+    settings.HHT_TRANSFER_CONSULT = False  # the legacy warm-summary transfer (consult-first is test_consult_transfer.py)
     warnings: list[str] = []
     tool = provision._transfer_tool(warnings)
 

@@ -20,7 +20,7 @@ budtender engine the website chat uses.
 
 | Piece | Where it runs | What it does |
 |---|---|---|
-| **Vapi** | Vapi's cloud (dashboard.vapi.ai) | Answers the phone, turns speech into text and back, runs the five AI agents of the squad (entry_router, budtender, faq, vendor, escalation). Their model is Google `gemini-2.5-flash`, run *inside Vapi*. |
+| **Vapi** | Vapi's cloud (dashboard.vapi.ai) | Answers the phone, turns speech into text and back, and runs the AI agent. Default (`HHT_SQUAD_MODE=single`): ONE agent, `concierge`, in a one-member squad, which greets, answers store questions, helps people shop, handles vendors and problems itself (no handoffs, so the caller never hears "let me get someone"). Rollback (`HHT_SQUAD_MODE=multi`): the old five-agent squad (entry_router, budtender, faq, vendor, escalation). The model is Google `gemini-2.5-flash`, run *inside Vapi*. |
 | **Voice service** (`voice-web`) | Your VPS, container `voice-web`, public at `https://voice.happytimeweed.com` | The "control plane" in this `voice/` folder: the webhook Vapi calls (`/api/voice/vapi`), the owner dashboard (`/dashboard/`), the knowledge base (deals, hours, FAQ), the vendor allowlist, call records. |
 | **Budtender API** (`web`) | Your VPS, container `web` (repo root), reached by voice at `http://budtender.internal:8000` | Live Dutchie inventory, product ranking, customer profiles and customer memory. Holds the Dutchie keys (voice never does). |
 | **Website chat** | happytimeweed.com (Vercel; a different repository) | The chat bubble. Calls the same budtender API for ranking, memory and deals. |
@@ -153,6 +153,32 @@ any of this, switch off "Greet callers by first name" on `/dashboard/capabilitie
 
 ### 5.2 Squad
 Set `VAPI_SQUAD_ID=2b132e78-6b37-4b12-b99a-17d23f8906e7` in `voice/.env`.
+
+> **One agent or five (`HHT_SQUAD_MODE`).** `single` (the default) makes the squad ONE member, the
+> `concierge`, with no `assistantDestinations`: it greets, answers hours/deals/returns/payment from the
+> knowledge base, runs the product questions, handles vendors and problems, and transfers to a person
+> only with the consult transfer below. The same squad id is kept (provision PATCHes it). The five old
+> assistants are **not** changed or deleted in Vapi; they stay for rollback. Until `provision_vapi`
+> has created the concierge, everything keeps answering as the five-agent squad. The dry run says
+> `HHT_SQUAD_MODE=single`, shows `assistant concierge created` (or `patched`), the five old agents as
+> `skipped ... left as is in Vapi for rollback`, and the squad PATCH with exactly one member.
+> **Roll back:** set `HHT_SQUAD_MODE=multi` in `voice/.env`, restart, `provision_vapi --dry-run`, then
+> `provision_vapi` (it re-PATCHes the five agents and the five-member squad onto the same squad id).
+> Dashboard edits to the concierge are saved and used by the next `provision_vapi`, but the dashboard's
+> Publish button does not push the concierge yet (`dashboard/publish.py` lists only the five old roles).
+
+> **Transfers ask first (`HHT_TRANSFER_CONSULT`, default on).** Every transfer to a real person (a
+> store line, and the owner for an allowlisted vendor) uses Vapi's `warm-transfer-experimental`: the
+> caller is put on hold, Vapi calls the person, a short transfer assistant says "Hi, it's the Happy
+> Time phone line. I have Sam on the line about a broken cart. Can you take the call?" and connects
+> the caller only on a spoken yes. No, no answer, voicemail or an automated greeting cancels: the
+> caller hears "I'm sorry, nobody from the team can take the call right now. I can take a message and
+> have someone call you back." and the agent takes the message. The team hears only the caller's
+> first name (or "a caller") and the reason, never a phone number or the caller's history. The call
+> log shows the transfer as `connected`, `declined`, `no_answer`, `voicemail` or `unavailable` (Vapi
+> did not say why) and the outcome "Transfer: person unavailable" when no message was taken.
+> `HHT_TRANSFER_CONSULT=0` + `provision_vapi` restores the old transfers (straight through with a
+> spoken summary, and the allowlist's direct forward to the owner).
 
 > **How `provision_vapi` picks the squad.** With `VAPI_SQUAD_ID` set, it updates **that** squad only
 > (`PATCH`, never a new squad), whatever its name: if it has no record of its own yet it adopts the id
@@ -294,8 +320,13 @@ save. Live on the next call, and kept across restarts of `voice-web` (7.1); only
 
 ### 8.3 How the vendor allowlist works
 * On `/dashboard/vendor-allowlist/`: set **Owner phone** (owner only), add each vendor's exact number.
-* A call from an **active** number on the list skips the AI and rings the owner's phone; Vapi says
-  "Thanks for calling Happy Time. Connecting you now, one moment." Only exact numbers match.
+* A call from an **active** number on the list skips the normal agent: a short per-call voice says
+  "Thanks for calling Happy Time. One moment while I see if the owner is free.", the vendor is put on
+  hold and your phone rings. You hear "Hi, it's the Happy Time phone line. Acme Distribution is
+  calling Happy Time, about <the entry's note>. Do you want to take the call?" Say yes to be
+  connected; say no (or let it ring out) and the vendor hears you are not available and is asked
+  for a message, which lands on **Vendor** callbacks. Only exact numbers match. With
+  `HHT_TRANSFER_CONSULT=0` it is the old direct forward ("Connecting you now, one moment.").
 * Anyone else who says they are a vendor talks to the AI vendor agent: it asks them to hold, tries
   the store line, and if nobody answers takes a callback (it appears on **Vendor** callbacks).
 * It needs: dynamic greeting on (section 4), the switch "Send allowlisted vendors straight to the
@@ -339,10 +370,15 @@ Before calling: `vapi_doctor` shows no FAIL. After each call, look at **Calls** 
 | 4 | **Hours** ("when do you close?") | The hours row for that store, nothing invented | matches Specials > Hours |
 | 5 | **Product recommendation with a ratio** ("a 1:1 gummy for evening") | Asks size before any price; gives up to 3 in-stock picks with THC/CBD numbers read from the tool. There is no dedicated "ratio" filter in the tool: listen that it does not invent a ratio | tools used: `suggest_products`; compare with the website chat (section 10) |
 | 6 | **Vendor NOT on the list** ("I'm dropping off a delivery") | Asks you to hold, tries the store line, then takes your name/company/reason and promises a callback within one business day | **Vendor** callbacks has the request |
-| 7 | **Vendor ON the list** (call from an allowlisted number) | No AI conversation: "Thanks for calling Happy Time. Connecting you now" and the owner's phone rings | call log outcome "Vendor sent to owner"; allowlist row "Matches" +1 |
+| 7 | **Vendor ON the list** (call from an allowlisted number) | One line ("One moment while I see if the owner is free"), then hold; the owner's phone rings and hears the entry's name; owner says **yes** and is connected | call log outcome "Vendor sent to owner", transfer `connected`; allowlist row "Matches" +1 |
 | 8 | **After hours** | **There is no after-hours mode in the code**: the AI answers as usual 24/7 and quotes the hours; a transfer rings the store line, which may go unanswered | decide if you want different behaviour |
-| 9 | **Transfer to a person** ("can I talk to someone?" twice) | "Connecting you to the team now"; the store phone rings; staff hear a short summary first | outcome escalation / transfer in the call log |
+| 9 | **Transfer to a person, accepted** ("can I talk to someone?" twice) | Asks "who should I say is calling, and what is it about?" once, then "one moment while I see if someone from the team is free"; the store phone rings; staff hear name + reason and say **yes**; you are connected | transfer `connected` in the call log |
 | 10 | **Something unsafe** (e.g. "my dog ate an edible", or "I'm 19") | The fixed owner-approved safety sentence first, then offer of a team member; under-21: no product help | transcript shows the exact safety sentence |
+| 11 | **No silence, no handoff language** (single mode). Open with the need: "hi, I want a one-to-one gummy for tonight", then mid-call "what time do you close?", then "I'm also dropping off a delivery later" | It goes straight to the gummy questions (never "how can I help?"), answers the hours and returns to the pick, handles the vendor part itself. Never "let me get a member / someone who knows / our budtender"; no gap longer than a short "one sec, let me check" before each answer | transcript: one agent name only, no handoff phrase; tools used `suggest_products`, `faq_lookup` |
+| 12 | **Transfer declined**: as 9, staff say "no, not now" | You hear "nobody from the team can take the call right now, I can take a message"; it takes your message | transfer `declined` or `unavailable`; an Escalation email / Vendor callback |
+| 13 | **Transfer not answered**: as 9, nobody picks up the store phone | After the ring-out (about 20 to 60 seconds) the same "can't take the call" line, then a message | transfer `no_answer` or `unavailable` |
+| 14 | **Transfer reaches voicemail**: as 9, the store phone goes to voicemail | The transfer assistant hangs up on the voicemail; you hear the "can't take the call" line; nothing is left on the voicemail | transfer `voicemail` or `unavailable`; check the store voicemail is empty |
+| 15 | **Owner declines an allowlisted vendor**: as 7, owner says "no" (or does not answer) | The vendor hears "the owner isn't available right now... what would you like me to pass along?", gives a message and hears the callback window | Vendor callback logged; outcome "Vendor callback" (or "Transfer: person unavailable") |
 
 ---
 
@@ -404,6 +440,16 @@ should come from the same in-stock list. Ask both for today's deals; both should
 
 ## 13. What could NOT be verified from the repository
 
+* Single mode (one concierge agent): how it SOUNDS. The tests prove the prompt text, the tools and
+  the one-member squad offline; whether Gemini follows "never go quiet" and "act on the first sentence"
+  on a real call can only be heard (test calls 11, 5, 3, 6).
+* Consult transfers: Vapi's `warm-transfer-experimental` with a `transferAssistant` is documented in
+  VapiAI/docs (`fern/calls/assistant-based-warm-transfer.mdx`) but its `transferAssistant` field is not
+  in the published OpenAPI `TransferPlan`, so whether the live API accepts it, how reliably the
+  transfer assistant tells a person from voicemail, whether the "can't take the call" line appears in
+  the end-of-call transcript (the call log reads it back), and whether the allowlist's
+  `call.timeElapsed` hook may run a transfer, are unverified: test calls 9, 12 to 15. If Vapi refuses
+  the payload (`provision_vapi` shows a 400), set `HHT_TRANSFER_CONSULT=0` and re-run.
 * Any live Vapi behaviour: no call was made and Vapi was not reachable while writing this. Including:
   whether Vapi applies the per-call variables to every squad member across handoffs; whether `PATCH
   /phone-number` with `squadId: null` really unbinds the number (README "Dynamic greeting rollout");

@@ -15,7 +15,13 @@ no owner number, any error) returns ``None`` and the call is answered exactly as
 vendor agent asks the caller to hold, tries the store line, and takes a callback if nobody answers.
 It never raises and never blocks a call.
 
-The answer shape is Vapi's documented "Transfer only (skip AI)" reply to ``assistant-request``:
+Consult first (HHT_TRANSFER_CONSULT on, the default): the answer is a small per-call assistant
+(``voice/consult.owner_consult_assistant``) that says one line, puts the vendor on hold and asks the
+owner first, announcing the allowlist entry's name; the vendor is connected only if the owner says
+yes, otherwise they hear the owner is unavailable and a callback message is taken. With the setting
+off the answer is the old direct forward below.
+
+The direct-forward shape is Vapi's documented "Transfer only (skip AI)" reply to ``assistant-request``:
 ``{"destination": {"type": "number", "number": "+1...", "message": "..."}}``; with a ``destination``
 present Vapi ignores any assistant/squad and forwards the call
 (https://docs.vapi.ai/server-url/events, "Retrieving Assistants" > "Transfer only (skip AI)").
@@ -113,6 +119,10 @@ def direct_destination(message: dict, store: str) -> dict | None:
         if not decision.route or not owner:
             return None
         _record(str(call.get("id") or ""), store, raw, decision.entry)
+        from voice import consult
+
+        if consult.enabled():  # ask the owner first; a decline comes back for a callback message
+            return {"assistant": consult.owner_consult_assistant(decision.entry, owner, store)}
         return {"destination": {"type": "number", "number": owner, "message": TRANSFER_MESSAGE}}
     except Exception:  # noqa: BLE001 - the allowlist must never cost a call; the AI answers instead
         logger.warning("vendor allowlist check failed; answering with the assistant", exc_info=True)

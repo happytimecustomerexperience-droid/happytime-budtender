@@ -59,6 +59,11 @@ class Command(BaseCommand):
         self.stdout.write(f'Provisioning Vapi stack "{C.SQUAD_NAME}" ...')
         if dry_run:
             self.stdout.write(self.style.WARNING("  (dry-run — no Vapi writes will be issued)"))
+        if provision.single_mode_ready():
+            self.stdout.write(
+                "  (HHT_SQUAD_MODE=single: ONE concierge agent in a one-member squad, no handoffs; the "
+                "old agents are left as they are in Vapi. Roll back: HHT_SQUAD_MODE=multi + provision_vapi)"
+            )
 
         report = provision.provision_all(
             dry_run=dry_run,
@@ -108,12 +113,23 @@ class Command(BaseCommand):
                 "# entry_router/budtender gain remember_caller. Turn it off and re-run to roll back."
             )
 
+        single = provision.single_mode_ready()
+        if single:
+            blocks.append(
+                "# HHT_SQUAD_MODE=single: the squad becomes ONE member (concierge) with no\n"
+                "# assistantDestinations. entry_router/budtender/faq/vendor/escalation are not touched in\n"
+                "# Vapi (kept for rollback: HHT_SQUAD_MODE=multi, then provision_vapi)."
+            )
         tools = ["faq_lookup"] + (["remember_caller"] if dynamic else [])
+        if single:
+            tools = ["faq_lookup", *provision._tools_for_roles([C.CONCIERGE_ROLE])]
         if only in (None, "tool"):
             for name in tools:
                 blocks.append(self._block(f"POST/PATCH /tool  ({name})", provision.build_tool_payload(name)))
 
         assistants = [(C.P0_ASSISTANT_ROLE, C.P0_ASSISTANT_NAME)] + ([("entry_router", "entry_router")] if dynamic else [])
+        if single:
+            assistants = [(C.CONCIERGE_ROLE, C.CONCIERGE_ROLE)]
         if only in (None, "assistant"):
             for role, name in assistants:
                 payload, warnings = provision.build_assistant_payload(role, name=name)
@@ -125,6 +141,9 @@ class Command(BaseCommand):
         if only in (None, "squad"):
             # In a dry run the assistant has a synthetic id; show the single-member container shape.
             members = provision._p0_members() or {C.P0_ASSISTANT_ROLE: "dryrun-assistant"}
+            if single:
+                rec = VapiObject.objects.filter(kind="assistant", name=C.CONCIERGE_ROLE).first()
+                members = {C.CONCIERGE_ROLE: (rec.vapi_id if rec and rec.vapi_id else "dryrun-assistant")}
             pinned = provision.pinned_squad_id()
             title = (
                 f"PATCH /squad/{pinned}  (Happy Time Voice, VAPI_SQUAD_ID; never POST)"

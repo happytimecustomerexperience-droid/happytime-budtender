@@ -113,6 +113,7 @@ def world(settings, monkeypatch, db):
     settings.HHT_TRANSFER_NUMBER_PULLMAN = "+15093342788"
     settings.HHT_DEFAULT_STORE = "yakima"
     settings.HHT_DYNAMIC_GREETING = True
+    settings.HHT_SQUAD_MODE = "multi"  # this world is the five-agent squad (single mode: test_single_squad_mode.py)
 
     for r in ROLES:
         AgentPrompt.objects.update_or_create(role=r, defaults={"body": "x", "vapi_assistant_id": f"asst-{r}"})

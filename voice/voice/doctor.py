@@ -473,8 +473,43 @@ class Doctor:
         self.add("vapi.squad", PASS if members else FAIL, "Squad exists in Vapi",
                  f"'{body.get('name', '')}' ({tail(squad_id)}), {len(members)} member(s)",
                  "" if members else "The squad has no members: run provision_vapi.")
+        if members:
+            self._squad_shape(members)
         self._saved_ids_vs_squad(members)
         return members
+
+    def _squad_shape(self, members: list) -> None:
+        """Single mode (HHT_SQUAD_MODE, default): the live squad must be ONE member, the concierge,
+        with no assistantDestinations. Multi mode: nothing new is checked here."""
+        from voice import constants as C
+
+        if C.squad_mode() != "single":
+            return
+        title = "Squad is one agent, no handoffs (HHT_SQUAD_MODE=single)"
+        fix = ("Run provision_vapi --dry-run, check it shows ONE member (concierge), then provision_vapi. "
+               "Roll back with HHT_SQUAD_MODE=multi + provision_vapi.")
+        try:
+            from kb.models import AgentPrompt
+
+            row = AgentPrompt.objects.filter(role=C.CONCIERGE_ROLE, is_active=True).first()
+        except Exception:  # noqa: BLE001
+            row = None
+        concierge_id = (row.vapi_assistant_id if row else "") or ""
+        edges = sum(len(m.get("assistantDestinations") or []) for m in members)
+        if not row:
+            self.add("vapi.squad_shape", WARN, title, "no concierge agent in the database yet",
+                     "Restart voice-web (seed_kb creates it) or run seed_kb, then provision_vapi.")
+        elif len(members) != 1:
+            self.add("vapi.squad_shape", WARN, title,
+                     f"the live squad still has {len(members)} members (the old multi-agent setup)", fix)
+        elif edges:
+            self.add("vapi.squad_shape", WARN, title, f"the one member still has {edges} handoff destination(s)", fix)
+        elif not concierge_id or members[0].get("assistantId") != concierge_id:
+            self.add("vapi.squad_shape", WARN, title,
+                     f"the one member ({tail(members[0].get('assistantId'))}) is not the saved concierge "
+                     f"({tail(concierge_id)})", fix)
+        else:
+            self.add("vapi.squad_shape", PASS, title, f"1 member: concierge ({tail(concierge_id)}), no handoffs")
 
     def _saved_ids_vs_squad(self, members: list) -> None:
         from voice import caller, provision
@@ -483,12 +518,16 @@ class Doctor:
             saved = provision.saved_member_ids()
         except Exception:  # noqa: BLE001
             return
+        from voice import constants as C
+
+        mode = provision.effective_mode(saved)
+        entry = C.entry_role(mode)
         live = {m.get("assistantId") for m in members}
-        stray = sorted(r for r, a in saved.items() if a not in live)
+        stray = sorted(r for r, a in saved.items() if a not in live and r in C.squad_shape(mode))
         dynamic = caller.dynamic_greeting()
-        if dynamic and "entry_router" not in saved:
+        if dynamic and entry not in saved:
             self.add("vapi.call_squad", FAIL, "Per-call squad can be built (dynamic greeting)",
-                     "no saved entry_router assistant id: assistant-request falls back to one assistant, no squad",
+                     f"no saved {entry} assistant id: assistant-request falls back to one assistant, no squad",
                      "Run provision_vapi so every agent's Vapi id is saved.")
         elif stray:
             self.add("vapi.call_squad", WARN if dynamic else PASS, "Saved agent ids match the live squad",
@@ -514,8 +553,11 @@ class Doctor:
         transfer_on = True
         with contextlib.suppress(Exception):
             transfer_on = capabilities.is_enabled("call.transfer")
+        from voice import constants as C
+
         models: list[tuple[str, str, str]] = []
         tool_ids: list[str] = []
+        transfer_modes: list[str] = []
         for m in members:
             aid = m.get("assistantId") or ""
             if not aid:
@@ -550,11 +592,21 @@ class Doctor:
                 auth = "no webhook auth visible"
                 worst = max(worst, WARN, key=_RANK.get)
             kinds = [t.get("type") for t in model.get("tools") or [] if isinstance(t, dict)]
-            if name in ("vendor", "escalation") and transfer_on and "transferCall" not in kinds:
+            if name in C.TRANSFER_ROLES and transfer_on and "transferCall" not in kinds:
                 problems.append("transferCall tool missing")
                 worst = FAIL
-            elif name in ("vendor", "escalation"):
+            elif name in C.TRANSFER_ROLES:
                 auth += "; transferCall present" if "transferCall" in kinds else "; transfers switched off"
+            transfer_modes += [
+                str((d.get("transferPlan") or {}).get("mode") or "blind-transfer")
+                for t in model.get("tools") or [] if isinstance(t, dict) and t.get("type") == "transferCall"
+                for d in t.get("destinations") or [] if isinstance(d, dict)
+            ]
+            if name == C.CONCIERGE_ROLE:
+                missing = self._concierge_tool_gap(model)
+                if missing:
+                    problems.append(f"tools differ from what provision_vapi would attach ({missing})")
+                    worst = max(worst, WARN, key=_RANK.get)
             fix = ""
             if worst == FAIL:
                 fix = "Run provision_vapi (it rewrites serverUrl, secret and tools on every agent)."
@@ -565,6 +617,41 @@ class Doctor:
                      fix, DOC_SERVER_AUTH if worst != PASS else "")
         self._tools(tool_ids, ours)
         self._thinking_vapi(models)
+        self._transfer_consult(transfer_modes)
+
+    @staticmethod
+    def _concierge_tool_gap(model: dict) -> str:
+        """"" when the live concierge's toolIds are exactly what provision would attach, else a note."""
+        try:
+            from kb.models import AgentPrompt
+            from voice import constants as C
+            from voice import provision
+
+            row = AgentPrompt.objects.filter(role=C.CONCIERGE_ROLE, is_active=True).first()
+            expected, _ok = provision._resolve_tool_ids(C.CONCIERGE_ROLE, [], row)
+        except Exception:  # noqa: BLE001 - no DB: nothing to compare
+            return ""
+        live = {t for t in model.get("toolIds") or [] if isinstance(t, str)}
+        missing, extra = len(set(expected) - live), len(live - set(expected))
+        return "" if not missing and not extra else f"{missing} missing, {extra} extra"
+
+    def _transfer_consult(self, modes: list[str]) -> None:
+        """Every transfer to a person must ask that person first (voice/consult.py)."""
+        if not modes:
+            return
+        from voice import consult
+
+        title = "Transfers ask the person first (consult before connecting)"
+        other = sorted({m for m in modes if m != consult.MODE})
+        if not consult.enabled():
+            self.add("vapi.transfer_consult", WARN, title, "HHT_TRANSFER_CONSULT is off: callers are put straight through",
+                     "Set HHT_TRANSFER_CONSULT=1 (the default) and run provision_vapi.")
+        elif other:
+            self.add("vapi.transfer_consult", WARN, title,
+                     f"{len([m for m in modes if m != consult.MODE])} of {len(modes)} destination(s) connect without "
+                     f"asking ({', '.join(other)})", "Run provision_vapi (it rewrites every transfer destination).")
+        else:
+            self.add("vapi.transfer_consult", PASS, title, f"{len(modes)} destination(s) use {consult.MODE}")
 
     def _tools(self, tool_ids: list[str], ours: str) -> None:
         if not tool_ids:

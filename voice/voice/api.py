@@ -205,10 +205,11 @@ def persona(request):
     if not written:
         return JsonResponse({"ok": False}, status=404)
 
-    entry = AgentPrompt.objects.filter(role="entry_router", is_active=True).first()
     updated_at = written.updated_at
-    if entry and entry.updated_at > updated_at:
-        updated_at = entry.updated_at
+    # The greeting comes from the entry agent (the concierge in single mode, else entry_router).
+    for entry in AgentPrompt.objects.filter(role__in=("entry_router", "concierge"), is_active=True):
+        if entry.updated_at > updated_at:
+            updated_at = entry.updated_at
 
     # Screen the OWNER-EDITABLE body only — the code-owned "IMMUTABLE RUNTIME SAFETY" block
     # appended by ``_with_runtime_safety`` legitimately discusses ignoring/revealing

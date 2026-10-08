@@ -10,7 +10,16 @@ branded dashboard and auto-deployable to Vapi over the REST API.
 > Built from the executable plan suite in [`docs/plans/`](docs/plans/) — start with
 > [`00-MASTER-ROADMAP.md`](docs/plans/00-MASTER-ROADMAP.md) and [`02-DECISIONS.md`](docs/plans/02-DECISIONS.md).
 
-## Architecture (one Squad, five assistants)
+## Architecture (one Squad: one agent by default, five on rollback)
+
+**`HHT_SQUAD_MODE=single` (default):** the squad has ONE member, `concierge`, with no handoffs. It
+greets (the same owner-editable greeting, by name with the dynamic greeting), answers store questions
+from the KB, runs the product questions with the suggestion tools, handles vendors and problems, and
+transfers to a person only after that person agreed (`HHT_TRANSFER_CONSULT`, `voice/consult.py`). Its
+prompt is composed in `kb/seed.py` from the five tested personas below. **Rollback:** set
+`HHT_SQUAD_MODE=multi`, then `provision_vapi`: the five assistants are never deleted, only left as they
+are while single mode runs. `vapi_doctor` warns while the live squad is still multi-member. The
+five-agent squad (`multi`) is unchanged:
 
 ```
 Vapi Squad "Happy Time Voice"

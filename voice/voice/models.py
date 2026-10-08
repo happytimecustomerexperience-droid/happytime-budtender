@@ -24,6 +24,9 @@ class Outcome(models.TextChoices):
     ESCALATION = "escalation", "Escalation"  # set by P2
     VENDOR_CALLBACK = "vendor_callback", "Vendor callback"  # set by P3
     VENDOR_DIRECT = "vendor_direct", "Vendor sent to owner"  # voice/vendor_allowlist.py (no AI)
+    # A consult transfer the person declined / did not answer / voicemail (voice/consult.py), and no
+    # callback or escalation was logged after it.
+    TRANSFER_UNAVAILABLE = "transfer_unavailable", "Transfer: person unavailable"
     ABANDONED = "abandoned", "Abandoned"
     ERROR = "error", "Error"
 
@@ -40,7 +43,8 @@ class VoiceCall(models.Model):
     escalated = models.BooleanField(default=False)  # P2 sets — a transfer was attempted
     reason = models.CharField(max_length=64, blank=True)  # escalation_reason: defective_return|…
     human_requested_count = models.IntegerField(default=0)  # P2 — feeds the repeated_request gate
-    # Transfer disposition (P2): connected | no_answer | not_attempted; the targeted store key.
+    # Transfer disposition (P2): connected | no_answer | not_attempted, and for a consult transfer
+    # (voice/consult.py) also declined | voicemail | unavailable; the targeted store key.
     transfer_disposition = models.CharField(max_length=24, blank=True)
     transfer_number_key = models.CharField(max_length=16, blank=True)  # YAKIMA|MTVERNON|PULLMAN
     duration_s = models.IntegerField(null=True, blank=True)

@@ -58,6 +58,10 @@ _NO_ANSWER_TOKENS = (
     "declined",
     "timeout",
     "timed-out",
+    # A consult transfer (voice/consult.py) the person cancelled or never took.
+    "assistant-cancelled",
+    "max-duration",
+    "unavailable",
 )
 # A transfer that CONNECTED → not a no-answer (no callback). Checked first; a "connected" signal
 # wins over an incidental "transfer" substring.

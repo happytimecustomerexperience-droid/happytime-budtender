@@ -35,6 +35,7 @@ def test_escalation_transfer_tool_warm_with_transcript(settings, _seeded):
     settings.HHT_TRANSFER_NUMBER_YAKIMA = "+15095711106"
     settings.HHT_TRANSFER_NUMBER_MTVERNON = "+13604882923"
     settings.HHT_TRANSFER_NUMBER_PULLMAN = "+15093342788"
+    settings.HHT_TRANSFER_CONSULT = False  # the legacy warm-summary transfer (consult-first is test_consult_transfer.py)
     payload, warnings = build_assistant_payload("escalation", name="escalation")
     tools = payload["model"].get("tools", [])
     transfer = [t for t in tools if t["type"] == "transferCall"]

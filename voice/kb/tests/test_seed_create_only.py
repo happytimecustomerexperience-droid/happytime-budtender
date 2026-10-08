@@ -122,7 +122,7 @@ def test_fresh_db_seeds_exactly_what_the_overwrite_seed_did():
         "weights_types": 49,
         "education": 5,
         "blogs": 3,
-        "agent_prompts": 6,
+        "agent_prompts": 7,  # + the single-mode concierge (2026-10)
     }
     # Every seeded row was created except the four policy categories migration 0005 already made.
     assert seed.LAST_RUN["kept"] == len(seed.POLICY_CATEGORY_ROWS)

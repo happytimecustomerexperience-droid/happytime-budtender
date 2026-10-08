@@ -164,9 +164,15 @@ def handle_assistant_request(message: dict) -> JsonResponse:
         return JsonResponse(direct)
 
     assistant_id = ""
-    prompt = AgentPrompt.objects.filter(role="faq", is_active=True).first()
-    if prompt and prompt.vapi_assistant_id:
-        assistant_id = prompt.vapi_assistant_id
+    from voice import constants as C
+
+    # Single mode answers with the concierge (it can do everything) once it has an assistant id.
+    roles = (C.CONCIERGE_ROLE, "faq") if C.squad_mode() == "single" else ("faq",)
+    for role in roles:
+        prompt = AgentPrompt.objects.filter(role=role, is_active=True).first()
+        if prompt and prompt.vapi_assistant_id and not prompt.vapi_assistant_id.startswith("dryrun-"):
+            assistant_id = prompt.vapi_assistant_id
+            break
 
     store_name = {
         "yakima": "Happy Time Yakima",
@@ -396,7 +402,9 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
     # P2 deterministic classification (code owns the label; the model only fills slots).
     outcome, reason = outcomes.classify_outcome(message, transcript)
     prior = VoiceCall.objects.filter(call_id=call_id).values_list("outcome", "reason").first()
-    if prior and prior[0] == "vendor_direct":  # the allowlist sent it to the owner: keep that label
+    # The allowlist sent it to the owner: keep that label, unless the owner was asked and did not take
+    # it (voice/consult.py): then the call is the callback / "person unavailable" it became.
+    if prior and prior[0] == "vendor_direct" and outcome not in ("transfer_unavailable", "vendor_callback"):
         outcome, reason = prior
     human_count = outcomes.human_requested_count(message, transcript)
     transferred, disposition = outcomes.transfer_disposition(message, reason)

@@ -47,6 +47,7 @@ def fake_vapi(monkeypatch):
 
 @pytest.fixture
 def all_prompts(db, settings):
+    settings.HHT_SQUAD_MODE = "multi"  # the five-agent squad (single mode: test_single_squad_mode.py)
     settings.HHT_TRANSFER_NUMBER_YAKIMA = "+15095711106"
     from kb import seed
 

@@ -93,6 +93,12 @@ MEMBER_TOOLS = {
     "faq": ["faq_lookup"],  # + the KB Query Tool (attached by ensure_files)
     "vendor": ["notify_vendor_callback"],  # + transferCall (one destination per store)
     "escalation": ["notify_staff_issue"],  # gather+email is the default; transferCall is last-resort
+    # The single-mode front agent does all of the above itself (+ transferCall when call.transfer is on,
+    # + remember_caller while HHT_DYNAMIC_GREETING is on).
+    "concierge": [
+        "faq_lookup", "suggest_products", "check_inventory", "pair_upsell", "stage_phone_cart",
+        "notify_vendor_callback", "notify_staff_issue",
+    ],
 }
 
 # P0 ships ONE merged member: entry_faq (entry + FAQ), AgentPrompt.role="faq" so the later
@@ -427,6 +433,41 @@ SQUAD_SHAPE = {
     "vendor": [("escalation", "dispute / human request")],
     "escalation": [],  # terminal; warm transferCall out
 }
+
+# ── Squad mode (settings.HHT_SQUAD_MODE) ─────────────────────────────────────────
+# "single" (default): ONE front agent, role ``concierge``, in a one-member squad (so the owner's squad
+# id stays the one in use) with NO assistantDestinations: the caller never hears a handoff. "multi":
+# the SQUAD_SHAPE above, unchanged. Single mode applies once the concierge assistant exists; until
+# provision_vapi has created it, every builder answers exactly as multi mode (the live line keeps
+# working through the deploy).
+CONCIERGE_ROLE = "concierge"
+SQUAD_MODES = ("single", "multi")
+DEFAULT_SQUAD_MODE = "single"
+MULTI_SQUAD_SHAPE = SQUAD_SHAPE
+SINGLE_SQUAD_SHAPE = {CONCIERGE_ROLE: []}
+_ENTRY_ROLE = {"single": CONCIERGE_ROLE, "multi": "entry_router"}
+# The roles that open a call with the fixed greeting (firstMessage) and carry the CALLER line rules.
+ENTRY_ROLES = ("entry_router", CONCIERGE_ROLE)
+# The roles that carry the built-in transferCall (while call.transfer is on).
+TRANSFER_ROLES = ("vendor", "escalation", CONCIERGE_ROLE)
+
+
+def squad_mode() -> str:
+    """``settings.HHT_SQUAD_MODE`` as ``single`` | ``multi`` (anything else reads as the default)."""
+    from django.conf import settings
+
+    mode = str(getattr(settings, "HHT_SQUAD_MODE", DEFAULT_SQUAD_MODE) or "").strip().lower()
+    return mode if mode in SQUAD_MODES else DEFAULT_SQUAD_MODE
+
+
+def squad_shape(mode: str | None = None) -> dict:
+    """The code-defined topology for ``mode`` (default: the configured mode)."""
+    return SINGLE_SQUAD_SHAPE if (mode or squad_mode()) == "single" else MULTI_SQUAD_SHAPE
+
+
+def entry_role(mode: str | None = None) -> str:
+    """The role that answers the call in ``mode``: ``concierge`` (single) or ``entry_router`` (multi)."""
+    return _ENTRY_ROLE[mode or squad_mode()]
 
 # Spoken store names — tools voice "Mount Vernon", never the raw slug ("mount-vernon"/"mt_vernon").
 STORE_SPOKEN = {

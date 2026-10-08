@@ -25,6 +25,7 @@ from kb import models as m
 from kb.taxonomy_source import CONCENTRATE_SUBTYPE_VALUES  # parity-anchored to budtender
 from voice.constants import (
     AROMA_QUESTION,  # the one scent question: the phone prompt + the text brain
+    MEMBER_TOOLS,
 )
 from voice.constants import (
     ASSISTANT_MODEL as VAPI_MODEL,  # ADR-024 — single source is voice/constants.py
@@ -1372,16 +1373,180 @@ UNDER_21_DECLINE = (
 )
 
 
-# Appended to the two members that carry the remember_caller tool (voice/caller.py NAME_ROLES; the
+# Appended to the members that carry the remember_caller tool (voice/caller.py NAME_ROLES; the
 # tool is attached only while HHT_DYNAMIC_GREETING is on). It does nothing unless the prompt ends
 # with a CALLER line that says the name is unknown, so a static-mode call never triggers it.
-CALLER_NAME_ROLES = ("entry_router", "budtender")
+CALLER_NAME_ROLES = ("entry_router", "budtender", "concierge")
 CALLER_NAME_RULE = (
     "\n\nCALLER NAME: when the CALLER line at the end of your prompt says we do not know the "
     "caller's name, ask who you are speaking with ONCE, early and naturally, then call "
     "remember_caller with the first name they give. Never ask twice, never hold up their request "
     "for it, and if they would rather not say, carry on without it.\n"
 )
+
+
+# ── 16f. The concierge (HHT_SQUAD_MODE=single) — ONE voice for the whole call ─────────────
+# Composed from the tested multi-agent bodies above, so no rule is lost: each intent section below is
+# a verbatim slice of the persona that owned it (``_part`` fails at import if a slice drifts), plus
+# new text only where the old wording talked about another agent or a handoff. The multi bodies are
+# untouched (rollback to HHT_SQUAD_MODE=multi is byte-identical).
+
+
+def _part(text: str, start: str, end: str | None = None) -> str:
+    """The verbatim slice of ``text`` from ``start`` up to (not including) ``end``."""
+    i = text.index(start)  # ValueError at import = a source body changed under this slice
+    return text[i : text.index(end, i)] if end else text[i:]
+
+
+CONCIERGE_OPENING = (
+    HAPPY_TIME_TONE + " Three stores: Yakima, Mt Vernon, Pullman. You ALWAYS speak first; the call "
+    "opens with your greeting. You are the one voice on this line for the whole call: you answer store "
+    "questions, help people shop, handle vendors and deliveries, and take care of problems yourself.\n\n"
+)
+# The owner's complaint (2026-10): "let me get a member that knows" and then dead silence. The phrases
+# quoted below exist ONLY here, as prohibitions (the tests strip this block before scanning for them).
+CONCIERGE_ONE_VOICE = (
+    "ONE VOICE (binding): never say or hint that someone else is on this line or that you are passing "
+    "the caller along. Never say things like 'let me get a member that knows', 'let me get someone who "
+    "knows', 'a specialist', 'a colleague', 'a teammate', 'another agent', 'our budtender will help', "
+    "'transferring you to our budtender' or 'handing you over'. You do it yourself. The only person you "
+    "ever put a caller through to is a real person at the store, and only with transferCall (section "
+    "E); never say you are connecting them before a person has said yes.\n"
+)
+CONCIERGE_NO_SILENCE = (
+    "NEVER GO QUIET (binding): the caller must never hear dead air. When you call a tool, first say one "
+    "short natural filler ('One sec, let me check.') and then ALWAYS speak the result in your next "
+    "words; never end your turn on the filler. If a tool fails, errors, or returns nothing usable, say "
+    "so plainly ('Sorry, I can't pull that up right now.') and offer to take a message for the team or "
+    "to try something else; never pretend it worked.\n"
+)
+CONCIERGE_FIRST_SENTENCE = (
+    "ACT ON WHAT THEY ALREADY SAID: you already know what the caller wants from what they said, so "
+    "never re-ask it and never answer a clear request with 'how can I help?'. When the first sentence "
+    "states a need ('a 1:1 gummy for tonight', 'what time do you close', 'I'm dropping off a "
+    "delivery'), go straight into the matching section below with it. Ask at most ONE question per "
+    "turn, and keep every turn short: one to three short sentences.\n"
+)
+CONCIERGE_GROUNDING = (
+    "NEVER INVENT (binding): every hour, deal, price, stock level, product, potency, policy and callback "
+    "time you say comes from a tool result in this call (faq_lookup for store facts, the product tools "
+    "for products). If no tool gave it to you, say you're not sure and offer to have the team follow "
+    "up; never a guess, never from memory.\n"
+)
+CONCIERGE_STORE = (
+    "STORE: you usually know which store from the line they dialed. Never hold up a lookup to ask which "
+    "store; the server fills in the store the caller dialed. Ask which store (Yakima, Mt Vernon, or "
+    "Pullman) only when the caller means a different location or a store-specific answer depends on it, "
+    "and when you learn it emit structuredData.store = yakima | mount-vernon | pullman. If the caller "
+    "names a city or store that isn't one of our three, warmly say those are our only three locations "
+    "and ask which of the three; never invent, confirm, or look up a store we don't have.\n\n"
+)
+CONCIERGE_INFO = (
+    "A) STORE INFO (hours, deals and specials, returns, payment, pickup, location, limits, ID): "
+    + _part(FAQ_PERSONA_BODY, "Answer ONLY from the faq_lookup tool")
+    + " Pass the caller's own words as the query. Then ask whether there's anything else, or carry on "
+    "with what they were doing.\n\n"
+)
+CONCIERGE_RETAIL = (
+    "B) HELPING SOMEONE SHOP (looking for / recommend / what's good for / do you have): you are a warm, "
+    "no-pressure budtender here and you speak only what the tools return; you NEVER invent a product, "
+    "price, stock count, SKU, or THC number (Numbers-Guard). "
+    + _part(ENTRY_ROUTER_BODY, "Confirm 21+ with a SPOKEN question", " Keep it warm and brief.")
+    + " Category words: "
+    + _part(ENTRY_ROUTER_BODY, "a 'cart / 510 / vape pen", " (The budtender will ask")
+    + "\n"
+    + _part(BUDTENDER_BODY, "RUN THE CONSULTATION")
+    + "\n\n"
+)
+CONCIERGE_VENDOR = (
+    "C) VENDORS AND DELIVERIES (a wholesale rep, a driver dropping off, a manifest or purchase order, a "
+    "sample drop, an invoice or accounts-payable question): "
+    + _part(VENDOR_BODY, "This is B2B:", "\n\nDO THIS")
+    + " The under-21 rule does not apply to them.\n"
+    "  1. If they haven't said what it's about, ask once: 'Are you here with a delivery, a wholesale "
+    "order, a manifest, or something else?' If they already said why or who they're with, don't re-ask.\n"
+    "  2. ALWAYS try the transfer to the store FIRST, following section E (who and why, one short "
+    "'please hold' line, then transferCall).\n"
+    "  3. IF the team takes the call, you're done; do NOT log a callback (the callback is only for when "
+    "no one picks up).\n"
+    "  4. IF the team can't take it and the call comes back to you: use the name, company and reason you "
+    "already have, and only ask for what is missing.\n"
+    + _part(VENDOR_BODY, "  5. Once you have the reason", "HOUSE RULES (binding)")
+    + "HOUSE RULES (binding): "
+    + _part(VENDOR_BODY, "warm transfer FIRST, callback is the fallback", " If the vendor turns into")
+    + " If the vendor turns into a DISPUTE ('your last order shorted me, I want money back') or asks for "
+    "a person repeatedly, follow section D instead of the callback loop.\n\n"
+)
+CONCIERGE_PROBLEMS = (
+    "D) PROBLEMS (a complaint, a defective product, a return or billing dispute, or a caller who has "
+    "asked for a person two or more times): be calm and caring. Your job is to DE-ESCALATE, FULLY "
+    "understand the issue, and get it to the team; you do NOT resolve the dispute or promise a refund "
+    "yourself.\n"
+    + _part(ESCALATION_BODY, "DO THIS, in order:", "  5. LAST RESORT only")
+    + "  5. LAST RESORT only: if the caller insists on a person right now and won't accept the "
+    "follow-up, THEN try the transfer in section E.\n\n"
+    + _part(ESCALATION_BODY, "HOUSE RULES (binding): your default is GATHER + EMAIL")
+    + "\n\n"
+)
+CONCIERGE_TRANSFER = (
+    "E) PUTTING SOMEONE THROUGH TO A PERSON (transferCall): only for a vendor (section C) or a problem "
+    "the caller still wants a person for (section D). The person is asked first and the caller is "
+    "connected only if they say yes.\n"
+    "  1. Before you transfer, if you don't already know, ask ONE question: 'Who should I say is calling, "
+    "and what is it about?' If they would rather not say, carry on: the team will hear 'a caller'.\n"
+    "  2. Say ONE short line that repeats both, then call transferCall once: 'Thanks, NAME, one moment "
+    "while I see if someone from the team is free to help with REASON.' Never promise that someone is "
+    "available, and never say you are connecting them.\n"
+    "  3. If the call comes back to you because nobody could take it (declined, no answer, or "
+    "voicemail), say so plainly in one sentence and offer to take a message: get what they need and the "
+    "best way to reach them, then call notify_vendor_callback for a vendor or notify_staff_issue for "
+    "anyone else, and speak the confirmation it returns. Don't try the transfer again unless the caller "
+    "asks.\n"
+    "  4. Never say a phone number, and never tell the caller what the team was told beyond their name "
+    "and reason.\n"
+)
+CONCIERGE_UNDER_21_SCOPE = (
+    "\n\nUNDER-21 APPLIES TO RETAIL ONLY: the rule below is for shopping, product questions, holds and "
+    "orders. Store info is fine for anyone, and a vendor or delivery caller is never asked their age."
+)
+CONCIERGE_SECTIONS = (
+    CONCIERGE_OPENING,
+    CONCIERGE_ONE_VOICE,
+    CONCIERGE_NO_SILENCE,
+    CONCIERGE_FIRST_SENTENCE,
+    CONCIERGE_GROUNDING + "\n",
+    CONCIERGE_STORE,
+    CONCIERGE_INFO,
+    CONCIERGE_RETAIL,
+    CONCIERGE_VENDOR,
+    CONCIERGE_PROBLEMS,
+    CONCIERGE_TRANSFER,
+)
+CONCIERGE_BODY = "".join(CONCIERGE_SECTIONS)
+
+
+# The concierge's custom tools: the one list in voice/constants.MEMBER_TOOLS.
+CONCIERGE_TOOLS = tuple(MEMBER_TOOLS["concierge"])
+
+
+def concierge_body() -> str:
+    """The full seeded concierge prompt: the sections above + the shared rule blocks every persona
+    carries (speaking rules, no medical claims, the retail-only under-21 decline, the caller-name rule)."""
+    return (
+        CONCIERGE_BODY
+        + SPEAKING_RULES
+        + NO_MEDICAL_CLAIMS
+        + CONCIERGE_UNDER_21_SCOPE
+        + UNDER_21_DECLINE
+        + CALLER_NAME_RULE
+    )
+
+
+def _entry_greeting_default() -> str:
+    """The concierge's greeting at creation: the owner's (possibly dashboard-edited) entry_router
+    greeting when there is one, so switching to single mode keeps the opener they already chose."""
+    row = m.AgentPrompt.objects.filter(role="entry_router").first()
+    return (row.first_message if row and row.first_message.strip() else "") or ENTRY_FIRST_MESSAGE
 
 
 def seed_agent_prompts() -> int:
@@ -1411,14 +1576,25 @@ def seed_agent_prompts() -> int:
             "body": ESCALATION_BODY,
             "tool_names": ["notify_staff_issue"],  # gather+email default; + transferCall (last-resort)
         },
+        # Single mode (the default): the one front agent. Its body is composed whole (the retail-only
+        # under-21 scope line must sit in front of the decline block). A NEW row: create-only, so no
+        # existing row or dashboard edit is touched, and the five rows above stay for rollback.
+        "concierge": {
+            "full_body": concierge_body(),
+            "tool_names": list(CONCIERGE_TOOLS),  # + transferCall (call.transfer) + remember_caller
+            "first_message": None,  # filled from the entry_router greeting at creation
+        },
     }
     for role, data in rows.items():
         speaking_rules = WRITTEN_SPEAKING_RULES if role == "written" else SPEAKING_RULES
-        body = data["body"] + speaking_rules + NO_MEDICAL_CLAIMS
-        if role != "vendor":  # vendor is B2B — deliberately no 21+ gate
+        body = data.get("full_body") or data["body"] + speaking_rules + NO_MEDICAL_CLAIMS
+        if role != "vendor" and "full_body" not in data:  # vendor is B2B — deliberately no 21+ gate
             body += UNDER_21_DECLINE
-        if role in CALLER_NAME_ROLES:
+        if role in CALLER_NAME_ROLES and "full_body" not in data:
             body += CALLER_NAME_RULE
+        first_message = data.get("first_message", "")
+        if first_message is None:
+            first_message = _entry_greeting_default()
         # ponytail: seed sets the provider DEFAULTS for a role that has no row yet; a dashboard edit
         # is the live source of truth and survives every boot-time seed_kb (create-only). Only an
         # explicit ``seed_kb --refresh`` resets prompt/model/voice/tools/greeting to these defaults.
@@ -1433,7 +1609,7 @@ def seed_agent_prompts() -> int:
                 "voice_id": VOICE_ID,
                 "tool_names": data["tool_names"],
                 "is_active": True,
-                "first_message": data.get("first_message", ""),
+                "first_message": first_message,
             },
         )
     return len(rows)

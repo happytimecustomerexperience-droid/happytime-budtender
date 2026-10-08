@@ -34,9 +34,10 @@ logger = logging.getLogger(__name__)
 TTL_SECONDS = 2 * 60 * 60
 FETCH_TIMEOUT = 2.5  # seconds, connect + read together: Vapi's assistant-request answer is due in 7.5
 
-# The members that get remember_caller (the greeter and the retail agent). kb/seed.py keeps its own
-# copy for the prompt rule; test_caller_greeting pins that the two agree.
-NAME_ROLES = ("entry_router", "budtender")
+# The members that get remember_caller (the greeter and the retail agent, and the single-mode
+# concierge that is both). kb/seed.py keeps its own copy for the prompt rule; test_caller_greeting
+# pins that the two agree.
+NAME_ROLES = ("entry_router", "budtender", "concierge")
 # Tools whose behaviour depends on who is calling: the webhook resolves the caller before these run.
 IDENTITY_TOOLS = frozenset({"suggest_products", "pair_upsell", "stage_phone_cart", "remember_caller"})
 

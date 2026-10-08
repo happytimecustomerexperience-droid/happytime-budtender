@@ -12,6 +12,9 @@ dispute / vendor-callback) is never masked by a softer one (suggested / faq / ab
   2. >=2 explicit human requests → outcome=escalation, reason=repeated_request  (immediate)
   3. return dispute (no defect)  → outcome=escalation, reason=dispute           (immediate)
   4. vendor callback (P3 label)  → outcome=vendor_callback                      (immediate)
+  4b. a consult transfer nobody  → outcome=transfer_unavailable (vendor_callback when a callback was
+      took (declined / no answer /   logged after it)                                 (immediate)
+      voicemail; voice/consult.py, only while HHT_TRANSFER_CONSULT is on)
   5. a suggestion was made       → outcome=suggested                           (not immediate)
   6. only informational/faq      → outcome=faq_answered                        (not immediate)
   7. < ~15s, no progress         → outcome=abandoned                           (not immediate)
@@ -26,6 +29,8 @@ signal P4's dashboard + the email subject read.
 from __future__ import annotations
 
 import re
+
+from voice import consult
 
 # Reasons stamped onto VoiceCall.reason (escalation_reason). "" when the outcome isn't an escalation.
 REASON_DEFECTIVE = "defective_return"
@@ -91,7 +96,8 @@ def is_immediate_alert(outcome: str, reason: str) -> bool:
     and a vendor callback. These get the ``— URGENT`` email subject + (when enabled) Slack."""
     from voice.models import Outcome
 
-    return outcome in (Outcome.ESCALATION, Outcome.VENDOR_CALLBACK) or reason in ESCALATION_REASONS
+    immediate = (Outcome.ESCALATION, Outcome.VENDOR_CALLBACK, Outcome.TRANSFER_UNAVAILABLE)
+    return outcome in immediate or reason in ESCALATION_REASONS
 
 
 def classify_outcome(message: dict, transcript: str) -> tuple[str, str]:
@@ -116,6 +122,13 @@ def classify_outcome(message: dict, transcript: str) -> tuple[str, str]:
     if str(sd.get("outcome") or "").strip().lower() == Outcome.VENDOR_CALLBACK:
         return Outcome.VENDOR_CALLBACK, ""
 
+    # 4b) the person we asked did not take the call (before the error check: Vapi ends a cancelled
+    #     consult with "call.in-progress.error-warm-transfer-…", which is not our error).
+    if consult.enabled() and consult.consult_result(message) in consult.FAILED:
+        if _tool_called(message, "notify_vendor_callback"):
+            return Outcome.VENDOR_CALLBACK, ""
+        return Outcome.TRANSFER_UNAVAILABLE, ""
+
     # abandoned — empty, no dialogue.
     if not transcript and not msgs:
         return Outcome.ABANDONED, ""
@@ -139,7 +152,14 @@ def transfer_disposition(message: dict, reason: str) -> tuple[bool, str]:
 
     A transfer is attempted when the eocr carries a ``destination`` (Vapi populates it on a
     transferCall) OR the call escalated. Disposition is inferred from ``endedReason``:
-    connected | no_answer | not_attempted (the raw reason stays on the row, 12-P2 §9)."""
+    connected | no_answer | not_attempted (the raw reason stays on the row, 12-P2 §9). A consult
+    transfer (HHT_TRANSFER_CONSULT on) also reports declined | voicemail | unavailable."""
+    if consult.enabled():
+        result = consult.consult_result(message)
+        if result in consult.FAILED:
+            return True, result
+        if result == consult.ACCEPTED:
+            return True, "connected"
     has_destination = bool(message.get("destination"))
     transferred = has_destination or bool(reason)
     if not transferred:
@@ -184,6 +204,16 @@ def _human_requested_count(message: dict, transcript: str) -> int:
     except (TypeError, ValueError):
         pass
     return len(_HUMAN_REQUEST.findall(transcript or ""))
+
+
+def _tool_called(message: dict, tool_name: str) -> bool:
+    """``tool_name`` ran during the call (an eocr message names it, or carries it in its toolCalls)."""
+    for msg in message.get("messages") or []:
+        if not isinstance(msg, dict):
+            continue
+        if str(msg.get("name") or msg.get("toolName") or "") == tool_name or tool_name in str(msg.get("toolCalls") or ""):
+            return True
+    return False
 
 
 def _suggestion_made(message: dict) -> bool:

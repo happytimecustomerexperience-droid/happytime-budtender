@@ -27,6 +27,9 @@ def _settings(settings):
     settings.VAPI_PHONE_NUMBER_STORE_MAP = ""
     settings.HHT_TRANSFER_NUMBER_YAKIMA = ""
     settings.HHT_OWNER_PHONE = OWNER
+    # These pin the direct no-AI forward, kept behind HHT_TRANSFER_CONSULT=0; the consult-first
+    # route (the default) is covered in test_consult_transfer.py.
+    settings.HHT_TRANSFER_CONSULT = False
 
 
 @pytest.fixture

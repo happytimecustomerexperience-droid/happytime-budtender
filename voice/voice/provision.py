@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from django.conf import settings
 
 from core.services import vapi
-from voice import caller, capabilities
+from voice import caller, capabilities, consult
 from voice import constants as C
 from voice import safety_copy as S
 
@@ -254,7 +254,7 @@ def _with_runtime_safety(body: str, role: str, store: str | None = None) -> str:
     safety += _OWNER_SAFETY_LINES.format(under_21=under_21)
     if role != "written" and not capabilities.is_enabled("call.transfer"):
         safety += _NO_TRANSFER_LINE
-    elif role in ("vendor", "escalation") and not store:
+    elif role in C.TRANSFER_ROLES and not store:
         safety += _TRANSFER_STORE_LINE
     lock = _store_lock_line(store) if store else ""
     if "IMMUTABLE RUNTIME SAFETY" in body:
@@ -279,10 +279,11 @@ def build_tool_payload(name: str) -> dict:
 
 
 def _transfer_tool(warnings: list[str], store: str | None = None) -> dict:
-    """The built-in ``transferCall`` tool inline on vendor/escalation ``model.tools`` (§4.8): one
+    """The built-in ``transferCall`` tool inline on the transfer roles' ``model.tools`` (§4.8): one
     warm destination per store, each described by its store name (Vapi's model picks the
     destination from that description). An unset HHT_TRANSFER_NUMBER_<key> (O-4) → a documented
-    placeholder + a warning for THAT store (never blocks the run)."""
+    placeholder + a warning for THAT store (never blocks the run). With HHT_TRANSFER_CONSULT on (the
+    default) each destination asks the team first and connects only on a yes (voice/consult.py)."""
     destinations = []
     for key, slug in C.TRANSFER_STORES:
         if store and slug != store:  # a store's own agent transfers to that store only
@@ -292,6 +293,20 @@ def _transfer_tool(warnings: list[str], store: str | None = None) -> dict:
         if not number:
             number = C.TRANSFER_NUMBER_PLACEHOLDER
             warnings.append(f"transfer number not configured for {key} (using placeholder)")
+        if consult.enabled():
+            destinations.append(
+                {
+                    "type": "number",
+                    "number": number,
+                    "description": (
+                        f"Happy Time {spoken} store staff. Choose this when the caller is asking "
+                        f"about the {spoken} store."
+                    ),
+                    "message": consult.STORE_HOLD_LINE,  # never "connecting you": nobody has said yes yet
+                    "transferPlan": consult.store_transfer_plan(spoken),
+                }
+            )
+            continue
         destinations.append(
             {
                 "type": "number",
@@ -370,12 +385,17 @@ def _resolve_tool_ids(role: str, warnings: list[str], prompt=None) -> tuple[list
 
 
 def entry_greeting() -> str:
-    """The active entry_router row's ``first_message`` (owner-editable), or "" if unset. Shared by
-    ``/api/voice/persona`` (website chat) and voice.evals.adapters — the SAME opener as the phone."""
+    """The active entry agent's ``first_message`` (owner-editable), or "" if unset: the concierge's in
+    single mode, else (or when it has none) the entry_router's. Shared by ``/api/voice/persona``
+    (website chat) and voice.evals.adapters — the SAME opener as the phone."""
     from kb.models import AgentPrompt
 
-    prompt = AgentPrompt.objects.filter(role="entry_router", is_active=True).first()
-    text = (getattr(prompt, "first_message", "") or "").strip() if prompt else ""
+    text = ""
+    for role in dict.fromkeys((C.entry_role(), "entry_router")):
+        prompt = AgentPrompt.objects.filter(role=role, is_active=True).first()
+        text = (getattr(prompt, "first_message", "") or "").strip() if prompt else ""
+        if text:
+            break
     # The website has no store: drop the per-store token the phone lines fill in.
     return text.replace(" {store_name}", "").replace("{store_name}", "").strip()
 
@@ -427,7 +447,7 @@ def build_assistant_payload(
     }
     # vendor/escalation carry the built-in transferCall inline (warm + summaryPlan, §4.8) —
     # unless the owner switched transfers off.
-    if role in ("vendor", "escalation") and capabilities.is_enabled("call.transfer"):
+    if role in C.TRANSFER_ROLES and capabilities.is_enabled("call.transfer"):
         model["tools"] = [_transfer_tool(warnings, store)]
 
     payload = {
@@ -442,7 +462,8 @@ def build_assistant_payload(
     # Every OTHER member RECEIVES a mid-call handoff, so it must CONTINUE the conversation with a
     # model-generated line off the shared transcript — NOT "assistant-speaks-first" with no
     # firstMessage, which Vapi renders as dead SILENCE on transfer (the bug the owner heard).
-    if role == "entry_router":
+    # Single mode has no handoffs at all: the concierge is the entry member and the only one.
+    if role in C.ENTRY_ROLES:
         payload["firstMessageMode"] = "assistant-speaks-first"
         first_message = (getattr(prompt, "first_message", "") or "").strip()
         if store:  # "Welcome to Happy Time {store_name}!" — a greeting without the token is unchanged
@@ -450,7 +471,7 @@ def build_assistant_payload(
         if first_message:
             payload["firstMessage"] = first_message
         else:
-            warnings.append("entry_router has no first_message")
+            warnings.append(f"{role} has no first_message")
     else:
         payload["firstMessageMode"] = "assistant-speaks-first-with-model-generated-message"
     return payload, warnings
@@ -477,14 +498,25 @@ def store_phone_numbers() -> dict[str, str]:
     return {store: pn_id for pn_id, store in _phone_number_store_map().items()}
 
 
+def effective_mode(member_names: dict[str, str]) -> str:
+    """The topology to build for these members: ``HHT_SQUAD_MODE``, except that single mode needs the
+    concierge assistant — until provision_vapi has created it, the multi squad is built (the live line
+    keeps answering through a deploy instead of falling back to one bare assistant)."""
+    mode = C.squad_mode()
+    if mode == "single" and C.CONCIERGE_ROLE not in member_names:
+        return "multi"
+    return mode
+
+
 def build_squad_payload(member_names: dict[str, str], store: str | None = None) -> dict:
     """The ``POST/PATCH /squad`` body (§4.7). ``member_names`` maps role → its provisioned
     assistant id (P0 has only ``faq``→entry_faq; P1 adds entry_router/budtender).
-    ``assistantDestinations`` come from the code-defined ``SQUAD_SHAPE`` — but only edges whose
-    BOTH endpoints are provisioned are emitted, so the squad is a valid container that grows as
-    members land. Destinations reference each member by its provisioned assistant NAME."""
+    ``assistantDestinations`` come from the code-defined shape for the squad mode
+    (``C.squad_shape``) — but only edges whose BOTH endpoints are provisioned are emitted, so the
+    squad is a valid container that grows as members land. Destinations reference each member by its
+    provisioned assistant NAME. Single mode: the concierge alone, with no destinations."""
     members = []
-    for role, dest_list in C.SQUAD_SHAPE.items():
+    for role, dest_list in C.squad_shape(effective_mode(member_names)).items():
         if role not in member_names:
             continue  # member not provisioned yet (P0 has only faq)
         destinations = []
@@ -517,8 +549,11 @@ def saved_member_ids() -> dict[str, str]:
     ``ensure_assistant``). Database only: nothing is fetched from Vapi, so it is safe on a live call."""
     from kb.models import AgentPrompt
 
-    rows = AgentPrompt.objects.filter(role__in=list(C.SQUAD_SHAPE), is_active=True).exclude(
-        vapi_assistant_id=""
+    roles = [*C.MULTI_SQUAD_SHAPE, C.CONCIERGE_ROLE]  # either mode's members; the builder picks
+    rows = (
+        AgentPrompt.objects.filter(role__in=roles, is_active=True)
+        .exclude(vapi_assistant_id="")
+        .exclude(vapi_assistant_id__startswith="dryrun-")  # an old dry run's synthetic id is not live
     )
     return {row.role: row.vapi_assistant_id for row in rows}
 
@@ -533,12 +568,14 @@ def build_call_squad(
     """The transient squad an ``assistant-request`` answers with: exactly what ``build_squad_payload``
     builds (same members, same code-defined destinations, this store's overrides), plus the call's
     ``variables`` on every member and the entry member's opener swapped for ``first_message(base)``.
-    ``None`` when no entry_router member exists to open the call: the caller then answers the old way."""
-    if "entry_router" not in member_names:
+    The entry member is the concierge in single mode (the squad's only member), else entry_router.
+    ``None`` when no entry member exists to open the call: the caller then answers the old way."""
+    entry_role = C.entry_role(effective_mode(member_names))
+    if entry_role not in member_names:
         return None
     squad = build_squad_payload(member_names, store)
-    entry = squad["members"][0]  # SQUAD_SHAPE lists entry_router first
-    if entry.get("assistantId") != member_names["entry_router"]:
+    entry = squad["members"][0]  # the shape lists the entry member first
+    if entry.get("assistantId") != member_names[entry_role]:
         return None
     override = dict(entry.get("assistantOverrides") or {})
     opener = first_message(override.get("firstMessage") or entry_greeting())
@@ -649,8 +686,9 @@ def ensure_assistant(role: str, *, name: str | None = None) -> ReconcileResult:
         patch=vapi.patch_assistant,
         warnings=warnings,
     )
-    # Write the assistant id back onto the AgentPrompt (P4's publish reads it).
-    if result.vapi_id and result.action in ("created", "patched"):
+    # Write the assistant id back onto the AgentPrompt (P4's publish reads it). Never a dry run's
+    # synthetic "dryrun-…" id: the live call path builds squads from these ids.
+    if result.vapi_id and result.action in ("created", "patched") and not vapi.is_dry_run():
         from kb.models import AgentPrompt
 
         AgentPrompt.objects.filter(role=role).update(vapi_assistant_id=result.vapi_id)
@@ -902,6 +940,10 @@ P3_MEMBER_ROLES = ("vendor",)
 # scans iterate (each member is provisioned only when its AgentPrompt row is seeded + active).
 EXTRA_MEMBER_ROLES = P1_MEMBER_ROLES + P2_MEMBER_ROLES + P3_MEMBER_ROLES
 
+# Single mode (HHT_SQUAD_MODE=single): the one front agent, provisioned under an assistant named for
+# its role. The multi roles above are left exactly as they are in Vapi (rollback = multi + provision).
+SINGLE_MEMBER_ROLES = (C.CONCIERGE_ROLE,)
+
 
 def _provisioned_members() -> dict[str, str]:
     """role → provisioned assistant id, for EVERY member that currently has an assistant in the
@@ -911,7 +953,7 @@ def _provisioned_members() -> dict[str, str]:
     from voice.models import VapiObject
 
     out = _p0_members()
-    for role in EXTRA_MEMBER_ROLES:
+    for role in EXTRA_MEMBER_ROLES + SINGLE_MEMBER_ROLES:  # the shape for the mode picks who is in
         rec = VapiObject.objects.filter(kind="assistant", name=role).first()
         if rec and rec.vapi_id:
             out[role] = rec.vapi_id
@@ -955,8 +997,11 @@ def provision_all(
 
     # The extra member roles to provision = those with a seeded AgentPrompt row (so a fresh P0-only
     # tree provisions nothing new). budtender carries the 3 suggestion tools (11-P1 §5); escalation
-    # carries only the built-in transferCall (P2).
-    extra_roles = _seeded_extra_roles()
+    # carries only the built-in transferCall (P2). Single mode (the default) provisions the concierge
+    # instead and leaves the multi assistants exactly as they are in Vapi (never deleted: rollback).
+    single = single_mode_ready()
+    kept_roles = [C.P0_ASSISTANT_ROLE, *_seeded_extra_roles()] if single else []
+    extra_roles = list(SINGLE_MEMBER_ROLES) if single else _seeded_extra_roles()
     extra_tool_names = _tools_for_roles(extra_roles)
 
     # (1) TOOLS first — the assistant references the tool ids. P0 provisions faq_lookup; P1 adds
@@ -973,9 +1018,12 @@ def provision_all(
     # (3) ASSISTANTS — P0's ONE merged entry_faq (role="faq"), toolIds from step 1 (+ Query Tool);
     #     then each seeded P1 member (entry_router/budtender) under an assistant named for its role.
     if only in (None, "assistant"):
-        results.append(ensure_assistant(C.P0_ASSISTANT_ROLE, name=C.P0_ASSISTANT_NAME))
+        if not single:
+            results.append(ensure_assistant(C.P0_ASSISTANT_ROLE, name=C.P0_ASSISTANT_NAME))
         for role in extra_roles:
             results.append(ensure_assistant(role, name=role))
+        for role in kept_roles:
+            results.append(_kept_for_rollback(role))
 
     # (4) SQUAD — every provisioned member; the code-defined edges (entry_router →(retail)→
     #     budtender, budtender →(human)→ escalation) are emitted only when BOTH endpoints exist.
@@ -997,6 +1045,31 @@ def provision_all(
 
     report.ok = report.errors == 0
     return report
+
+
+def single_mode_ready() -> bool:
+    """Single mode is configured AND the concierge has a seeded, active AgentPrompt row (seed_kb
+    creates it). Without the row there is nothing to provision, so the run stays multi."""
+    from kb.models import AgentPrompt
+
+    return C.squad_mode() == "single" and AgentPrompt.objects.filter(
+        role=C.CONCIERGE_ROLE, is_active=True
+    ).exists()
+
+
+def _kept_for_rollback(role: str) -> ReconcileResult:
+    """A report line for a multi-mode assistant single mode leaves untouched (not PATCHed, not deleted)."""
+    from voice.models import VapiObject
+
+    name = _assistant_name_for_role(role)
+    rec = VapiObject.objects.filter(kind="assistant", name=name).first()
+    return ReconcileResult(
+        "assistant",
+        name,
+        (rec.vapi_id if rec else "") or "",
+        action="skipped",
+        note="multi-mode agent, left as is in Vapi for rollback (HHT_SQUAD_MODE=multi)",
+    )
 
 
 def _seeded_extra_roles() -> list[str]:

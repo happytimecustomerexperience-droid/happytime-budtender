@@ -45,6 +45,9 @@ AGENT_ROLE_CHOICES = [
     ("vendor", "Vendor"),
     ("escalation", "Escalation"),
     ("written", "Website chat (written)"),
+    # The single-mode front agent (HHT_SQUAD_MODE=single): greets, answers, helps shop, handles
+    # vendors and problems itself in a one-member squad. The five rows above stay for rollback.
+    ("concierge", "Phone agent (all-in-one)"),
 ]
 
 
