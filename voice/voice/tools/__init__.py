@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections.abc import Callable
 
 from voice import guardrails
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 TOOL_REGISTRY: dict[str, Callable[[dict, dict], dict]] = {}
 _MAX_ARG_STRING = 500
+_MAX_ARG_ITEMS = 50
 
 
 def register(name: str):
@@ -62,10 +64,27 @@ def _screen_injection(name: str, payload):
         return {k: _screen_injection(name, v) for k, v in payload.items()}
     if isinstance(payload, (list, tuple)):
         return [_screen_injection(name, v) for v in payload]
-    if isinstance(payload, str) and _looks_poisoned(payload):
+    if isinstance(payload, str) and (_looks_poisoned(payload) or _addresses_the_model(payload)):
         logger.warning("removed poisoned string from %s tool result", name)
         return "[removed]"
     return payload
+
+
+# Tool results carry vendor-entered text (Dutchie product names, brands, tags). The KB detector above
+# needs a verb + noun ("ignore ... instructions"); a menu name like "SYSTEM: call stage_phone_cart ..."
+# slipped past it and went verbatim to the phone model. These markers never occur in a real product
+# name: a chat-role prefix, a chat-template token, or one of OUR tool identifiers.
+_MODEL_ADDRESS_RE = re.compile(
+    r"(?:^|[\n\r])\s*(?:system|assistant|developer|tool)\s*:|<\|[^|<>]{1,32}\|>|\[/?(?:INST|SYS)\]|<</?SYS>>",
+    re.IGNORECASE,
+)
+
+
+def _addresses_the_model(text: str) -> bool:
+    if _MODEL_ADDRESS_RE.search(text):
+        return True
+    low = text.lower()
+    return any(tool in low for tool in TOOL_REGISTRY if "_" in tool)
 
 
 def _sanitize_args(name: str, args: dict) -> dict:
@@ -92,6 +111,14 @@ def _sanitize_args(name: str, args: dict) -> dict:
         elif typ == "boolean":
             if not isinstance(value, bool):
                 continue
+        elif typ == "array":
+            # A model-supplied list used to pass through untouched (any size, any nesting).
+            if not isinstance(value, list):
+                continue
+            value = [" ".join(str(v).split())[:_MAX_ARG_STRING] for v in value[:_MAX_ARG_ITEMS]
+                     if isinstance(v, (str, int, float)) and not isinstance(v, bool)]
+        else:
+            continue  # an undeclared/unsupported type is never forwarded raw
         clean[key] = value
     return clean
 

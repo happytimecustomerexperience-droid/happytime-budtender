@@ -212,9 +212,23 @@ def _clean_slots(slots) -> dict:
     return slots if isinstance(slots, dict) else {}
 
 
+# The raw slots `ranking.eligible` reads besides the ones `ranking.parse_filters` validates. Together they
+# are everything a facet result depends on (test_security_backend pins this against ranking's source).
+CACHE_KEY_RAW_SLOTS = ("category", "subcategory", "category_blocklist", "price_min", "price_max", "price_tier",
+                       "sort_by", "doh_only", "size", "pack")
+
+
+def cache_key_slots(slots: dict) -> dict:
+    """What the 60s facet cache is keyed on: the parsed v2 filters plus the raw slots eligible() reads,
+    never the request's other keys. Junk keys or padding past a field's cap cannot mint a new entry
+    (each would be a full recompute and one more Redis key)."""
+    raw = {k: slots[k] for k in CACHE_KEY_RAW_SLOTS if slots.get(k) is not None}   # None == absent there
+    return {"f": ranking.parse_filters(slots), "raw": raw}
+
+
 def _cached_v2(location: str, kind: str, slots: dict, fn):
     try:
-        blob = json.dumps(slots, sort_keys=True, default=str)
+        blob = json.dumps(cache_key_slots(slots), sort_keys=True, default=str)
     except (TypeError, ValueError):
         return fn()
     ck = f"facet2:{location}:{_version(location)}:{kind}:{hashlib.sha1(blob.encode()).hexdigest()}"

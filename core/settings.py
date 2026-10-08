@@ -201,6 +201,12 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [],
     "DEFAULT_PERMISSION_CLASSES": ["budtender.auth.ServiceTokenPermission"],
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    # DRF's default trio with the JSON one hardened (object only, depth cap, NUL stripped: parsers.py).
+    "DEFAULT_PARSER_CLASSES": [
+        "budtender.parsers.SafeJSONParser",
+        "rest_framework.parsers.FormParser",
+        "rest_framework.parsers.MultiPartParser",
+    ],
 }
 
 # ── Celery ───────────────────────────────────────────────────────────────────

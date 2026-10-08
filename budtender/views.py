@@ -106,6 +106,38 @@ def _safe_props(value) -> dict:
     return value if len(encoded) <= 12000 else {"_truncated": True}
 
 
+_SLOT_KEYS_MAX = 48
+_SLOT_STR_MAX = 200
+_SLOT_LIST_MAX = 20
+_EXCLUDE_SKUS_MAX = 100
+
+
+def _slot_scalar(v):
+    if isinstance(v, str):
+        return v.replace("\x00", "")[:_SLOT_STR_MAX]
+    if v is None or isinstance(v, (bool, int, float)):
+        return v
+    return None
+
+
+def _bounded_slots(slots) -> dict:
+    """Search/facet ``slots`` as the ranker may see them: at most 48 short keys, strings <= 200 chars,
+    lists <= 20 scalars, nothing nested deeper. The ranker validates every key it reads (and caps
+    q/tags/terpenes far below this); this bounds what reaches it, the facet cache key and the session
+    row, so a 2 MB string or a 100k-item list in one slot is not normalised again on every filter pass."""
+    if not isinstance(slots, dict):
+        return {}
+    out: dict = {}
+    for key, value in list(slots.items())[:_SLOT_KEYS_MAX]:
+        if not isinstance(key, str) or not key or len(key) > 64:
+            continue
+        if isinstance(value, (list, tuple)):
+            out[key] = [s for s in (_slot_scalar(v) for v in value[:_SLOT_LIST_MAX]) if s is not None]
+        elif isinstance(value, str) or value is None or isinstance(value, (bool, int, float)):
+            out[key] = _slot_scalar(value)
+    return out
+
+
 def _safe_list(value, *, limit: int, item_limit: int) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -350,7 +382,7 @@ class ProductBySkuView(APIView):
 
     def get(self, request):
         location = _safe_location(request.query_params.get("store"))
-        sku = (request.query_params.get("sku") or "").strip()
+        sku = (request.query_params.get("sku") or "").replace("\x00", "").strip()[:64]
         if not sku:
             return Response({"error": "sku required"}, status=400)
         # This is the voice agent's check_inventory — a caller is on the phone
@@ -513,7 +545,9 @@ class ChatReplyView(APIView):
         if _chat_throttled(request, token[:128]):
             return Response({"ok": False, "error": "rate_limited"}, status=429,
                             headers={"Retry-After": str(CHAT_WINDOW)})
-        raw_message = str(data.get("message") or "").strip()
+        # Capped before anything reads it: only 4000 chars are stored, and the intent regexes and the
+        # brain need no more than that (the brain itself takes 1000).
+        raw_message = str(data.get("message") or "").strip()[:4000]
         if not raw_message:
             return Response({"ok": False, "error": "message required"}, status=400)
 
@@ -712,16 +746,16 @@ class CustomerDetailView(APIView):
 
 class ProductSearchView(APIView):
     def post(self, request):
-        slots = request.data.get("slots") or {}
-        if not isinstance(slots, dict):
-            slots = {}
+        slots = _bounded_slots(request.data.get("slots"))
         limit = _bounded_int(request.data.get("limit"), default=5, lo=1, hi=SEARCH_CAP)
         # Search v2 paging: "show 5 more" re-sends the SAME slots with offset += 5. The ranking is
         # prefix-stable, so page N is exactly picks[offset:offset+limit] of one ranked list, capped at 20.
         offset = _bounded_int(request.data.get("offset"), default=0, lo=0, hi=SEARCH_CAP)
         limit = max(0, min(limit, SEARCH_CAP - offset))
         location = _safe_location(slots.get("store") or request.data.get("location"))
-        exclude = {str(s) for s in (request.data.get("exclude_skus") or [])}
+        raw_exclude = request.data.get("exclude_skus")
+        exclude = ({str(s)[:64] for s in raw_exclude[:_EXCLUDE_SKUS_MAX] if isinstance(s, (str, int))}
+                   if isinstance(raw_exclude, list) else set())
         # Get-or-create the session so EVERY session (incl. anonymous questionnaire
         # guests) has its suggested products recorded. A token that is neither known nor
         # minted-shaped gets its results but no session (and never creates one).
@@ -758,7 +792,10 @@ class ProductSearchView(APIView):
         if inventory_is_stale(location):
             fire(ensure_inventory_fresh)
 
-        ranking_weights = request.data.get("ranking_weights")
+        # Per-request weights are the voice service's (it forwards the owner's dashboard levers). The
+        # website never sends them, and from the website token they would let the caller rank by margin
+        # alone and read the store's margin order off the results — so that token gets the owner's.
+        ranking_weights = None if is_website(request) else request.data.get("ranking_weights")
         if ranking_weights is None:
             ranking_weights = cache.get(_RANKING_WEIGHTS_CACHE_KEY)
 
@@ -908,8 +945,9 @@ def _facet_request(request) -> tuple[str, dict]:
         slots = data.get("slots") if isinstance(data.get("slots"), dict) else data
         slots = dict(slots)
         top = {"store": data.get("store"), "location": data.get("location"), "category": data.get("category")}
+    slots = _bounded_slots(slots)
     if top["category"] and not slots.get("category"):
-        slots["category"] = top["category"]
+        slots["category"] = _slot_scalar(top["category"])
     for key in ("doh_only", "solventless", "lab_tested"):
         if isinstance(slots.get(key), str):
             slots[key] = slots[key].strip().lower() in ("1", "true", "yes", "on")
@@ -977,7 +1015,7 @@ class SimilarView(APIView):
         from .product_similarity import similar_products
 
         data = request.data if isinstance(request.data, dict) else {}
-        slots = data.get("slots") if isinstance(data.get("slots"), dict) else {}
+        slots = _bounded_slots(data.get("slots"))
         location = _safe_location(data.get("store") or data.get("location") or slots.get("store"))
         limit = _bounded_int(data.get("limit"), default=5, lo=1, hi=SEARCH_CAP)
         offset = _bounded_int(data.get("offset"), default=0, lo=0, hi=SEARCH_CAP)
@@ -1300,11 +1338,15 @@ class PersistView(APIView):
             return Response({"ok": False}, status=202)
         phone = _normalize_phone(data.get("phone", "")) if data.get("phone") and not is_website(request) else ""
         profile = identity.profile_for_phone(phone) if phone else None
-        session.location_slug = _safe_location(
-            (data.get("slots") or {}).get("store"), default=session.location_slug
-        )
-        session.slots = data.get("slots") or session.slots
-        session.stage = data.get("stage") or session.stage
+        # The snapshot's slots must be an object and small (a list here was a 500, and an unbounded
+        # one was stored as-is); the stage is a short label in a 24-char column (Postgres refuses more).
+        slots = data.get("slots") if isinstance(data.get("slots"), dict) else {}
+        if slots and len(json.dumps(slots, default=str)) > 16000:
+            slots = {}
+        session.location_slug = _safe_location(slots.get("store"), default=session.location_slug)
+        session.slots = slots or session.slots
+        stage = data.get("stage")
+        session.stage = stage.strip()[:24] if isinstance(stage, str) and stage.strip() else session.stage
         if phone and profile is not None:  # a junk/store/shared number never lands on a session
             session.phone = phone
             session.customer = profile
@@ -1597,8 +1639,10 @@ class FeedbackView(APIView):
         rating = d.get("rating")
         try:
             rating = int(rating) if rating is not None else None
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             rating = None
+        if rating is not None and not 1 <= rating <= 5:
+            rating = None  # the column is 1-5; a huge number was a DB error (500)
         if not msg and rating is None:
             return Response({"ok": False, "error": "empty"}, status=400)
         fb = Feedback.objects.create(

@@ -1,13 +1,30 @@
 .env
 .env.dutchie
 .env.local
+# This context ("." for web/pos-web/migrate/warmer/celery) also contains voice/. A bare ".env" only
+# matches the ROOT file, so voice/.env (Vapi key, voice SECRET_KEY, HHT_BACKEND_TOKEN, DB password)
+# and voice/secrets/*.json (Vertex service account) were COPY'd into every budtender image layer.
+# Secrets reach containers through env_file / read-only mounts at run time, never the image.
+**/.env
+**/.env.*
+!**/.env.example
+voice/secrets/
+voice/data/uploads/
+data/creds/
+**/*-sa.json
+**/sa-key.json
+**/service-account*.json
+**/*gcp*.json
 stores.json
 stores.local.json
+**/stores.json
+**/stores.local.json
 .git
 __pycache__/
 *.pyc
 .venv/
 venv/
+**/.venv/
 staticfiles/
 *.sqlite3
 README.md

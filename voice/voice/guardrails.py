@@ -119,7 +119,9 @@ _ADDRESS_RE = re.compile(
 
 # Email address — owner-editable KB rows already avoid these, but a caller reading one out
 # ("email me at jane.doe@example.com") must not land in a stored transcript/turn in cleartext.
-_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[A-Za-z0-9.-]+\b")
+# Bounded runs (RFC 5321: local part <= 64, a label <= 63): the unbounded ``[\w.+-]+@`` rescanned
+# the whole run from every start position, so a 20 KB "a.a.a.…" transcript took over a second.
+_EMAIL_RE = re.compile(r"\b[\w.+-]{1,64}@[\w-]{1,63}\.[A-Za-z0-9.-]{1,255}\b")
 
 # Spoken-digit phone number: a caller reading digits out loud one at a time ("five oh nine,
 # two two two, one two three four") never matches ``_PHONE_RE`` (no actual digit characters).
