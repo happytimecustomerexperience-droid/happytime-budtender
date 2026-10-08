@@ -4,7 +4,6 @@ No response ever includes cost/margin (see serializers.public_product).
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import re
@@ -39,8 +38,13 @@ from .tasks import (_normalize_phone, ensure_inventory_fresh,
 
 
 def _hash_phone(raw: str) -> str:
+    """Keyed hash of a phone for analytics/feedback/draft rows. A bare sha256 of a US number is
+    reversed by trying all 10^10 of them in minutes, so it is an HMAC under SECRET_KEY. Nothing joins
+    on these values, so older plain-sha256 rows simply stay unmatched."""
+    from django.utils.crypto import salted_hmac
+
     p = _normalize_phone(raw or "")
-    return hashlib.sha256(p.encode()).hexdigest() if p else ""
+    return salted_hmac("budtender.phone_hash", p, algorithm="sha256").hexdigest() if p else ""
 
 
 def _slug_from_name(name: str) -> str:
@@ -439,7 +443,16 @@ class SessionStartView(APIView):
         return Response({"session_token": token, "stage": "WELCOME"})
 
 
-_MINTED_SESSION_TOKEN = re.compile(r"^s-[A-Za-z0-9_-]+$")
+# A token we have never seen is honoured only in the shape a session id is minted in: "s-" and 10-62
+# url-safe characters (SessionStartView's "s-" + 32; the website's "s-<base36 ms>-<base36 random>",
+# which is >= 10 after the "s-"). A shorter one ("s-1", "s-null", "s-undefined", a dev/test id) is a
+# string two different people can both end up sending, and they would then share ONE conversation,
+# its phone link and its picks. 64 is ChatSession.session_token's column width.
+_MINTED_SESSION_TOKEN = re.compile(r"s-[A-Za-z0-9_-]{10,62}")
+
+
+def _mintable(token: str) -> bool:
+    return bool(_MINTED_SESSION_TOKEN.fullmatch(token))
 
 
 def _session_for_token(token: str, **defaults) -> ChatSession | None:
@@ -449,11 +462,22 @@ def _session_for_token(token: str, **defaults) -> ChatSession | None:
     only honoured if it has the server-minted shape. An arbitrary caller-chosen string
     must never create a session (or later be used to overwrite one).
     """
-    token = str(token or "").strip()
+    token = str(token or "").strip() if isinstance(token, (str, int)) else ""
     session = ChatSession.objects.filter(session_token=token).first() if token else None
-    if session is None and len(token) <= 64 and _MINTED_SESSION_TOKEN.match(token):
+    if session is None and _mintable(token):
+        # get_or_create: a fresh tab's persist + search can arrive together with the same new id.
         session, _ = ChatSession.objects.get_or_create(session_token=token, defaults=defaults)
     return session
+
+
+def _own_session(session: ChatSession | None, profile: CustomerProfile | None) -> ChatSession | None:
+    """``session`` only if it is not already tied to a DIFFERENT person than ``profile``. A caller-ID
+    phone that names someone else than the session's customer (a stale or handed-on token) must not
+    write that person's picks into this session."""
+    linked = identity.follow(session.customer) if session is not None and profile is not None else None
+    if linked is None:
+        return session
+    return session if linked.pk == profile.pk else None
 
 
 # Every chat turn costs a brain call, so a turn is a unit of spend. The website's server is the
@@ -503,9 +527,10 @@ class ChatReplyView(APIView):
             # arbitrary caller-chosen string, and accepting it would let anyone attach
             # to (and later read/write) a session under a token of their choosing. In
             # that case we mint a fresh, high-entropy token instead of using theirs.
-            if not (token and _MINTED_SESSION_TOKEN.match(token)):
+            if not _mintable(token):
                 token = "s-" + secrets.token_urlsafe(24)
-            session = ChatSession.objects.create(session_token=token, location_slug=location, channel=channel)
+            session, _ = ChatSession.objects.get_or_create(
+                session_token=token, defaults={"location_slug": location, "channel": channel})
 
         # A website visitor typed this phone: never an identity (budtender/auth.py).
         phone = _normalize_phone(data.get("phone", "")) if data.get("phone") and not is_website(request) else ""
@@ -714,12 +739,18 @@ class ProductSearchView(APIView):
         # A shared row (one phone folded from many Dutchie customers) never personalises search.
         profile = (identity.trusted(identity.follow(session.customer))
                    if session and session.customer and trusted else None)
-        if profile is None and not is_website(request):
-            profile = _profile_for_phone(request.data.get("phone") or "")
-            if profile and session and not session.customer:
-                session.customer = profile
-                session.phone = profile.phone
-                session.save(update_fields=["customer", "phone"])
+        if not is_website(request):
+            # The voice service's caller-ID is the identity on this request. It wins over whoever a
+            # (stale, resumed or handed-on) session token was tied to, and that other person's
+            # session gets none of this caller's picks.
+            caller = _profile_for_phone(request.data.get("phone") or "")
+            if caller is not None:
+                session = _own_session(session, caller)
+                profile = caller
+                if session and not session.customer:
+                    session.customer = profile
+                    session.phone = profile.phone
+                    session.save(update_fields=["customer", "phone"])
 
         # Freshness guard: if this store's inventory is ≥24h stale, kick off an
         # async refresh so suggestions self-heal to live stock. Never blocks the
@@ -1180,7 +1211,10 @@ class PairingView(APIView):
         if not pair:
             return Response({"pairing": None, "reason_code": "none", "reason_text": "", "strength": 0.0})
 
-        session = ChatSession.objects.filter(session_token=request.data.get("session_token", "")).first()
+        token = request.data.get("session_token")
+        session = ChatSession.objects.filter(session_token=token.strip()).first() if (
+            isinstance(token, str) and token.strip()) else None
+        session = _own_session(session, profile)  # a caller's pairing never lands in another person's session
         SuggestedProduct.objects.create(
             session=session, customer=profile, location_slug=location, sku=pair.sku,
             kind="pairing", source=(session.channel if session else "menu"),
@@ -1195,11 +1229,20 @@ class PairingView(APIView):
 
 
 class ResumeByPhoneView(APIView):
+    """A caller (carrier caller-ID, backend token only) picks up their own recent conversation.
+
+    Only a session that THAT caller-ID established (``identity_via="caller_id"``) is ever handed back.
+    A website session carries the number its visitor TYPED: anyone can type anyone's number, so
+    resuming it would read a stranger's chat (and its token) to the phone's owner, and the call's
+    picks would then be written into that stranger's session. A shared or non-identifying number
+    resumes nothing."""
+
     def post(self, request):
         phone = _normalize_phone(request.data.get("phone", ""))
-        if identity.non_identifying_phone(phone):
-            phone = ""  # a store line / placeholder must not resume (or read) a stranger's chat
+        if identity.non_identifying_phone(phone) or identity.shared_phone(phone):
+            phone = ""  # a store line / placeholder / shared row must not resume (or read) a stranger's chat
         current = request.data.get("current_session_token")
+        current = current.strip() if isinstance(current, str) else ""
         profile = identity.profile_for_phone(phone) if phone else None
 
         # Link the in-flight session to the customer.
@@ -1212,11 +1255,12 @@ class ResumeByPhoneView(APIView):
             fire(recompute_affinity, profile.phone)
 
         prior = (
-            ChatSession.objects.filter(phone=phone, started_at__gte=timezone.now() - RESUME_WINDOW)
-            .exclude(session_token=current or "")
+            ChatSession.objects.filter(phone=phone, customer=profile, identity_via="caller_id",
+                                       started_at__gte=timezone.now() - RESUME_WINDOW)
+            .exclude(session_token=current)
             .order_by("-last_active_at")
             .first()
-            if phone
+            if phone and profile
             else None
         )
         if not prior:
@@ -1611,7 +1655,32 @@ class CallerContextView(APIView):
 
 
 SESSION_CONTEXT_PER_SESSION_HOUR = 6
+SESSION_CONTEXT_PER_IP_HOUR = 30   # per visitor IP the website vouches for (sessions are free to mint)
 SESSION_CONTEXT_SITE_HOUR = 600  # lookups/hour for the whole site: a number-enumeration ceiling
+
+
+def _vouched_visitor_ip(request) -> str:
+    """The shopper's IP as the website's server reported it (``X-HHT-Client-IP``), or "". Trusted only
+    because the request already carried a service token; the socket address is the proxy, shared by all."""
+    import ipaddress
+
+    try:
+        return str(ipaddress.ip_address(str(request.headers.get("X-HHT-Client-IP", "")).strip()))
+    except ValueError:
+        return ""
+
+
+def _take_hourly(*buckets: tuple[str, int, str]) -> bool:
+    """Spend one unit from every (scope, limit, key) bucket, or from none: a refusal hands back what
+    the earlier buckets took, so a refused lookup never eats a shopper's (or the site's) budget."""
+    taken: list[tuple[str, str]] = []
+    for scope, limit, value in buckets:
+        if not caps.take(scope, limit, 3600, value):
+            for s, v in taken:
+                caps.give_back(s, v)
+            return False
+        taken.append((scope, value))
+    return True
 
 
 class SessionContextView(APIView):
@@ -1624,20 +1693,34 @@ class SessionContextView(APIView):
     def post(self, request):
         data = request.data or {}
         e164 = _normalize_phone(data.get("phone", ""))
-        token = str(data.get("session_token") or "").strip()
+        token = str(data.get("session_token") or "").strip()[:128]
+        # The visitor typed a number that names nobody (junk, a store line, a placeholder), cleared it,
+        # or skipped ({"forget": true}): this session stops being whoever was typed in it before. On a
+        # shared screen the next shopper must not keep the previous one's taste-first picks.
+        typed = "phone" in data or bool(data.get("forget"))
+        if token and typed and (data.get("forget") or not e164 or identity.non_identifying_phone(e164)):
+            identity.unlink_session(token, "web_phone")
         # No phone, a junk/store/placeholder number, or no session to link: anonymous, always.
         if (not settings.HHT_WEB_PHONE_IDENTITY or not e164 or not token
                 or identity.non_identifying_phone(e164)):
             return Response({"ok": True, **identity.context(None)})
         session = _session_for_token(token, channel="chat")
         # Asking again for the number this session is already linked to reveals nothing new (the chat
-        # does it every turn), so only a first or different number spends the caps.
+        # does it every turn), so only a first or different number spends the caps. The website proxies
+        # every shopper from one address, so the per-visitor cap keys on the IP the site vouches for
+        # (X-HHT-Client-IP, as the voice service does): one shopper cannot spend everyone's site budget.
         repeat = bool(session and session.identity_via == "web_phone" and session.phone == e164)
-        if not repeat and (not caps.take("web-ident-session", SESSION_CONTEXT_PER_SESSION_HOUR, 3600, token)
-                           or not caps.take("web-ident-site", SESSION_CONTEXT_SITE_HOUR, 3600)):
+        visitor = _vouched_visitor_ip(request)
+        if not repeat and not _take_hourly(
+            ("web-ident-session", SESSION_CONTEXT_PER_SESSION_HOUR, token),
+            *((("web-ident-ip", SESSION_CONTEXT_PER_IP_HOUR, visitor),) if visitor else ()),
+            ("web-ident-site", SESSION_CONTEXT_SITE_HOUR, ""),
+        ):
             return Response({"ok": False, "error": "rate_limited"}, status=429)
         profile, created = identity.ensure_profile(e164, "web", data.get("name", ""))
         if session is not None:
+            if profile is None:  # a shared row: nobody, so not the person typed here before either
+                identity.unlink_session(session.session_token, "web_phone")
             identity.link_session(session.session_token, profile, e164, "web_phone")
         # web=True: the number was typed, not verified, so a name rides along only for a row with purchases.
         return Response({"ok": True, **identity.context(profile, created, web=True, vouched=data.get("name", ""))})

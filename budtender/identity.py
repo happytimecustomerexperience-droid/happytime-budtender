@@ -159,6 +159,16 @@ def context(profile: CustomerProfile | None, created: bool = False, *, web: bool
     }
 
 
+def shared_phone(phone: object) -> bool:
+    """True when this number's row (after a merge) is a shared one: it names nobody, so it must not
+    key a lookup of anyone's sessions either (a family landline, a walk-in number)."""
+    from .tasks import _normalize_phone
+
+    e164 = _normalize_phone(phone or "")
+    row = CustomerProfile.objects.filter(phone=e164).select_related("merged_into").first() if e164 else None
+    return shared_profile(follow(row))
+
+
 def link_session(token: object, profile: CustomerProfile | None, e164: str, via: str) -> None:
     """Tie an existing chat session to the customer (no-op for an unknown token or no profile)."""
     token = str(token or "").strip()
@@ -166,6 +176,17 @@ def link_session(token: object, profile: CustomerProfile | None, e164: str, via:
         ChatSession.objects.filter(session_token=token).update(
             customer=profile, phone=e164, identity_via=via, last_active_at=timezone.now()
         )
+
+
+def unlink_session(token: object, via: str) -> int:
+    """Drop a session's ``via`` identification (the visitor typed a number that names nobody, or
+    skipped): whoever is typing now must not keep being treated as the person typed before them."""
+    token = str(token or "").strip()
+    if not token:
+        return 0
+    return ChatSession.objects.filter(session_token=token, identity_via=via).update(
+        customer=None, phone="", identity_via="", last_active_at=timezone.now()
+    )
 
 
 # ── weekly merge ─────────────────────────────────────────────────────────────

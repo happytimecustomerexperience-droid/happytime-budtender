@@ -33,6 +33,14 @@ Postgres host `db` only resolves inside docker, so run tests on in-memory sqlite
   unverified, so `context(web=True)` returns a first name only for a row with purchases or a name the visitor
   typed in that same request. `manage.py diagnose_greeting --name X` lists the offending rows (read-only).
   Pinned by `test_anonymous_never_named.py`.
+- **Sessions never mix** (`test_session_isolation.py`): an unknown token creates a session only as
+  `s-` + 10-62 url-safe chars (`_mintable`; "s-1"/"s-undefined" would be shared by strangers);
+  `resume-by-phone` hands back only a `caller_id`-linked session of that same customer (never a
+  website session, whose phone was typed; never for a shared row); a typed junk/shared number or
+  `{"forget": true}` on `session-context` unlinks the session's `web_phone` link; a backend caller-ID
+  phone that names someone other than the session's customer ranks for the caller and writes no
+  picks into that session (`_own_session`). `session-context` is also capped per `X-HHT-Client-IP`.
+  Analytics `phone_hash` is an HMAC under SECRET_KEY, not a bare sha256.
 - **Conversations are kept forever.** `ChatSession`/`ChatMessage`/`SuggestedProduct`/`AnalyticsEvent`/`Feedback`
   are Postgres rows (named volume `pgdata`, nightly `db-backup` dump). `PersistView` is append-only; no job
   deletes them; `reset_analytics --yes` also needs `HHT_ALLOW_ANALYTICS_RESET=1`; `purge_pii` never touches

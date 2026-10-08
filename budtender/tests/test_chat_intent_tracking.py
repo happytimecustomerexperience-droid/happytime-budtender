@@ -37,31 +37,31 @@ class ChatIntentTrackingTests(TestCase):
         ]
 
     def test_product_turn_is_classified_and_tracked(self):
-        r = self._post({"session_token": "s-prod", "message": "show me some indica flower under $30"})
+        r = self._post({"session_token": "s-prod-session0", "message": "show me some indica flower under $30"})
         self.assertEqual(r.json()["intent"], "product_suggestion")  # surfaced to the client
-        self.assertEqual(self._user_intents("s-prod"), ["product_suggestion"])
-        self.assertEqual(ChatSession.objects.get(session_token="s-prod").primary_intent, "product_suggestion")
+        self.assertEqual(self._user_intents("s-prod-session0"), ["product_suggestion"])
+        self.assertEqual(ChatSession.objects.get(session_token="s-prod-session0").primary_intent, "product_suggestion")
 
     def test_conflict_turn_sets_primary_intent(self):
-        self._post({"session_token": "s-conf", "message": "my cart is broken and I want a refund"})
-        self.assertEqual(self._user_intents("s-conf"), ["conflict_resolution"])
-        self.assertEqual(ChatSession.objects.get(session_token="s-conf").primary_intent, "conflict_resolution")
+        self._post({"session_token": "s-conf-session0", "message": "my cart is broken and I want a refund"})
+        self.assertEqual(self._user_intents("s-conf-session0"), ["conflict_resolution"])
+        self.assertEqual(ChatSession.objects.get(session_token="s-conf-session0").primary_intent, "conflict_resolution")
 
     def test_primary_intent_is_sticky_and_escalation_dominates(self):
-        self._post({"session_token": "s-multi", "message": "hi there"})
-        self._post({"session_token": "s-multi", "message": "any specials today?"})
-        self._post({"session_token": "s-multi", "message": "actually this is a scam, I am furious"})
-        self._post({"session_token": "s-multi", "message": "and what are your hours"})
+        self._post({"session_token": "s-multi-session0", "message": "hi there"})
+        self._post({"session_token": "s-multi-session0", "message": "any specials today?"})
+        self._post({"session_token": "s-multi-session0", "message": "actually this is a scam, I am furious"})
+        self._post({"session_token": "s-multi-session0", "message": "and what are your hours"})
         self.assertEqual(
-            self._user_intents("s-multi"),
+            self._user_intents("s-multi-session0"),
             ["greeting_other", "specials", "conflict_resolution", "hours_location"],
         )
         # first real intent was specials, but a later conflict dominates and sticks.
-        self.assertEqual(ChatSession.objects.get(session_token="s-multi").primary_intent, "conflict_resolution")
+        self.assertEqual(ChatSession.objects.get(session_token="s-multi-session0").primary_intent, "conflict_resolution")
 
     def test_analytics_summary_surfaces_intent_breakdown(self):
-        self._post({"session_token": "s-a", "message": "show me some flower"})
-        self._post({"session_token": "s-b", "message": "my cart is broken, refund please"})
+        self._post({"session_token": "s-a-session0", "message": "show me some flower"})
+        self._post({"session_token": "s-b-session0", "message": "my cart is broken, refund please"})
         r = self.client.post(
             "/api/v1/analytics/summary",
             data=json.dumps({"days": 30}),

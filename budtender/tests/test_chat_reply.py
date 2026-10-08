@@ -44,8 +44,8 @@ class ChatReplyTests(TestCase):
             return (f"reply {len(seen)}", "brain", "")
 
         with patch("budtender.views.generate_chat_reply_with_source", side_effect=fake_reply):
-            first = self._post({"session_token": "s-test", "message": "I like flower"})
-            second = self._post({"session_token": "s-test", "message": "something relaxing"})
+            first = self._post({"session_token": "s-test-session0", "message": "I like flower"})
+            second = self._post({"session_token": "s-test-session0", "message": "something relaxing"})
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 200)
@@ -57,15 +57,15 @@ class ChatReplyTests(TestCase):
             ("assistant", "reply 1"),
             ("user", "something relaxing"),
         ])
-        self.assertEqual(ChatMessage.objects.filter(session__session_token="s-test").count(), 4)
+        self.assertEqual(ChatMessage.objects.filter(session__session_token="s-test-session0").count(), 4)
         self.assertEqual(AnalyticsEvent.objects.filter(event_type="chat_message").count(), 4)
 
     def test_chat_reply_redacts_phoneish_user_message_before_persist(self):
         with patch("budtender.views.generate_chat_reply_with_source", return_value=("ok", "brain", "")):
-            r = self._post({"session_token": "s-pii", "message": "call me at 509 555 1212"})
+            r = self._post({"session_token": "s-pii-session0", "message": "call me at 509 555 1212"})
 
         self.assertEqual(r.status_code, 200)
-        msg = ChatMessage.objects.get(session__session_token="s-pii", role="user")
+        msg = ChatMessage.objects.get(session__session_token="s-pii-session0", role="user")
         self.assertEqual(msg.content, "call me at [phone redacted]")
 
     def test_chat_reply_passes_full_persisted_thread_to_gemini(self):
@@ -90,17 +90,17 @@ class ChatReplyTests(TestCase):
     def test_chat_reply_normalizes_untrusted_attribution(self):
         with patch("budtender.views.generate_chat_reply_with_source", return_value=("hello", "brain", "")):
             r = self._post({
-                "session_token": "s-attrib",
+                "session_token": "s-attrib-session0",
                 "message": "hello",
                 "location": "Mount Vernon",
                 "channel": "admin<script>",
             })
 
         self.assertEqual(r.status_code, 200)
-        session = ChatSession.objects.get(session_token="s-attrib")
+        session = ChatSession.objects.get(session_token="s-attrib-session0")
         self.assertEqual(session.location_slug, "mount-vernon")
         self.assertEqual(session.channel, "chat")
-        event = AnalyticsEvent.objects.filter(session_token="s-attrib").first()
+        event = AnalyticsEvent.objects.filter(session_token="s-attrib-session0").first()
         self.assertEqual(event.location_slug, "mount-vernon")
         self.assertEqual(event.channel, "chat")
 
@@ -131,7 +131,7 @@ class ChatReplyTests(TestCase):
         ), patch("google.genai.Client") as genai_client, self.assertLogs(
             "budtender.gemini_chat", level="WARNING"
         ) as logs:
-            r = self._post({"session_token": "s-brain-429", "message": "something for sleep", "store": "yakima"})
+            r = self._post({"session_token": "s-brain-429-session0", "message": "something for sleep", "store": "yakima"})
 
         self.assertEqual(r.status_code, 200)
         body = r.json()
@@ -140,9 +140,9 @@ class ChatReplyTests(TestCase):
         genai_client.assert_not_called()
         self.assertEqual(posted, ["http://voice.internal:8000/api/voice/chat"])
         self.assertTrue(any("chat fallback" in line for line in logs.output))
-        event = AnalyticsEvent.objects.get(session_token="s-brain-429", props__role="assistant")
+        event = AnalyticsEvent.objects.get(session_token="s-brain-429-session0", props__role="assistant")
         self.assertEqual(event.props["source"], "fallback")
-        session = ChatSession.objects.get(session_token="s-brain-429")
+        session = ChatSession.objects.get(session_token="s-brain-429-session0")
         self.assertEqual(list(session.messages.values_list("role", flat=True)), ["user", "assistant"])
 
     def test_brain_unconfigured_or_unreachable_also_gets_the_floor_reply(self):
@@ -190,13 +190,13 @@ class ChatReplyTests(TestCase):
         with patch("budtender.views.CHAT_REPLIES_PER_SESSION", 2), patch(
             "budtender.views.generate_chat_reply_with_source", side_effect=brain
         ):
-            codes = [self._post({"session_token": "s-capped", "message": f"m{i}"}).status_code for i in range(3)]
+            codes = [self._post({"session_token": "s-capped-session0", "message": f"m{i}"}).status_code for i in range(3)]
             other = self._post({"session_token": "s-someone-else", "message": "hi"}).status_code
 
         self.assertEqual(codes, [200, 200, 429])
         self.assertEqual(other, 200)
         self.assertEqual(len(calls), 3)  # two for s-capped, one for the other session
-        self.assertEqual(ChatMessage.objects.filter(session__session_token="s-capped").count(), 4)
+        self.assertEqual(ChatMessage.objects.filter(session__session_token="s-capped-session0").count(), 4)
 
     def test_chat_turns_are_capped_per_ip_even_with_fresh_sessions(self):
         with patch("budtender.views.CHAT_REPLIES_PER_IP", 2), patch(
@@ -209,9 +209,9 @@ class ChatReplyTests(TestCase):
         with patch("budtender.views.CHAT_REPLIES_PER_IP", 2), patch(
             "budtender.views.CHAT_REPLIES_PER_SESSION", 1
         ), patch("budtender.views.generate_chat_reply_with_source", return_value=("ok", "brain", "")):
-            first = self._post({"session_token": "s-one", "message": "hi"}).status_code
-            refused = self._post({"session_token": "s-one", "message": "again"}).status_code
-            second = self._post({"session_token": "s-two", "message": "hi"}).status_code
+            first = self._post({"session_token": "s-one-session0", "message": "hi"}).status_code
+            refused = self._post({"session_token": "s-one-session0", "message": "again"}).status_code
+            second = self._post({"session_token": "s-two-session0", "message": "hi"}).status_code
         self.assertEqual((first, refused, second), (200, 429, 200))
 
     def test_chat_reply_scrubs_forbidden_business_terms(self):
@@ -219,7 +219,7 @@ class ChatReplyTests(TestCase):
             "budtender.views.generate_chat_reply_with_source",
             return_value=("The cost and margin are secret.", "brain", ""),
         ):
-            r = self._post({"session_token": "s-leak", "message": "hello"})
+            r = self._post({"session_token": "s-leak-session0", "message": "hello"})
 
         self.assertEqual(r.status_code, 200)
         body = json.dumps(r.json()).lower()
@@ -290,7 +290,7 @@ class ChatReplyTests(TestCase):
         """No session_token means "browse recent sessions", not "read their content" — the
         no-token response is metadata only (no message bodies, no phone)."""
         session = ChatSession.objects.create(
-            session_token="s-history", location_slug="yakima", channel="chat", phone="+15095551234"
+            session_token="s-history-session0", location_slug="yakima", channel="chat", phone="+15095551234"
         )
         ChatMessage.objects.create(session=session, role="user", content="hello")
         ChatMessage.objects.create(session=session, role="assistant", content="hi there")
@@ -337,13 +337,13 @@ class ChatReplyTests(TestCase):
         self.assertEqual(r.json()["fallback_count"], 1)
 
     def test_chat_history_returns_bounded_full_transcript(self):
-        session = ChatSession.objects.create(session_token="s-long", location_slug="yakima", channel="chat")
+        session = ChatSession.objects.create(session_token="s-long-session0", location_slug="yakima", channel="chat")
         for i in range(25):
             ChatMessage.objects.create(session=session, role="user", content=f"turn {i}")
 
         r = self.client.post(
             "/api/v1/chat/history",
-            data=json.dumps({"session_token": "s-long", "limit": "bad", "message_limit": 25}),
+            data=json.dumps({"session_token": "s-long-session0", "limit": "bad", "message_limit": 25}),
             content_type="application/json",
             **self._auth(),
         )
@@ -355,14 +355,14 @@ class ChatReplyTests(TestCase):
         self.assertEqual(messages[-1]["content"], "turn 24")
 
     def test_chat_history_filters_by_session_token(self):
-        wanted = ChatSession.objects.create(session_token="s-wanted", location_slug="yakima", channel="chat")
-        other = ChatSession.objects.create(session_token="s-other", location_slug="pullman", channel="chat")
+        wanted = ChatSession.objects.create(session_token="s-wanted-session0", location_slug="yakima", channel="chat")
+        other = ChatSession.objects.create(session_token="s-other-session0", location_slug="pullman", channel="chat")
         ChatMessage.objects.create(session=wanted, role="user", content="show this")
         ChatMessage.objects.create(session=other, role="user", content="not this")
 
         r = self.client.post(
             "/api/v1/chat/history",
-            data=json.dumps({"session_token": "s-wanted", "limit": 100, "message_limit": 500}),
+            data=json.dumps({"session_token": "s-wanted-session0", "limit": 100, "message_limit": 500}),
             content_type="application/json",
             **self._auth(),
         )
@@ -377,7 +377,7 @@ class ChatReplyTests(TestCase):
         r = self.client.post(
             "/api/v1/chat/persist/",
             data=json.dumps({
-                "session_token": "s-persist",
+                "session_token": "s-persist-session0",
                 "slots": {"store": "mt vernon"},
                 "messages": [
                     {"role": "system", "content": "call me at 509-555-1212"},
@@ -389,7 +389,7 @@ class ChatReplyTests(TestCase):
         )
 
         self.assertEqual(r.status_code, 202)
-        session = ChatSession.objects.get(session_token="s-persist")
+        session = ChatSession.objects.get(session_token="s-persist-session0")
         self.assertEqual(session.location_slug, "mount-vernon")
         self.assertEqual(list(session.messages.values_list("role", flat=True)), ["user", "assistant"])
         self.assertEqual(session.messages.order_by("id").first().content, "call me at [phone redacted]")
@@ -398,7 +398,7 @@ class ChatReplyTests(TestCase):
         r = self.client.post(
             "/api/v1/chat/persist/",
             data=json.dumps({
-                "session_token": "s-caps",
+                "session_token": "s-caps-session0",
                 "messages": [
                     {
                         "role": "user",
@@ -413,7 +413,7 @@ class ChatReplyTests(TestCase):
         )
 
         self.assertEqual(r.status_code, 202)
-        msg = ChatMessage.objects.get(session__session_token="s-caps")
+        msg = ChatMessage.objects.get(session__session_token="s-caps-session0")
         self.assertEqual(len(msg.content), 4000)
         self.assertEqual(len(msg.chips), 20)
         self.assertTrue(all(len(chip) <= 80 for chip in msg.chips))
