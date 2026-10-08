@@ -450,6 +450,17 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
             except Exception:  # noqa: BLE001 - release is best-effort and must not break the webhook
                 logger.warning("phone-cart release failed for %s", call_id, exc_info=True)
 
+    # Customer memory: the CUSTOMER's own redacted turns go to budtender's shared memory. Only for a
+    # trusted (carrier-caller-ID) caller; best-effort and never in the way of the durable write above.
+    try:
+        from voice import caller, tasks
+
+        turns = caller.learnable_turns(message, store, _redact_phoneish)
+        if turns:
+            tasks.queue_memory_learn(call_id, turns)
+    except Exception:  # noqa: BLE001 - memory is an enhancement, never a reason to fail the report
+        logger.warning("customer-memory learn not queued for %s", call_id, exc_info=True)
+
     try:
         from voice import tasks
 

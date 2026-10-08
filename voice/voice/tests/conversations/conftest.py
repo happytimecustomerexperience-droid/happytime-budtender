@@ -184,6 +184,13 @@ class FakeBudtender:
                                         "session_token": session_token, "timeout": timeout})
         return {} if self.fail_caller else {"ok": True, **self.caller}
 
+    def memory_learn(self, call_id, user_turns, *, channel="voice", timeout=6.0):
+        self._record("memory_learn", {"call_id": call_id, "transcript_user_turns": list(user_turns),
+                                      "channel": channel})
+        if getattr(self, "fail_learn", False):
+            raise RuntimeError("budtender exploded")
+        return {"ok": True}
+
     def profile_upsert(self, phone_e164, *, name="", source="voice"):
         self._record("profile_upsert", {"phone": phone_e164, "name": name, "source": source})
         if not self.caller["first_name"]:  # budtender stores a name only when the row has none

@@ -94,6 +94,49 @@ def rollup_analytics(date_iso: str | None = None) -> dict:
     return {"date": date_iso, "calls_total": qs.count(), "by_outcome": by_outcome}
 
 
+@shared_task(name="voice.learn_memory", ignore_result=True)
+def learn_memory(call_id: str, user_turns: list) -> bool:
+    """Send the customer's own (already PII-redacted) turns of a finished call to budtender's shared
+    customer memory. Best-effort and idempotent per call (a redelivered report posts once); never
+    raises, so it can neither lose the durable ``VoiceCall`` row nor fail the webhook."""
+    try:
+        from django.core.cache import cache
+
+        from voice.budtender_client import budtender
+
+        if not call_id or not user_turns:
+            return False
+        try:
+            if not cache.add(f"memory-learn:{call_id}", 1, 24 * 60 * 60):
+                return False  # this call was already sent
+        except Exception:  # noqa: BLE001 - a cache outage must not stop the learn
+            logger.warning("memory-learn guard unavailable for %s", call_id, exc_info=True)
+        sent = bool(budtender().memory_learn(call_id, user_turns, channel="voice"))
+        if not sent:
+            try:
+                cache.delete(f"memory-learn:{call_id}")  # not delivered: a redelivered report may retry
+            except Exception:  # noqa: BLE001
+                pass
+        return sent
+    except Exception:  # noqa: BLE001
+        logger.warning("learn_memory failed for %s", call_id, exc_info=True)
+        return False
+
+
+def queue_memory_learn(call_id: str, user_turns: list) -> None:
+    """Run ``learn_memory`` on the queue when ``HHT_USE_CELERY`` is on, else inline (the same gate as
+    ``run_post_call``). Never raises."""
+    if not call_id or not user_turns:
+        return
+    try:
+        if _use_celery():
+            learn_memory.delay(call_id, list(user_turns))
+            return
+    except Exception:  # noqa: BLE001 - broker down: fall through to inline
+        logger.warning("celery enqueue failed for memory learn %s; running inline", call_id, exc_info=True)
+    learn_memory(call_id, list(user_turns))
+
+
 # ── the gated dispatcher (queue when enabled, inline otherwise) ──────────────────
 def run_post_call(voice_call_id: int) -> None:
     """Run the post-call work for one call — on the queue when ``HHT_USE_CELERY`` is on, else INLINE.

@@ -348,7 +348,10 @@ class BudtenderClient:
         """``POST /customer/caller-context`` (NO trailing slash): who is calling, DB-only. Creates a
         "voice" profile for a number budtender has never seen. Returns ``{ok, created, known,
         first_name, has_history, orders, days_since_last, top_categories, price_tier, brands,
-        flavors, terpenes}`` (no phone, no cost/margin). ``timeout`` caps connect + read together
+        flavors, terpenes}`` (no phone, no cost/margin) plus, once the memory contract ships,
+        ``brief`` (<= 600 chars of plain text), ``style`` (small enum dict) and ``tier`` (``"trusted"``
+        for a carrier-caller-ID caller); older budtenders omit them and ``voice.caller`` reads that as
+        "no memory". ``timeout`` caps connect + read together
         (the assistant-request path answers inside Vapi's fixed 7.5 s, so it is not the client's
         8 s default); it is a request budget, not a wall-clock kill. ``{}`` on ANY failure —
         unknown, never "a new caller"."""
@@ -361,6 +364,20 @@ class BudtenderClient:
             payload["session_token"] = session_token
         out = self._post("/customer/caller-context", payload, empty={}, budget=timeout)
         return out if isinstance(out, dict) and out.get("ok") else {}
+
+    def memory_learn(self, call_id: str, user_turns: list, *, channel: str = "voice", timeout: float = 6.0) -> dict:
+        """``POST /customer/memory/learn`` (NO trailing slash, backend token): hand budtender the
+        customer's OWN turns of a finished call so it can fold them into the shared customer memory
+        (contract customer-memory-v1). Body is exactly ``{call_id, transcript_user_turns, channel}``:
+        at most 40 turns of 500 characters, no phone number (budtender resolves the caller from the
+        call id it linked at caller-context time). Nothing is sent without a call id or a turn.
+        ``{}`` on ANY failure; never raises (best-effort, post-call)."""
+        turns = [t[:500] for t in (str(x).strip() for x in (user_turns or [])) if t][-40:]
+        if not call_id or not turns:
+            return {}
+        payload = {"call_id": str(call_id), "transcript_user_turns": turns, "channel": channel or "voice"}
+        out = self._post("/customer/memory/learn", payload, empty={}, budget=timeout)
+        return out if isinstance(out, dict) else {}
 
     def profile_upsert(self, phone_e164: str, *, name: str = "", source: str = "voice") -> dict:
         """``POST /customer/profile-upsert``: create the profile for a phone budtender has not seen
