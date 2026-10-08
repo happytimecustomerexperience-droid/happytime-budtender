@@ -38,6 +38,9 @@ urlpatterns = [
     path("analytics/summary", views.AnalyticsSummaryView.as_view()),
     path("analytics/funnel", views.AnalyticsFunnelView.as_view()),     # owner dashboard: per-session funnel
     path("analytics/session", views.AnalyticsSessionView.as_view()),   # owner dashboard: one session's timeline
+    path("analytics/suggestions", views.AnalyticsSuggestionsView.as_view()),           # suggestion-analytics-v1
+    path("analytics/suggestions/list", views.AnalyticsSuggestionsListView.as_view()),
+    path("customer/suggestions", views.CustomerSuggestionsView.as_view()),
     path("admin/ranking-weights", views.AdminRankingWeightsView.as_view()),
     path("feedback/", views.FeedbackView.as_view()),
     path("persona/refresh", views.PersonaRefreshView.as_view()),

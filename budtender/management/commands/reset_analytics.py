@@ -24,12 +24,13 @@ from django.db import transaction
 
 from budtender.models import (AnalyticsEvent, ChatMessage, ChatSession,
                               CustomerProfile, Feedback, Product,
-                              SuggestedProduct)
+                              SuggestedProduct, SuggestionOutcome)
 
 # Child-first, so explicit deletes never hit a ProtectedError regardless of the
 # FK on_delete policy (ChatMessage/SuggestedProduct reference ChatSession).
 WIPE = [
     ("ChatMessage", ChatMessage),
+    ("SuggestionOutcome", SuggestionOutcome),
     ("SuggestedProduct", SuggestedProduct),
     ("Feedback", Feedback),
     ("ChatSession", ChatSession),

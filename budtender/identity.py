@@ -189,6 +189,11 @@ def link_session(token: object, profile: CustomerProfile | None, e164: str, via:
     rows = ChatSession.objects.filter(session_token=token)
     rows.filter(customer__isnull=False).exclude(customer=profile).update(learned={})
     rows.update(customer=profile, phone=e164, identity_via=via, last_active_at=timezone.now())
+    # The session's earlier ANONYMOUS suggestions become this customer's (suggestion-analytics-v1);
+    # rows already attributed to someone else stay theirs. Never fails the link.
+    from . import suggestions
+
+    suggestions.attach_sessions_safely(rows, profile, via)
 
 
 def unlink_session(token: object, via: str) -> int:

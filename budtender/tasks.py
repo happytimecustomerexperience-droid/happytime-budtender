@@ -318,7 +318,7 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
         # Always capture the latest Dutchie name for EVERY customer seen (even gated ones).
         if name_by_id.get(cid):
             name_by_phone[phone] = name_by_id[cid]
-        for it in (tx.get("items") or []):
+        for line_no, it in enumerate(tx.get("items") or []):
             if it.get("isReturned"):
                 continue
             pid = str(it.get("productId") or "")
@@ -361,6 +361,12 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
                     "first_bought_at": bought_at,
                     "last_bought_at": bought_at,
                     "times_bought": times_bought,
+                    # Suggestion attribution only (budtender.suggestions.attribute_lines); _fold_history
+                    # builds history entries from an explicit key list, so these never reach the profile.
+                    "tx_line": f"{tx_id or bought_at}:{pid}:{line_no}",
+                    "line_total": round(float(it.get("unitPrice") or 0) * qty, 2),
+                    "_line_name": str(it.get("productName") or "")[:255],
+                    "_line_brand": str(it.get("brandName") or "")[:128],
                 })
     for phone, lines in by_phone.items():
         _fold_history(phone, lines, name=name_by_phone.get(phone))
@@ -393,6 +399,15 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
     cache.set(f"vel:{location_slug}", velocity, timeout=14 * 24 * 3600)
     classify_products(location_slug)   # propagate fresh velocity → Product.velocity + buckets
     return len(by_phone)
+
+
+@shared_task
+def close_suggestion_windows() -> dict:
+    """Hourly: decide suggestions whose 10-day window + 1 day of sync lag has passed — ``not_bought``
+    when the customer is known, else ``unattributable`` (budtender.suggestions.close_expired). Idempotent."""
+    from . import suggestions
+
+    return suggestions.close_expired()
 
 
 @shared_task
@@ -831,6 +846,15 @@ def _fold_history(phone: str, lines: list[dict], name: str | None = None) -> Non
         SuggestedProduct.objects.filter(
             customer=profile, sku__in=bought_skus, accepted__isnull=True
         ).update(accepted=True)
+
+    # Suggestion analytics v1: these lines decide the customer's open suggestions (bought the product or
+    # a sibling within the window). Idempotent, so a rebuild re-folding the same lines changes nothing.
+    try:
+        from . import suggestions
+
+        suggestions.attribute_lines(profile, lines)
+    except Exception:  # noqa: BLE001 - attribution must never fail the history ingest
+        logger.warning("suggestion attribution failed for profile %s", profile.pk, exc_info=True)
 
     recompute_affinity(phone)
 

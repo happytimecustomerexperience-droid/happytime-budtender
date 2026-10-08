@@ -24,7 +24,7 @@ from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
                      CustomerProfile, Feedback, PhoneCartDraft, Product,
                      SuggestedProduct)
 from .pairing import pair_for
-from . import analytics, facets, identity, lab_enrich, live_stock, memory
+from . import analytics, facets, identity, lab_enrich, live_stock, memory, suggestions
 from .auth import is_website
 from .fire import fire
 from .gemini_chat import (fetch_persona, generate_chat_reply_with_source,
@@ -512,6 +512,23 @@ def _own_session(session: ChatSession | None, profile: CustomerProfile | None) -
     return session if linked.pk == profile.pk else None
 
 
+def _session_customer(request, session: ChatSession | None) -> CustomerProfile | None:
+    """Who a session's suggestions belong to — the rule search personalises by: a website session only
+    through SessionContextView's link (HHT_WEB_PHONE_IDENTITY), never a shared row."""
+    if session is None or not session.customer_id:
+        return None
+    if is_website(request) and not (session.identity_via == "web_phone" and settings.HHT_WEB_PHONE_IDENTITY):
+        return None
+    return identity.trusted(identity.follow(session.customer))
+
+
+def _suggestion_via(session: ChatSession | None, caller: CustomerProfile | None) -> str:
+    """identity_via stamped on a suggestion: the carrier caller-ID on this request, else the session's."""
+    if caller is not None:
+        return "caller_id"
+    return (session.identity_via or "") if session is not None else ""
+
+
 # Every chat turn costs a brain call, so a turn is a unit of spend. The website's server is the
 # only caller, which means the client IP here is one shared address for ALL shoppers: the IP cap is
 # a site-wide ceiling set far above real traffic, and the per-session cap is what stops one chat
@@ -658,6 +675,12 @@ class ChatHistoryView(APIView):
             .prefetch_related("messages")
             .order_by("-last_active_at")
         )
+        # One customer's conversations (budtender CustomerProfile id, suggestion-analytics-v1). Also
+        # narrows an {id} read: a transcript is returned only if it belongs to that customer.
+        customer_id = data.get("customer_id")
+        by_customer = customer_id not in (None, "")
+        if by_customer:
+            sessions = sessions.filter(customer_id=_bounded_int(customer_id, default=0, lo=0, hi=2**31))
         if session_id not in (None, ""):
             sessions = sessions.filter(pk=_bounded_int(session_id, default=0, lo=0, hi=2**31))
         elif session_token:
@@ -672,6 +695,8 @@ class ChatHistoryView(APIView):
                 rows.append({
                     "id": session.pk,
                     "channel": session.channel,
+                    "customer_id": session.customer_id,
+                    "identity_via": session.identity_via,
                     "location_slug": session.location_slug,
                     "stage": session.stage,
                     "message_count": len(messages),
@@ -687,12 +712,14 @@ class ChatHistoryView(APIView):
             from django.db.models import Count
 
             offset = _bounded_int(data.get("offset"), default=0, lo=0, hi=10_000_000)
-            total = ChatSession.objects.count()
+            total = sessions.count() if by_customer else ChatSession.objects.count()
             shown = list(sessions.annotate(message_count=Count("messages"))[offset:offset + limit])
             rows = [
                 {
                     "id": session.pk,
                     "channel": session.channel,
+                    "customer_id": session.customer_id,
+                    "identity_via": session.identity_via,
                     "location_slug": session.location_slug,
                     "primary_intent": session.primary_intent,
                     "started_at": session.started_at.isoformat(),
@@ -790,6 +817,7 @@ class ProductSearchView(APIView):
         # A shared row (one phone folded from many Dutchie customers) never personalises search.
         profile = (identity.trusted(identity.follow(session.customer))
                    if session and session.customer and trusted else None)
+        caller = None
         if not is_website(request):
             # The voice service's caller-ID is the identity on this request. It wins over whoever a
             # (stale, resumed or handed-on) session token was tied to, and that other person's
@@ -802,6 +830,8 @@ class ProductSearchView(APIView):
                     session.customer = profile
                     session.phone = profile.phone
                     session.save(update_fields=["customer", "phone"])
+                    # The session's earlier anonymous suggestions are this caller's too.
+                    suggestions.attach_sessions_safely([session], profile, "caller_id")
 
         # Freshness guard: if this store's inventory is ≥24h stale, kick off an
         # async refresh so suggestions self-heal to live stock. Never blocks the
@@ -846,12 +876,17 @@ class ProductSearchView(APIView):
                                   info=details.get(p.product_id))
                    for i, (p, why) in enumerate(ranked)]
 
-        if session:
-            for r in results:
-                SuggestedProduct.objects.create(
-                    session=session, customer=profile, location_slug=location,
-                    sku=r["sku"], kind="primary", source=session.channel,
-                )
+        # Every suggestion is kept with its full card (docs/contracts/suggestion-analytics-v1.md): a
+        # session's, a known caller's, or one the client labelled with an allowlisted `source`.
+        source = request.data.get("source")
+        if results and (session or profile is not None or suggestions.clean_source(source)):
+            suggestions.record_safely(
+                session=session, customer=profile, location=location,
+                picks=list(zip([p for p, _ in ranked], results)), kind="primary",
+                channel=suggestions.resolve_channel(source, session, website=is_website(request),
+                                                    caller_id=caller is not None),
+                identity_via=_suggestion_via(session, caller), legacy_source=session.channel if session else "chat",
+            )
         total = min(total, SEARCH_CAP)
         return Response({"results": results, "source": "vps", "total_matching": total,
                          "has_more": offset + len(results) < total, "offset": offset, "limit": limit})
@@ -1048,6 +1083,21 @@ class SimilarView(APIView):
         results = [public_product(p, rank=offset + i + 1, why_this=why, lab=labs.get(p.batch_id),
                                   info=details.get(p.product_id))
                    for i, (p, why) in enumerate(page)]
+        # Find-similar picks are suggestions too (suggestion-analytics-v1): kept for the visitor's
+        # session (an unknown token in the minted shape starts one, as search does) or when labelled.
+        session = _session_for_token(data.get("session_token"), location_slug=location, channel="menu")
+        caller = None if is_website(request) else _profile_for_phone(data.get("phone") or "")
+        session = _own_session(session, caller) if caller is not None else session
+        customer = caller or _session_customer(request, session)
+        source = data.get("source")
+        if results and (session or customer is not None or suggestions.clean_source(source)):
+            suggestions.record_safely(
+                session=session, customer=customer, location=location, picks=list(zip([p for p, _ in page], results)),
+                kind="primary", channel=suggestions.resolve_channel(
+                    source, session, website=is_website(request), caller_id=caller is not None, default="similar"),
+                identity_via=_suggestion_via(session, caller), legacy_source="catalog", paired_with_sku=anchor.sku,
+                reason_code="similar",
+            )
         return Response({
             "anchor": {"sku": anchor.sku, "name": anchor.name, "category": anchor.category},
             "results": results, "total_matching": len(ranked),
@@ -1248,6 +1298,44 @@ class AnalyticsSummaryView(APIView):
         })
 
 
+class AnalyticsSuggestionsView(APIView):
+    """POST /api/v1/analytics/suggestions `{days<=365, store?, channel?, kind?, category?, brand?}` — what we
+    suggested and what converted (docs/contracts/suggestion-analytics-v1.md). Backend token only."""
+
+    def post(self, request):
+        from . import suggestion_analytics
+
+        return Response({"ok": True, **suggestion_analytics.summary(request.data or {})})
+
+
+class AnalyticsSuggestionsListView(APIView):
+    """POST /api/v1/analytics/suggestions/list `{days, offset, limit<=100, filters..., sort}` — one row per
+    suggestion with its full snapshot and outcome. Customer id + name (staff), never a phone or token."""
+
+    def post(self, request):
+        from . import suggestion_analytics
+
+        return Response(suggestion_analytics.listing(request.data or {}))
+
+
+class CustomerSuggestionsView(APIView):
+    """POST /api/v1/customer/suggestions `{id, days?, offset?, limit?, sort?}` — that customer's suggestions
+    (same row shape as the list) and their totals. Backend token only."""
+
+    def post(self, request):
+        from . import suggestion_analytics
+
+        data = request.data or {}
+        cid = data.get("id")
+        if cid in (None, ""):
+            return Response({"ok": False, "reason": "missing id"}, status=400)
+        profile = identity.follow(
+            CustomerProfile.objects.filter(pk=_bounded_int(cid, default=0, lo=0, hi=2**31)).first())
+        if profile is None:
+            return Response({"ok": False, "reason": "not found"}, status=404)
+        return Response(suggestion_analytics.for_customer(profile, data))
+
+
 class PairingView(APIView):
     def post(self, request):
         location = _safe_location(request.data.get("location"))
@@ -1270,14 +1358,19 @@ class PairingView(APIView):
         session = ChatSession.objects.filter(session_token=token.strip()).first() if (
             isinstance(token, str) and token.strip()) else None
         session = _own_session(session, profile)  # a caller's pairing never lands in another person's session
-        SuggestedProduct.objects.create(
-            session=session, customer=profile, location_slug=location, sku=pair.sku,
-            kind="pairing", source=(session.channel if session else "menu"),
+        labs, details = lab_enrich.for_picks(location, [pair])
+        card = public_product(pair, lab=labs.get(pair.batch_id), info=details.get(pair.product_id))
+        source = request.data.get("source")
+        suggestions.record_safely(
+            session=session, customer=profile or _session_customer(request, session), location=location,
+            picks=[(pair, {**card, "why_this": reason_text})], kind="pairing",
+            channel=suggestions.resolve_channel(source, session, website=is_website(request),
+                                                caller_id=profile is not None, default="pairing"),
+            identity_via=_suggestion_via(session, profile), legacy_source=(session.channel if session else "menu"),
             paired_with_sku=(anchor.sku if anchor else ""), reason_code=reason,
         )
-        labs, details = lab_enrich.for_picks(location, [pair])
         return Response({
-            "pairing": public_product(pair, lab=labs.get(pair.batch_id), info=details.get(pair.product_id)),
+            "pairing": card,
             "reason_code": reason,
             "reason_text": reason_text, "strength": strength,
         })
@@ -1306,6 +1399,9 @@ class ResumeByPhoneView(APIView):
                 phone=phone, customer=profile, last_active_at=timezone.now(),
                 identity_via="caller_id" if profile else "",
             )
+            if profile:  # the call's earlier anonymous suggestions are this caller's (suggestion-analytics-v1)
+                suggestions.attach_sessions_safely(ChatSession.objects.filter(session_token=current), profile,
+                                                   "caller_id")
         if profile:
             fire(recompute_affinity, profile.phone)
 

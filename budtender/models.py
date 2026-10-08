@@ -374,10 +374,54 @@ class SuggestedProduct(models.Model):
     reason_code = models.CharField(max_length=32, blank=True)
     shown_at = models.DateTimeField(auto_now_add=True)
     accepted = models.BooleanField(null=True, blank=True)
+    # docs/contracts/suggestion-analytics-v1.md — what the customer was shown, frozen at suggestion
+    # time (budtender.suggestions.snapshot: customer-facing fields only, never cost/margin), so the row
+    # still means something once the SKU leaves the menu.
+    snapshot = models.JSONField(default=dict, blank=True)
+    # brand | category-family | product-line (budtender.suggestions.sibling_key); "" = never a sibling.
+    sibling_key = models.CharField(max_length=255, blank=True, db_index=True)
+    # phone|chat|questionnaire|similar|pairing|menu|unknown (budtender.suggestions.CHANNELS)
+    channel = models.CharField(max_length=16, default="unknown", db_index=True)
+    # The session's identity_via at suggestion time; updated when the session later links.
+    identity_via = models.CharField(max_length=16, blank=True)
 
     class Meta:
         indexes = [
             models.Index(fields=["customer", "-shown_at"]),
             models.Index(fields=["session", "-shown_at"]),
             models.Index(fields=["kind", "-shown_at"], name="suggested_kind_shown_idx"),
+            models.Index(fields=["-shown_at"], name="suggested_shown_idx"),
+            models.Index(fields=["channel", "-shown_at"], name="suggested_channel_shown_idx"),
+            models.Index(fields=["location_slug", "-shown_at"], name="suggested_store_shown_idx"),
         ]
+
+
+class SuggestionOutcome(models.Model):
+    """Did the customer buy what we suggested (or a sibling) within the window? One per
+    SuggestedProduct, created with it (budtender.suggestions). Attribution is event-driven from the
+    transaction ingest; the hourly close job decides the rest. Customer-facing amounts only."""
+
+    STATUS = (("pending", "pending"), ("bought_exact", "bought_exact"), ("bought_sibling", "bought_sibling"),
+              ("not_bought", "not_bought"), ("unattributable", "unattributable"))
+    MATCH = (("exact", "exact"), ("sibling_size", "sibling_size"), ("sibling_strain", "sibling_strain"),
+             ("sibling_both", "sibling_both"), ("", ""))
+
+    suggestion = models.OneToOneField(SuggestedProduct, on_delete=models.CASCADE, related_name="outcome")
+    status = models.CharField(max_length=16, choices=STATUS, default="pending", db_index=True)
+    match_kind = models.CharField(max_length=16, choices=MATCH, blank=True)
+    matched_sku = models.CharField(max_length=64, blank=True)
+    matched_product_id = models.CharField(max_length=64, blank=True)
+    matched_name = models.CharField(max_length=255, blank=True)
+    matched_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # line total
+    matched_at = models.DateTimeField(null=True, blank=True)
+    # The transaction line that decided it ("<tx id>:<product id>:<line #>", or "history:<key>" when it
+    # came from purchase_history): re-ingesting that line is a no-op.
+    matched_line = models.CharField(max_length=160, blank=True)
+    window_ends_at = models.DateTimeField(db_index=True)
+    evaluated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "window_ends_at"], name="outcome_status_window_idx")]
+
+    def __str__(self) -> str:
+        return f"SuggestionOutcome({self.suggestion_id} {self.status})"

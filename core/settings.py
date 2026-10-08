@@ -71,6 +71,11 @@ except ValueError:
 # The UNVERIFIED website tier (a typed phone, not proof of identity) reads the summaries only when
 # this is on. Default off: a stranger typing someone's number must not steer on their conversations.
 HHT_MEMORY_WEB_SUMMARIES = env_bool("HHT_MEMORY_WEB_SUMMARIES", False)
+# Suggestion analytics v1: how long after a suggestion a purchase of it (or a sibling) still counts.
+try:
+    HHT_SUGGESTION_WINDOW_DAYS = min(max(int(env("HHT_SUGGESTION_WINDOW_DAYS", "10")), 1), 90)
+except ValueError:
+    HHT_SUGGESTION_WINDOW_DAYS = 10
 
 # ── Bundle landing (/custom-order) ───────────────────────────────────────────
 # Shared with alpine-automations, which SIGNS the emailed links this app VERIFIES.
