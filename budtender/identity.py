@@ -169,24 +169,69 @@ def shared_phone(phone: object) -> bool:
     return shared_profile(follow(row))
 
 
-def link_session(token: object, profile: CustomerProfile | None, e164: str, via: str) -> None:
-    """Tie an existing chat session to the customer (no-op for an unknown token or no profile)."""
+# A phone call's session token, as the voice service sends it (``vc-<Vapi call id>``).
+_CALL_TOKEN = re.compile(r"vc-[A-Za-z0-9_-]{1,61}")
+
+
+def link_session(token: object, profile: CustomerProfile | None, e164: str, via: str, *,
+                 create_call: bool = False) -> None:
+    """Tie an existing chat session to the customer (no-op for an unknown token or no profile).
+
+    ``create_call`` (caller-context only: backend token + carrier caller-ID) also creates the
+    session for a ``vc-<call id>`` token we have not seen, so the call's end-of-call memory learn
+    (``memory/learn`` by ``call_id``) can find who called. A session that changes hands (now names a
+    different customer) loses what it learned about the previous one (``ChatSession.learned``)."""
     token = str(token or "").strip()
-    if token and profile is not None and not non_identifying_phone(e164) and not shared_profile(profile):
-        ChatSession.objects.filter(session_token=token).update(
-            customer=profile, phone=e164, identity_via=via, last_active_at=timezone.now()
-        )
+    if not (token and profile is not None and not non_identifying_phone(e164) and not shared_profile(profile)):
+        return
+    if create_call and _CALL_TOKEN.fullmatch(token):
+        ChatSession.objects.get_or_create(session_token=token, defaults={"channel": "voice"})
+    rows = ChatSession.objects.filter(session_token=token)
+    rows.filter(customer__isnull=False).exclude(customer=profile).update(learned={})
+    rows.update(customer=profile, phone=e164, identity_via=via, last_active_at=timezone.now())
 
 
 def unlink_session(token: object, via: str) -> int:
     """Drop a session's ``via`` identification (the visitor typed a number that names nobody, or
-    skipped): whoever is typing now must not keep being treated as the person typed before them."""
+    skipped): whoever is typing now must not keep being treated as the person typed before them,
+    and what the session learned about that person (``learned``) goes with it."""
     token = str(token or "").strip()
     if not token:
         return 0
     return ChatSession.objects.filter(session_token=token, identity_via=via).update(
-        customer=None, phone="", identity_via="", last_active_at=timezone.now()
+        customer=None, phone="", identity_via="", learned={}, last_active_at=timezone.now()
     )
+
+
+def forget_session(token: object) -> int:
+    """"Forget me": drop everything this session learned (``ChatSession.learned``), whatever its tier."""
+    token = str(token or "").strip()
+    return ChatSession.objects.filter(session_token=token).update(learned={}) if token else 0
+
+
+# ── trust tier (docs/contracts/customer-memory-v1.md) ────────────────────────
+# Carrier caller-ID (voice) and a future SMS-verified website number are proof of identity; a typed
+# website number is not. The tier decides what memory a session may READ and where its learned facts
+# are WRITTEN (budtender.memory / memory_learn): only "trusted" ever touches CustomerProfile.memory.
+TRUSTED_VIA = ("caller_id", "web_verified")
+
+
+def tier(session: ChatSession | None) -> str:
+    """"trusted" | "unverified" | "anonymous" for this session, from ``identity_via`` alone (never
+    from a name or a phone in a request). A shared or junk row is anonymous whatever the link says;
+    a typed phone is "unverified" only while the owner's HHT_WEB_PHONE_IDENTITY switch is on."""
+    from django.conf import settings
+
+    if session is None or not session.customer_id:
+        return "anonymous"
+    if trusted(follow(session.customer)) is None or non_identifying_phone(session.phone):
+        return "anonymous"
+    via = session.identity_via or ""
+    if via in TRUSTED_VIA:
+        return "trusted"
+    if via == "web_phone" and settings.HHT_WEB_PHONE_IDENTITY:
+        return "unverified"
+    return "anonymous"
 
 
 # ── weekly merge ─────────────────────────────────────────────────────────────
@@ -196,6 +241,15 @@ def _merge(primary: CustomerProfile, secondary: CustomerProfile) -> None:
         if not primary.name and secondary.name:
             primary.name = secondary.name
             primary.save(update_fields=["name"])
+        if secondary.memory:  # what the same person told us on the shell row (trusted writes only)
+            from . import memory
+
+            learned = {k: v for k, v in (secondary.memory or {}).items() if k != "derived"}
+            primary.memory = memory.merge(primary.memory, learned)
+            primary.memory_updated_at = timezone.now()
+            primary.save(update_fields=["memory", "memory_updated_at"])
+            secondary.memory = {}
+            secondary.save(update_fields=["memory"])
         ChatSession.objects.filter(customer=secondary).update(customer=primary)
         SuggestedProduct.objects.filter(customer=secondary).update(customer=primary)
         secondary.merged_into = primary

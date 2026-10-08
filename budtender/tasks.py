@@ -496,7 +496,96 @@ def recompute_affinity(phone: str) -> bool:
         "bucket_mix", "price_tier", "novelty_score", "total_orders",
         "thc_min", "thc_max", "last_purchase_at", "computed_at",
     ])
+    _store_derived(profile)
     return True
+
+
+def _store_derived(profile: CustomerProfile) -> None:
+    """``memory["derived"]`` from ``customer_model.compute_derived(profile)`` (purchases only, never
+    chat text). Guarded: a missing module or a failing compute leaves memory as it was."""
+    try:
+        from . import customer_model
+
+        compute = getattr(customer_model, "compute_derived", None)
+    except Exception:  # noqa: BLE001 - the module ships separately; affinity still stands without it
+        logger.info("customer_model.compute_derived unavailable; derived memory not refreshed")
+        return
+    if not callable(compute):
+        return
+    try:
+        derived = compute(profile)
+    except Exception:  # noqa: BLE001
+        logger.warning("compute_derived failed for profile %s", profile.pk, exc_info=True)
+        return
+    from . import memory
+
+    memory.set_derived(profile, derived)
+
+
+# ── customer memory: learn from finished website chats (docs/contracts/customer-memory-v1.md) ──
+LEARN_IDLE_MINUTES = 10           # a chat counts as finished after this much quiet
+LEARN_LOOKBACK = timedelta(days=2)
+LEARN_SWEEP_LIMIT = 300
+
+
+@shared_task(ignore_result=True)
+def learn_from_session(session_id: int) -> dict:
+    """Learn from one chat session's NEW customer turns (ids past ``learned["upto"]``). Writes per
+    tier (memory_learn.learn): trusted -> profile memory, otherwise the session's own ``learned``.
+    Idempotent (the watermark + digest) and never raises."""
+    from . import memory_learn
+    from .models import ChatMessage, ChatSession
+
+    try:
+        session = ChatSession.objects.filter(pk=session_id).first()
+        if session is None:
+            return {"ok": True, "stored": "none"}
+        upto = (session.learned or {}).get("upto") if isinstance(session.learned, dict) else None
+        rows = ChatMessage.objects.filter(session=session, role="user")
+        if isinstance(upto, int):
+            rows = rows.filter(pk__gt=upto)
+        rows = list(rows.order_by("-id").values_list("id", "content")[: memory_learn.MAX_TURNS])[::-1]
+        if not rows:
+            return {"ok": True, "stored": "none"}
+        return memory_learn.learn(session, [c for _, c in rows], channel=session.channel,
+                                  use_llm=memory_learn.llm_enabled(), upto=rows[-1][0])
+    except Exception:  # noqa: BLE001 - best-effort
+        logger.warning("learn_from_session failed for %s", session_id, exc_info=True)
+        return {"ok": False, "stored": "none"}
+
+
+@shared_task(ignore_result=True)
+def learn_llm_notes(session_id: int, turns: list, channel: str = "voice") -> dict:
+    """The optional model-phrased notes for turns a request already learned deterministically
+    (memory/learn queues this only while HHT_MEMORY_LLM is on)."""
+    from . import memory_learn
+    from .models import ChatSession
+
+    session = ChatSession.objects.filter(pk=session_id).first()
+    return memory_learn.learn_llm(session, turns, channel=channel)
+
+
+@shared_task(ignore_result=True)
+def learn_idle_sessions() -> dict:
+    """Every few minutes: learn from website chats quiet for >= LEARN_IDLE_MINUTES that have customer
+    turns past their watermark. Phone calls learn at call end through ``memory/learn``."""
+    from .models import ChatMessage, ChatSession
+
+    now = datetime.now(timezone.utc)
+    quiet = ChatSession.objects.filter(
+        last_active_at__lte=now - timedelta(minutes=LEARN_IDLE_MINUTES),
+        last_active_at__gte=now - LEARN_LOOKBACK,
+    ).exclude(channel="voice").exclude(session_token__startswith="vc-").order_by("-last_active_at")
+    done = 0
+    for sid, learned in quiet.values_list("id", "learned")[:LEARN_SWEEP_LIMIT]:
+        upto = learned.get("upto") if isinstance(learned, dict) else None
+        newer = ChatMessage.objects.filter(session_id=sid, role="user")
+        if isinstance(upto, int):
+            newer = newer.filter(pk__gt=upto)
+        if newer.exists():
+            learn_from_session(sid)
+            done += 1
+    return {"learned": done}
 
 
 @shared_task

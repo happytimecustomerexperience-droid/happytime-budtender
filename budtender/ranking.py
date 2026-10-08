@@ -16,7 +16,7 @@ from .engine import (AROMA_BOOST, MIN_STOCK, _recent_affinity, _request_weights,
 from .engine import why as _engine_why
 from .engine import W_ANON, W_KNOWN  # noqa: F401 — re-exported for views._clean_ranking_weights
 from .models import CustomerProfile, Product
-from . import lab_enrich, live_stock, product_attrs, terpenes
+from . import customer_model, lab_enrich, live_stock, product_attrs, terpenes
 
 # Contract B: `sort_by` re-orders the already-filtered set. Anything else is ignored.
 SORT_MODES = ("potency", "price_asc")
@@ -821,6 +821,21 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
             terp_amount[p.sku] = sum(have.get(t, 0.0) for t in want_terps)
     terp_top = max(terp_amount.values(), default=0.0) or 1.0
 
+    # Tailoring (customer_model): a med/high-confidence customer's own buying (ratio, form, extraction,
+    # per-piece mg, their category's price/THC band, their last buy) nudges the score. SOFT only: these
+    # candidates already passed every hard filter, and None (anonymous / new / low confidence) leaves the
+    # score exactly as it was. One bulk read of the candidates' labs + details when it applies.
+    tailor = customer_model.tailor_for(profile)
+    fits: dict[str, dict] = {}
+    tboost: dict[str, float] = {}
+    if tailor is not None:
+        details = lab_enrich.Memo()
+        lab_enrich.labs_for([p.batch_id for p in candidates], memo=labs)
+        lab_enrich.details_for([p.product_id for p in candidates], memo=details)
+        for p in candidates:
+            fits[p.sku] = tailor.match(p, details.get(p.product_id) or None, labs.get(p.batch_id) or None,
+                                       price=_live_price(live, p))
+
     scored = []
     for p in candidates:
         score = score_one(from_product(p), pf, ctx)
@@ -828,6 +843,9 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
             score += AROMA_BOOST
         if terp_amount:
             score += TERPENE_BOOST * terp_amount.get(p.sku, 0.0) / terp_top
+        if p.sku in fits:
+            tboost[p.sku] = tailor.boost(fits[p.sku])
+            score += tboost[p.sku]
         scored.append((score, p, aroma_hits.get(p.sku)))
 
     # ---- Explicit sort (Contract B): "stronger" / "cheaper" re-orders THIS filtered set. ----
@@ -848,7 +866,7 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
         if len(picks) < limit and nearby:
             have = {t[1].sku for t in picks}
             picks += [(0.0, p, None) for p in nearby if p.sku not in have][: limit - len(picks)]
-        return _finish(picks, desired, profile, labs)
+        return _finish(picks, desired, profile, labs, tailor, fits)
 
     # ---- Premium intent: highest price of this category+weight wins. ----
     # The customer asked for the top end (top tier / "$100 & up"), so we order
@@ -885,7 +903,7 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
                 if p.sku not in chosen:
                     picks.append((0.0, p, None))
                     chosen.add(p.sku)
-        return _finish(picks[:limit], desired, profile, labs)
+        return _finish(picks[:limit], desired, profile, labs, tailor, fits)
 
     scored.sort(key=lambda t: t[0], reverse=True)   # demand score, desc
 
@@ -912,6 +930,15 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
         b = (t[1].brand or "").strip().lower()
         return 0.6 ** brand_count.get(b, 0) if b else 1.0
 
+    def _varied(t: tuple) -> float:
+        # Brand variety damps the demand score only, and not at all for a strong tailoring fit (the 2:1
+        # gummy a ratio buyer takes, from the one brand that makes it). No tailoring -> score x variety,
+        # exactly as before.
+        tb = tboost.get(t[1].sku, 0.0)
+        if tb >= customer_model.FIT_NO_VARIETY:
+            return t[0]
+        return (t[0] - tb) * _variety(t) + tb
+
     # #1 — highest gross-margin $ in the matching set.
     if profile:
         # ponytail: known shoppers use the existing blended score; add explicit
@@ -920,7 +947,7 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
             rest = [t for t in scored if t[1].sku not in used_skus]
             if not rest:
                 break
-            _take(max(rest, key=lambda t: t[0] * _variety(t)))
+            _take(max(rest, key=_varied))
 
         if len(picks) < limit and nearby:
             for p in nearby:
@@ -930,7 +957,7 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
                     continue
                 _take((0.0, p, None))
 
-        return _finish(picks[:limit], desired, profile, labs)
+        return _finish(picks[:limit], desired, profile, labs, tailor, fits)
 
     _take(max(scored, key=lambda t: float(t[1].margin)))
     # #2 — highest sales velocity among the rest. With no transactions yet all
@@ -956,22 +983,26 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
             _take((0.0, p, None))
 
     # Order is intentional (#1 margin, #2 velocity, …) — do NOT re-sort by score.
-    return _finish(picks[:limit], desired, profile, labs)
+    return _finish(picks[:limit], desired, profile, labs, tailor, fits)
 
 
-def _why(p: Product, desired: str | None, profile: CustomerProfile | None, aroma_hit: tuple | None = None) -> str:
+def _why(p: Product, desired: str | None, profile: CustomerProfile | None, aroma_hit: tuple | None = None,
+         tailored: str | None = None) -> str:
     """Persuasive reason for THIS pick — delegated to the shared engine so the
     website and the in-store POS speak the same language. The lab's words live in
     `lab.profile` (the card shows them once, from there), never in this reason; the one
     exception is the aroma the customer asked for, when the batch lab really carries it."""
-    return _engine_why(from_product(p), desired, profile_dict(profile), aroma_hit)
+    return _engine_why(from_product(p), desired, profile_dict(profile), aroma_hit, tailored=tailored)
 
 
 def _finish(picks: list[tuple], desired: str | None, profile: CustomerProfile | None,
-            labs: dict) -> list[tuple[Product, str]]:
+            labs: dict, tailor=None, fits: dict | None = None) -> list[tuple[Product, str]]:
     """The final picks with their reasons. The one bulk lab read for the picks happens
     here (memoized in `labs`, which the caller reuses for serialization), and reasons are
     written for the picks only — never for every candidate."""
     products = [t[1] for t in picks]
     lab_enrich.labs_for([p.batch_id for p in products], memo=labs)
-    return [(t[1], _why(t[1], desired, profile, t[2])) for t in picks]
+    fits = fits or {}
+    return [(t[1], _why(t[1], desired, profile, t[2],
+                        tailor.why_bit(t[1], fits[t[1].sku]) if tailor is not None and t[1].sku in fits else None))
+            for t in picks]

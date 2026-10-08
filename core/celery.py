@@ -68,4 +68,10 @@ app.conf.beat_schedule = {
         "task": "budtender.tasks.merge_duplicate_profiles",
         "schedule": 7 * 24 * 60 * 60.0,  # weekly
     },
+    # Customer memory v1: learn from website chats once they have been quiet >= 10 min (per trust
+    # tier: only a carrier-caller-ID/verified session writes the profile) — budtender.memory_learn.
+    "learn-idle-chat-sessions": {
+        "task": "budtender.tasks.learn_idle_sessions",
+        "schedule": 5 * 60.0,
+    },
 }

@@ -263,3 +263,167 @@ _SIZE_TAG = re.compile(r"^\d+(?:\.\d+)?\s*(?:g|mg|pk|ct|oz|ml|pack)$")
 
 def is_size_tag(tag: str) -> bool:
     return bool(_SIZE_TAG.match(_norm(tag)))
+
+
+# ── customer tailoring derivations (budtender.customer_model) ────────────────
+# Ratio / form / extraction method / per-piece strength of ONE product, read from its name, tags and
+# stored lab. Used to describe what a customer buys (customer_model.compute_derived) and to match a
+# candidate against it (the ranker's soft tailoring). Same rule as the rest of this module: no data, no
+# match, never a guess.
+RATIO_CATEGORIES = frozenset({"edibles", "beverages", "mints", "capsules", "tinctures", "topicals"})
+FORM_CATEGORIES = RATIO_CATEGORIES
+_RATIO_RE = re.compile(r"(?<![\d.:])(\d{1,3}(?:\.\d)?)\s*:\s*(\d{1,3}(?:\.\d)?)(?:\s*:\s*(\d{1,3}(?:\.\d)?))?(?![\d.:])")
+_RATIO_ORDER = re.compile(r"\b(thc|cbd|cbg|cbn)\s*[:/]\s*(thc|cbd|cbg|cbn)\b")
+_CANNABINOID_WORD = re.compile(r"\b(?:thc|cbd|cbg|cbn)\b")
+_STANDARD_RATIOS = (1, 2, 3, 4, 5, 8, 10, 15, 18, 20, 25, 30)
+
+
+def _fmt_num(x: float) -> str:
+    return f"{int(x)}" if float(x) == int(x) else f"{x:g}"
+
+
+def _lab_num(lab, key: str) -> float:
+    v = lab.get(key) if isinstance(lab, dict) else None
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 else 0.0
+
+
+def cannabinoid_ratio(p, info=None, lab=None) -> str | None:
+    """THC:CBD ratio as 'a:b' ('1:1', '2:1', '1:20'), or a printed three-part ratio ('1:1:1') as is.
+    The name/tags win; the printed order is turned to THC:CBD when the label says 'CBD:THC', or when the
+    stored lab (or a CBD-only label) shows the printed bigger number is the CBD. No ratio printed -> the
+    lab's THC and CBD totals, snapped to a standard ratio, when CBD is a real share (<= 5:1, or CBD leads)."""
+    raw = " ".join([str(getattr(p, "name", "") or "").lower(), *(t.lower() for t in info_tags(info))])
+    cat = getattr(p, "category", "") or ""
+    thc, cbd = _lab_num(lab, "thc_total"), _lab_num(lab, "cbd_total")
+    m = _RATIO_RE.search(raw)
+    if m and (cat in RATIO_CATEGORIES or _CANNABINOID_WORD.search(raw) or cbd):
+        a, b, c = float(m.group(1)), float(m.group(2)), m.group(3)
+        if a <= 0 or b <= 0 or max(a, b) > 100:
+            return None
+        if c is not None:
+            return f"{_fmt_num(a)}:{_fmt_num(b)}:{_fmt_num(float(c))}"
+        order = _RATIO_ORDER.search(raw)
+        if order and order.group(1) == "cbd" and order.group(2) == "thc":
+            flip = True
+        elif order and order.group(1) == "thc" and order.group(2) == "cbd":
+            flip = False
+        elif thc and cbd and a != b:
+            flip = (a > b) == (cbd > thc)
+        else:
+            cbd_label = (getattr(p, "strain_type", "") or "").lower() == "cbd" or (
+                "cbd" in raw and not re.search(r"\bthc\b", raw))
+            flip = a > b and cbd_label
+        a, b = (b, a) if flip else (a, b)
+        return f"{_fmt_num(a)}:{_fmt_num(b)}"
+    if thc and cbd and min(thc, cbd) >= 0.5:
+        hi, lo = max(thc, cbd), min(thc, cbd)
+        r = hi / lo
+        if cbd < thc and r > 5.5:
+            return None   # an ordinary THC product with a trace of CBD
+        k = min(_STANDARD_RATIOS, key=lambda s: abs(s - r) / s)
+        if abs(k - r) / k > 0.2:
+            return None
+        return "1:1" if k == 1 else (f"{k}:1" if thc > cbd else f"1:{k}")
+    return None
+
+
+def cbd_dominant(p, lab=None, ratio: str | None = None) -> bool:
+    """CBD leads: a CBD strain type, a lab with more CBD than THC, or a ratio whose CBD side is bigger."""
+    if (getattr(p, "strain_type", "") or "").lower() == "cbd":
+        return True
+    thc, cbd = _lab_num(lab, "thc_total"), _lab_num(lab, "cbd_total")
+    if cbd and cbd > thc:
+        return True
+    if ratio and ratio.count(":") == 1:
+        a, b = (float(x) for x in ratio.split(":"))
+        return b > a
+    return False
+
+
+_FORM_WORDS = (
+    ("gummy", re.compile(r"\bgumm(?:y|ies)\b")),
+    ("chocolate", re.compile(r"\b(?:chocolates?|peanut butter cups?|truffles?)\b")),
+    ("capsule", re.compile(r"\b(?:capsules?|softgels?|pills?)\b")),
+    ("mint", re.compile(r"\b(?:mints?|lozenges?|tablets?|troches?)\b")),
+    ("candy", re.compile(r"\b(?:lollipops?|lollis?|suckers?|hard candy|candy)\b")),
+    ("baked", re.compile(r"\b(?:cookies?|brownies?|rice crisp(?:y|ies)?|crispy treats?)\b")),
+    ("chew", re.compile(r"\b(?:caramels?|chews?|taffy)\b")),
+    ("tincture", re.compile(r"\btinctures?\b")),
+)
+FORM_PLURALS = {"gummy": "gummies", "chocolate": "chocolates", "capsule": "capsules", "mint": "mints",
+                "candy": "candies", "baked": "baked treats", "chew": "chews", "tincture": "tinctures",
+                "drink": "drinks", "topical": "topicals", "edible": "edibles"}
+
+
+def edible_form(p, info=None) -> str | None:
+    """gummy | chocolate | drink | tincture | capsule | topical | mint | candy | baked | chew | edible, for the
+    edible-type categories; None for flower, pre-rolls, vapes and concentrates."""
+    cat = getattr(p, "category", "") or ""
+    if cat not in FORM_CATEGORIES:
+        return None
+    fixed = {"tinctures": "tincture", "topicals": "topical", "capsules": "capsule", "beverages": "drink",
+             "mints": "mint"}
+    if cat in fixed:
+        return fixed[cat]
+    h = hay(p, info)
+    for form, rx in _FORM_WORDS[:2]:
+        if rx.search(h):
+            return form
+    if is_liquid_edible(p, info):
+        return "drink"
+    for form, rx in _FORM_WORDS[2:]:
+        if rx.search(h):
+            return form
+    return "edible"
+
+
+EXTRACTION_METHODS = ("live-rosin", "hash-rosin", "rosin", "live-resin", "cured-resin", "distillate",
+                      "full-spectrum", "rso", "hash", "kief")
+METHOD_LABELS = {**EXTRACTION_LABELS, "full-spectrum": "full spectrum", "rso": "RSO"}
+_FULL_SPECTRUM = re.compile(r"\b(?:full spectrum|fse|fso|whole plant)\b")
+
+
+def extraction_methods(p, info=None) -> set[str]:
+    """Every extraction METHOD a product answers to (textures like badder/sauce left out): the concentrate/
+    vape kinds, an infused edible or pre-roll's infusion, and 'full-spectrum'. Keeps the umbrella 'rosin'
+    on a live/hash rosin, so a plain-rosin buyer still matches one."""
+    kinds = (extraction_kinds(p, info) | infusion_kinds(p, info)) & set(EXTRACTION_METHODS)
+    if (getattr(p, "category", "") or "") in EXTRACTION_CATEGORIES | FORM_CATEGORIES and _FULL_SPECTRUM.search(hay(p, info)):
+        kinds.add("full-spectrum")
+    return kinds
+
+
+def primary_methods(kinds: set[str]) -> set[str]:
+    """The methods to COUNT for a purchase: the umbrella 'rosin' only when nothing more specific is named."""
+    return kinds - {"rosin"} if kinds & {"live-rosin", "hash-rosin"} else set(kinds)
+
+
+_MG_RE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*mg\b")
+_PIECES_RE = re.compile(r"(?<![\d.])(\d{1,3})\s*(?:pk|pack|ct|count|pcs?|pieces?)\b")
+
+
+def piece_mg(p) -> float | None:
+    """mg per piece/serving of an edible-type product, from the name: '10mg 10pk' -> 10, '100mg 10pk' -> 10,
+    '5mg 20pk' -> 5, a can '10mg' -> 10. A package total with no pack count ('100mg bar') or a tincture
+    bottle is unknown (None). No mg in the name -> the stored potency, split by the pack count."""
+    cat = getattr(p, "category", "") or ""
+    if cat not in FORM_CATEGORIES or cat in ("tinctures", "topicals"):
+        return None
+    name = str(getattr(p, "name", "") or "").lower()
+    mgs = [float(x) for x in _MG_RE.findall(name)]
+    pk = _PIECES_RE.search(name)
+    pieces = int(pk.group(1)) if pk and 1 < int(pk.group(1)) <= 100 else None
+    if len(mgs) >= 2:
+        lo, hi = min(mgs), max(mgs)
+        return lo if hi / lo >= 4 else mgs[0]
+    if len(mgs) == 1:
+        m = mgs[0]
+        if m >= 50:
+            return round(m / pieces, 2) if pieces else None
+        return m
+    pot = getattr(p, "potency_mg", None)
+    if isinstance(pot, (int, float)) and pot > 0:
+        if pieces:
+            return round(float(pot) / pieces, 2)
+        return float(pot) if pot <= 50 else None
+    return None

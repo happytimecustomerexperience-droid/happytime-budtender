@@ -160,6 +160,11 @@ class CustomerProfile(models.Model):
     # Set when the weekly merge folded this row into another (the phone stays, as a pointer).
     merged_into = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL,
                                     related_name="merged_from")
+    # Customer memory v1 (docs/contracts/customer-memory-v1.md, budtender/memory.py): style, stated
+    # likes/dislikes/context, short notes, and `derived` (from purchases). Written ONLY through
+    # memory.py (allowlist + 4 KB cap) and only from a TRUSTED session (carrier caller-ID).
+    memory = models.JSONField(default=dict, blank=True)
+    memory_updated_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self) -> str:
         return f"CustomerProfile({self.phone})"
@@ -180,6 +185,10 @@ class ChatSession(models.Model):
     # visitor; owner-approved identity, HHT_WEB_PHONE_IDENTITY). A website request personalises
     # from `customer` only when this is set.
     identity_via = models.CharField(max_length=16, blank=True)
+    # What this conversation taught us while its identity is NOT trusted (typed website phone,
+    # anonymous): same schema as CustomerProfile.memory minus `derived`. Never merged into a profile;
+    # cleared by identity.unlink_session / forget and when the session changes hands.
+    learned = models.JSONField(default=dict, blank=True)
     is_active = models.BooleanField(default=True)
     started_at = models.DateTimeField(auto_now_add=True)
     last_active_at = models.DateTimeField(auto_now=True)

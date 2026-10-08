@@ -24,7 +24,7 @@ from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
                      CustomerProfile, Feedback, PhoneCartDraft, Product,
                      SuggestedProduct)
 from .pairing import pair_for
-from . import analytics, facets, identity, lab_enrich, live_stock
+from . import analytics, facets, identity, lab_enrich, live_stock, memory
 from .auth import is_website
 from .fire import fire
 from .gemini_chat import (fetch_persona, generate_chat_reply_with_source,
@@ -1689,13 +1689,19 @@ class CallerContextView(APIView):
         e164 = _normalize_phone(data.get("phone", ""))
         # Blank, junk, a store's own line: nobody to look up (and no row is created for it).
         if not e164 or identity.non_identifying_phone(e164):
-            return Response({"ok": True, **identity.context(None)})
+            return Response({"ok": True, **identity.context(None), "brief": "", "style": {}, "tier": memory.ANONYMOUS})
         if data.get("create", True):
             profile, created = identity.ensure_profile(e164, "voice")
         else:
             profile, created = identity.profile_for_phone(e164), False
-        identity.link_session(data.get("session_token"), profile, e164, "caller_id")
-        return Response({"ok": True, **identity.context(profile, created)})
+        # ``create_call``: the call's ``vc-<call id>`` session is created here, so the end-of-call
+        # memory learn (``memory/learn`` by call_id) finds who called without carrying a phone.
+        identity.link_session(data.get("session_token"), profile, e164, "caller_id", create_call=True)
+        # Carrier caller-ID with the backend token is the trusted tier (customer-memory-v1).
+        tier = memory.TRUSTED if profile is not None else memory.ANONYMOUS
+        b = memory.brief(profile, tier)
+        return Response({"ok": True, **identity.context(profile, created),
+                         "brief": b["text"], "style": b["style"], "tier": tier})
 
 
 SESSION_CONTEXT_PER_SESSION_HOUR = 6
@@ -1744,10 +1750,12 @@ class SessionContextView(APIView):
         typed = "phone" in data or bool(data.get("forget"))
         if token and typed and (data.get("forget") or not e164 or identity.non_identifying_phone(e164)):
             identity.unlink_session(token, "web_phone")
+        if token and data.get("forget"):
+            identity.forget_session(token)  # "forget me": what this chat learned goes too
         # No phone, a junk/store/placeholder number, or no session to link: anonymous, always.
         if (not settings.HHT_WEB_PHONE_IDENTITY or not e164 or not token
                 or identity.non_identifying_phone(e164)):
-            return Response({"ok": True, **identity.context(None)})
+            return Response({"ok": True, **identity.context(None), **_public_memory(None, token)})
         session = _session_for_token(token, channel="chat")
         # Asking again for the number this session is already linked to reveals nothing new (the chat
         # does it every turn), so only a first or different number spends the caps. The website proxies
@@ -1767,7 +1775,77 @@ class SessionContextView(APIView):
                 identity.unlink_session(session.session_token, "web_phone")
             identity.link_session(session.session_token, profile, e164, "web_phone")
         # web=True: the number was typed, not verified, so a name rides along only for a row with purchases.
-        return Response({"ok": True, **identity.context(profile, created, web=True, vouched=data.get("name", ""))})
+        # Memory: the PUBLIC brief only (purchase-backed taste + style, never notes) — a typed number is
+        # the unverified tier whatever the session says (customer-memory-v1). Server-side prompt data.
+        return Response({"ok": True, **identity.context(profile, created, web=True, vouched=data.get("name", "")),
+                         **_public_memory(profile, token)})
+
+
+def _public_memory(profile, token: str) -> dict:
+    """``brief_public`` + ``style`` for the website (unverified tier). The style is the profile's,
+    overridden by what THIS chat measured (its own ``learned``, session-only). Never notes."""
+    b = memory.brief(profile, memory.UNVERIFIED) if profile is not None else {"text": "", "style": {}}
+    learned = ChatSession.objects.filter(session_token=token).values_list("learned", flat=True).first() if token else None
+    style = {**b["style"], **memory.sanitize(learned, session=True).get("style", {})}
+    return {"brief_public": b["text"], "style": style,
+            "tier": memory.UNVERIFIED if profile is not None else memory.ANONYMOUS}
+
+
+_CALL_ID = re.compile(r"[A-Za-z0-9_-]{1,61}")
+
+
+class MemoryLearnView(APIView):
+    """``POST /customer/memory/learn`` (backend token only): the customer's OWN turns of a finished
+    call or chat -> customer memory, per trust tier (budtender.memory_learn). Body
+    ``{call_id | session_token, transcript_user_turns: [str<=500 x<=40], channel}``. A call is found
+    by the ``vc-<call id>`` session caller-context linked. Turns are untrusted data. DB only (the
+    optional model phrasing, HHT_MEMORY_LLM, is queued to Celery); never a 5xx."""
+
+    def post(self, request):
+        from . import memory_learn
+        from .tasks import learn_llm_notes
+
+        data = request.data if isinstance(request.data, dict) else {}
+        turns = data.get("transcript_user_turns")
+        if not isinstance(turns, list):
+            return Response({"ok": False, "error": "transcript_user_turns must be a list"}, status=400)
+        turns = [t[:memory_learn.TURN_CHARS] for t in turns if isinstance(t, str)][-memory_learn.MAX_TURNS:]
+        call_id = str(data.get("call_id") or "").strip()
+        token = f"vc-{call_id}" if _CALL_ID.fullmatch(call_id) else str(data.get("session_token") or "").strip()[:64]
+        channel = "voice" if (data.get("channel") == "voice" or call_id) else "chat"
+        session = ChatSession.objects.filter(session_token=token).select_related("customer").first() if token else None
+        out = memory_learn.learn(session, turns, channel=channel, use_llm=False)
+        if session is not None and out.get("stored") != "none" and memory_learn.llm_enabled():
+            fire(learn_llm_notes, session.pk, turns, channel)
+        return Response({"ok": bool(out.get("ok")), "tier": out.get("tier", "anonymous"),
+                         "stored": out.get("stored", "none"), "counts": out.get("counts", {})})
+
+
+class MemoryClearView(APIView):
+    """``POST /customer/memory/clear`` (staff: backend token only): wipe one customer's memory and
+    what their linked sessions learned. ``{id}`` (preferred) or ``{phone}``. Audited."""
+
+    def post(self, request):
+        from .models import AdminAudit
+
+        data = request.data if isinstance(request.data, dict) else {}
+        cid = data.get("id")
+        if cid not in (None, ""):
+            profile = identity.follow(CustomerProfile.objects.filter(
+                pk=_bounded_int(cid, default=0, lo=0, hi=2**31)).first())
+        else:
+            phone = _normalize_phone(str(data.get("phone") or ""))
+            row = CustomerProfile.objects.filter(phone=phone).first() if phone else None
+            profile = identity.follow(row)
+        if profile is None:
+            return Response({"ok": False, "reason": "not found"}, status=404)
+        had = bool(profile.memory)
+        CustomerProfile.objects.filter(pk=profile.pk).update(memory={}, memory_updated_at=timezone.now())
+        sessions = ChatSession.objects.filter(customer=profile).exclude(learned={}).update(learned={})
+        AdminAudit.objects.create(actor=str(data.get("actor") or "dashboard")[:128], action="memory.clear",
+                                  target=f"customer:{profile.pk}", before={"had_memory": had},
+                                  after={"sessions_cleared": sessions})
+        return Response({"ok": True, "cleared": True, "sessions_cleared": sessions})
 
 
 class PersonaRefreshView(APIView):
