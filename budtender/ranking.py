@@ -16,10 +16,14 @@ from .engine import (AROMA_BOOST, MIN_STOCK, _recent_affinity, _request_weights,
 from .engine import why as _engine_why
 from .engine import W_ANON, W_KNOWN  # noqa: F401 — re-exported for views._clean_ranking_weights
 from .models import CustomerProfile, Product
-from . import lab_enrich, live_stock, terpenes
+from . import lab_enrich, live_stock, product_attrs, terpenes
 
 # Contract B: `sort_by` re-orders the already-filtered set. Anything else is ignored.
 SORT_MODES = ("potency", "price_asc")
+# Search v2: a shopper sees at most this many picks for one set of criteria (5 + "show 5 more" x3).
+SEARCH_CAP = 20
+# Requested terpenes nudge the demand score by up to this much (the strongest match gets all of it).
+TERPENE_BOOST = 0.15
 
 
 def _live_price(live, p: Product) -> float:
@@ -410,103 +414,329 @@ def available_sizes(rows, category: str | None, min_count: int = 1) -> list[dict
     return out
 
 
-def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
-                  limit: int = 5, exclude_skus: set[str] | None = None,
-                  ranking_weights: dict | None = None,
-                  labs: dict | None = None) -> list[tuple[Product, str]]:
-    """Ranked (Product, why) picks. `labs` is the caller's per-request memo of batch labs
-    ({batch_id: stored lab | None}); it is filled here — one bulk read for the picks — and the
-    caller reuses it, so a request never reads labs per product."""
-    exclude_skus = exclude_skus or set()
-    labs = lab_enrich.Memo() if labs is None else labs
-    sort_by = slots.get("sort_by") if slots.get("sort_by") in SORT_MODES else None
-    cat_slot = slots.get("category")
-    category = CATEGORY_BY_SLOTKEY.get(cat_slot, cat_slot) if cat_slot else None
-    # Prefer an explicit dollar range; fall back to the tier bounds (chat route).
-    if slots.get("price_min") is not None or slots.get("price_max") is not None:
-        lo = float(slots.get("price_min") or 0)
-        hi = float(slots.get("price_max") or 1e9)
-    else:
-        lo, hi = price_tier_bounds(slots.get("price_tier"))
-
-    # "Premium" intent: top tier, or the open-ended high "$100 & up" bucket. For
-    # premium intent, price is a PREFERENCE (show the priciest of the requested
-    # weight), NOT a hard gate — otherwise a weight with nothing above the floor
-    # would return the WRONG weight. Bounded ranges (e.g. $20–40) stay a hard
-    # filter. WEIGHT always wins over price.
-    premium_intent = (slots.get("price_tier") == "top") or (lo >= 100)
-
-    # Never recommend something that isn't on the sales floor right now. The
-    # table's own gate is only a fallback for when the live pull is unavailable —
-    # otherwise a sellout keeps getting suggested until the next beat sync.
-    live = live_stock.stock_map(location)
-    qs = Product.objects.filter(location_slug=location)
-    if not live.usable:
-        qs = qs.filter(availability=True, quantity_on_hand__gte=MIN_STOCK)
-    if category:
-        qs = qs.filter(category=category)
-    candidates = [p for p in qs if p.sku not in exclude_skus]
-    if live.usable:
-        candidates = [p for p in candidates
-                      if live.buyable(sku=p.sku, product_id=p.product_id, min_stock=MIN_STOCK)]
-    # Granular subtype (rosin / gummies / lollipops…) — a HARD filter when chosen.
-    # voice/chat.py's ``_SUBCATEGORY_RE`` sends indica/sativa/hybrid under this SAME
-    # "subcategory" slot key regardless of category (e.g. "relaxing indica flower"),
-    # but that's strain type, not a form/texture subtype — product_subtype() has no
-    # keywords for it (and none at all for "flower"), so it must be matched against
-    # Product.strain_type instead or the hard filter drops every real result.
-    sub = slots.get("subcategory")
+# ── Search v2: every hard filter in ONE place ────────────────────────────────
+# `eligible` is THE candidate set. rank_products draws from it, and every options/facet endpoint
+# (facets.py) counts on it, so a button can never lead somewhere the search would not go. The stock
+# gate is the first thing applied and nothing after it can add a product back.
+_STRAIN_MATCH = {
     # Strain-type matching is HYPHEN-TOLERANT: live inventory carries "Indica-Hybrid" (41 SKUs)
     # and "Sativa-Hybrid" (25 SKUs) alongside the plain types, and an exact-match here dropped
     # both entirely for an "indica"/"sativa" ask. "indica"/"sativa" match their own hyphenated
     # variant only (never cross to the other side). DECISION: "hybrid" ALSO matches both
     # hyphenated variants — an Indica-Hybrid or Sativa-Hybrid genuinely IS a hybrid, and a caller
     # asking for "hybrid" wants the broadest hybrid shelf, not just the unhyphenated slice of it.
-    _STRAIN_MATCH = {
-        "indica": ("indica", "indica-hybrid"),
-        "sativa": ("sativa", "sativa-hybrid"),
-        "hybrid": ("hybrid", "indica-hybrid", "sativa-hybrid"),
-    }
-    if sub in _STRAIN_MATCH:
-        wanted = _STRAIN_MATCH[sub]
-        candidates = [p for p in candidates if (p.strain_type or "").lower() in wanted]
-    elif sub:
-        candidates = [p for p in candidates if product_subtype(p.name, p.category) == sub]
+    "indica": ("indica", "indica-hybrid"),
+    "sativa": ("sativa", "sativa-hybrid"),
+    "hybrid": ("hybrid", "indica-hybrid", "sativa-hybrid"),
+}
+_INFUSION_ALIASES = {"diamonds": "diamond", "moon-rock": "moonrock", "moon-rocks": "moonrock",
+                     "live-rosin-infused": "live-rosin", "thca": "diamond"}
 
-    # Category blocklist (HARD): "not a concentrate" / "anything but edibles" must
-    # actually exclude that category, not just fail to steer toward it. Arrives as
-    # slot-key-style strings from voice — normalize through the same map that
-    # turns a requested category into its canonical name, so "concentrate" blocks
-    # the canonical "concentrates". Unknown/garbage entries are ignored rather
-    # than treated as a category (which would filter nothing, or everything).
-    blocklist = slots.get("category_blocklist") or []
-    blocked = {CATEGORY_BY_SLOTKEY.get(b, b) for b in blocklist if b}
-    blocked &= set(CATEGORY_BY_SLOTKEY.values())
-    if blocked:
-        candidates = [p for p in candidates if p.category not in blocked]
-    # Premium intent makes price a preference (priciest first), not a gate. An explicit sort_by replaces
-    # that ordering, so the customer's budget band is a HARD filter again, premium or not: "stronger"
-    # must never surface a $30 pick to someone who asked for $100 & up.
-    if not premium_intent or sort_by:
-        candidates = [p for p in candidates
-                      if lo <= _live_price(live, p) <= hi]
-    if not candidates:
+
+def _num(v, lo: float = 0.0, hi: float = 100.0) -> float | None:
+    if isinstance(v, bool):
+        return None
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    if x != x:  # NaN
+        return None
+    return min(max(x, lo), hi)
+
+
+def _flag(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v == 1
+    return isinstance(v, str) and v.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _str_list(v, limit: int, item_len: int = 40) -> list[str]:
+    if isinstance(v, str):
+        v = [v]
+    if not isinstance(v, (list, tuple)):
+        return []
+    out: list[str] = []
+    for x in v:
+        s = product_attrs.norm_text(x)[:item_len] if isinstance(x, str) else ""
+        if s and s not in out:
+            out.append(s)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _slug_value(v) -> str:
+    """'Live Resin' / 'live_resin' / 'live-resin' -> 'live-resin'."""
+    return product_attrs.norm_text(v).replace(" ", "-") if isinstance(v, str) else ""
+
+
+def effective_size(slots: dict) -> str | None:
+    """`size`, else the `pack` slot as a size value: 5 / "5" / "5pk" -> "5pk", "single" -> "single"."""
+    size = slots.get("size")
+    if isinstance(size, str) and size:
+        return size
+    pack = slots.get("pack")
+    if isinstance(pack, bool) or pack in (None, ""):
+        return None
+    if isinstance(pack, (int, float)):
+        return f"{int(pack)}pk" if 1 <= int(pack) <= 100 else None
+    if isinstance(pack, str):
+        s = pack.strip().lower()
+        if s == "single":
+            return "single"
+        m = re.fullmatch(r"(\d{1,3})\s*(?:pk|pack)?", s)
+        if m and 1 <= int(m.group(1)) <= 100:
+            return f"{int(m.group(1))}pk"
+    return None
+
+
+def parse_filters(slots: dict) -> dict:
+    """The search-v2 slot keys, validated (anything malformed is simply ignored, never an error)."""
+    slots = slots if isinstance(slots, dict) else {}
+    terps = []
+    for t in _str_list(slots.get("terpenes"), 5):
+        c = terpenes.canonical(t)
+        if c and c not in terps:
+            terps.append(c)
+    q = slots.get("q")
+    q_tokens = [t for t in re.split(r"[^a-z0-9.%]+", product_attrs.norm_text(q[:80]))
+                if len(t) >= 2][:8] if isinstance(q, str) else []
+    infusion = []
+    for t in _str_list(slots.get("infusion"), 5):
+        v = _slug_value(t)
+        v = _INFUSION_ALIASES.get(v, v)
+        if v and v not in infusion:
+            infusion.append(v)
+    return {
+        "thc_min": _num(slots.get("thc_min")),
+        "thc_max": _num(slots.get("thc_max")),
+        "cann": {name: v for key, name in product_attrs.CANNABINOID_SLOTS.items()
+                 if (v := _num(slots.get(key))) is not None and v > 0},
+        "terpenes": terps,
+        "terpene_total_min": _num(slots.get("terpene_total_min")),
+        "tags": _str_list(slots.get("tags"), 10),
+        "q": q_tokens,
+        "infusion": infusion,
+        "solventless": _flag(slots.get("solventless")),
+        "lab_tested": _flag(slots.get("lab_tested")),
+    }
+
+
+def resolve_category(cat_slot) -> tuple[tuple[str, ...] | None, str | None]:
+    """(catalog slugs, master predicate | None) for a `category` slot. A master value ('vape-carts',
+    'Disposable Vape', 'infused-pre-rolls'...) resolves to its catalog slugs plus the master to test; a
+    legacy slot key / catalog slug resolves exactly as it always did (CATEGORY_BY_SLOTKEY, else itself)."""
+    if not cat_slot or not isinstance(cat_slot, str):
+        return None, None
+    master = product_attrs.resolve_master(cat_slot)
+    if master:
+        value, _, cats = product_attrs.MASTERS[master]
+        if cats == (value,):     # the master IS the whole catalog slug (flower, concentrates, topicals...)
+            return cats, None
+        return cats, master
+    cat = CATEGORY_BY_SLOTKEY.get(cat_slot, cat_slot)
+    return (cat,), None
+
+
+def kinds_of(p: Product, info=None) -> set[str]:
+    """Every subtype value a product answers to: its legacy first-match subtype (unchanged meaning:
+    'rosin' covers live rosin, 'live-resin' covers cured resin) plus, for concentrates/vapes, every
+    extraction/form its name or tags name (live-rosin, hash-rosin, cured-resin, sauce, diamonds...)."""
+    kinds = product_attrs.extraction_kinds(p, info)
+    legacy = product_subtype(p.name, p.category)
+    if legacy:
+        kinds.add(legacy)
+    return kinds
+
+
+def master_of(p: Product, info=None) -> str | None:
+    return product_attrs.master_of(p, info, product_subtype(p.name, p.category))
+
+
+def price_window(slots: dict) -> tuple[float, float, bool]:
+    """(lo, hi, premium_intent). Prefer an explicit dollar range; fall back to the tier bounds (chat route).
+    "Premium" intent: top tier, or the open-ended high "$100 & up" bucket. For premium intent, price is a
+    PREFERENCE (show the priciest of the requested weight), NOT a hard gate — otherwise a weight with
+    nothing above the floor would return the WRONG weight. Bounded ranges (e.g. $20–40) stay a hard
+    filter. WEIGHT always wins over price."""
+    if slots.get("price_min") is not None or slots.get("price_max") is not None:
+        lo = _num(slots.get("price_min"), 0, 1e9) or 0.0
+        hi = _num(slots.get("price_max"), 0, 1e9) or 1e9   # 0 / missing = open-ended, as it always was
+    else:
+        lo, hi = price_tier_bounds(slots.get("price_tier"))
+    return float(lo), float(hi), (slots.get("price_tier") == "top") or (lo >= 100)
+
+
+# slot groups `eligible(ignore=...)` can leave out (a facet ignores the step it is asking about)
+FILTER_GROUPS = ("category", "subcategory", "blocklist", "price", "doh", "size", "thc", "cannabinoids",
+                 "terpenes", "terpene_total", "tags", "q", "infusion", "solventless", "lab_tested")
+
+
+def eligible(location: str, slots: dict, *, exclude_skus=None, labs=None, details=None, live=None,
+             ignore=frozenset(), exact_size: bool = False) -> list[Product]:
+    """In-stock products matching EVERY hard filter in `slots`, in a stable order (by id).
+
+    In stock = `availability` AND sales-floor stock >= MIN_STOCK (the live pull's quantity when it is
+    usable, else the table's). Then: category (incl. master split), subcategory (strain type, or any
+    subtype/extraction kind), category blocklist, price band (not for premium intent unless sort_by),
+    DOH, and the v2 slots (THC range, cannabinoid minimums, terpenes (ANY), total terpenes, tags (ANY), q
+    (ALL tokens), infusion (ANY), solventless, lab_tested). `exact_size` also applies size/pack exactly
+    (the facets do; rank_products applies size itself, with its capped nearest-weight fill). `labs` /
+    `details` are the request's memos (one bulk read each, only when a slot needs them)."""
+    slots = slots if isinstance(slots, dict) else {}
+    exclude = {str(s) for s in (exclude_skus or ())}
+    labs = lab_enrich.Memo() if labs is None else labs
+    details = lab_enrich.Memo() if details is None else details
+    live = live_stock.stock_map(location) if live is None else live
+    f = parse_filters(slots)
+
+    qs = Product.objects.filter(location_slug=location, availability=True)
+    if not live.usable:
+        qs = qs.filter(quantity_on_hand__gte=MIN_STOCK)
+    cats, master = (None, None) if "category" in ignore else resolve_category(slots.get("category"))
+    if cats:
+        qs = qs.filter(category__in=cats) if len(cats) > 1 else qs.filter(category=cats[0])
+    cands = [p for p in qs.order_by("id") if p.sku not in exclude]
+    if live.usable:
+        # Never recommend something that isn't on the sales floor right now: the live pull wins over a
+        # beat-refreshed table that still thinks a sellout is in stock.
+        cands = [p for p in cands if live.buyable(sku=p.sku, product_id=p.product_id, min_stock=MIN_STOCK)]
+    if not cands:
         return []
 
-    # DOH filter (HARD): when the customer asks for DOH-certified only, suggest
-    # ONLY products with "DOH" in the name. Explicit choice — no fallback to
-    # non-DOH items (return nothing rather than something off-spec).
-    if slots.get("doh_only"):
-        candidates = [p for p in candidates if "doh" in (p.name or "").lower()]
-        if not candidates:
-            return []
+    sub = None if "subcategory" in ignore else slots.get("subcategory")
+    sub = sub if isinstance(sub, str) and sub else None
+    sub_key = sub if sub in _STRAIN_MATCH else _slug_value(sub) if sub else None
+    need_info = bool(master or (sub_key and sub_key not in _STRAIN_MATCH)
+                     or (f["tags"] and "tags" not in ignore) or (f["q"] and "q" not in ignore)
+                     or (f["infusion"] and "infusion" not in ignore)
+                     or (f["solventless"] and "solventless" not in ignore))
+    if need_info:
+        lab_enrich.details_for([p.product_id for p in cands], memo=details)
+
+    def info(p):
+        return details.get(p.product_id) or None
+
+    if master:
+        cands = [p for p in cands if master_of(p, info(p)) == master]
+    # Granular subtype (rosin / gummies / lollipops…) — a HARD filter when chosen. voice/chat.py's
+    # ``_SUBCATEGORY_RE`` sends indica/sativa/hybrid under this SAME "subcategory" slot key regardless of
+    # category, but that's strain type, so it is matched against Product.strain_type.
+    if sub_key in _STRAIN_MATCH:
+        wanted = _STRAIN_MATCH[sub_key]
+        cands = [p for p in cands if (p.strain_type or "").lower() in wanted]
+    elif sub_key:
+        cands = [p for p in cands if sub_key in kinds_of(p, info(p))]
+
+    # Category blocklist (HARD): "not a concentrate" must exclude that category. Slot-key-style strings
+    # are normalized through CATEGORY_BY_SLOTKEY; unknown/garbage entries are ignored.
+    if "blocklist" not in ignore:
+        blocklist = slots.get("category_blocklist") or []
+        blocked = {CATEGORY_BY_SLOTKEY.get(b, b) for b in blocklist if isinstance(b, str) and b}
+        blocked &= set(CATEGORY_BY_SLOTKEY.values())
+        if blocked:
+            cands = [p for p in cands if p.category not in blocked]
+
+    # Premium intent makes price a preference (priciest first), not a gate. An explicit sort_by replaces
+    # that ordering, so the customer's budget band is a HARD filter again, premium or not.
+    if "price" not in ignore:
+        lo, hi, premium = price_window(slots)
+        sort_by = slots.get("sort_by") if slots.get("sort_by") in SORT_MODES else None
+        if not premium or sort_by:
+            cands = [p for p in cands if lo <= _live_price(live, p) <= hi]
+
+    # DOH filter (HARD): ONLY products with "DOH" in the name. No fallback to non-DOH items.
+    if slots.get("doh_only") and "doh" not in ignore:
+        cands = [p for p in cands if "doh" in (p.name or "").lower()]
+
+    if exact_size and "size" not in ignore:
+        size = effective_size(slots)
+        if size and size not in ("any", "stock-up", "disposable"):
+            cands = [p for p in cands if _size_match(p, size)]
+
+    if f["tags"] and "tags" not in ignore:
+        cands = [p for p in cands if product_attrs.tag_match(p, info(p), f["tags"])]
+    if f["q"] and "q" not in ignore:
+        def _hay(p):
+            i = info(p)
+            return " ".join([
+                product_attrs.norm_text(" ".join([p.name or "", p.brand or "", p.strain or "", p.strain_type or "",
+                                                  p.category or "", master_of(p, i) or ""])),
+                " ".join(product_attrs.norm_text(t) for t in product_attrs.info_tags(i)),
+                " ".join(k.replace("-", " ") for k in kinds_of(p, i)),
+            ])
+        cands = [p for p in cands if all(t in h for h in [_hay(p)] for t in f["q"])]
+    if f["infusion"] and "infusion" not in ignore:
+        cands = [p for p in cands if product_attrs.infusion_kinds(p, info(p)) & set(f["infusion"])]
+    if f["solventless"] and "solventless" not in ignore:
+        cands = [p for p in cands if product_attrs.is_solventless(p, info(p))]
+
+    want_lab = ((f["thc_min"] is not None or f["thc_max"] is not None) and "thc" not in ignore) \
+        or (f["cann"] and "cannabinoids" not in ignore) or (f["terpenes"] and "terpenes" not in ignore) \
+        or (f["terpene_total_min"] and "terpene_total" not in ignore) or (f["lab_tested"] and "lab_tested" not in ignore)
+    if not (want_lab and cands):
+        return cands
+    lab_enrich.labs_for([p.batch_id for p in cands], memo=labs)
+
+    def lab(p):
+        return labs.get(p.batch_id) or None
+
+    if "thc" not in ignore and (f["thc_min"] is not None or f["thc_max"] is not None):
+        lo_t = f["thc_min"] if f["thc_min"] is not None else 0.0
+        hi_t = f["thc_max"] if f["thc_max"] is not None else 100.0
+
+        def _thc_ok(p):
+            thc = lab_enrich.effective_thc(p.thc_percent, lab(p))
+            return isinstance(thc, (int, float)) and lo_t <= float(thc) <= hi_t
+        cands = [p for p in cands if _thc_ok(p)]
+    if f["cann"] and "cannabinoids" not in ignore:
+        cands = [p for p in cands
+                 if all(product_attrs.cannabinoid_pct(lab(p), n) >= v for n, v in f["cann"].items())]
+    if f["terpenes"] and "terpenes" not in ignore:
+        want = set(f["terpenes"])
+        cands = [p for p in cands if want & set(product_attrs.lab_terpenes(lab(p)))]
+    if f["terpene_total_min"] and "terpene_total" not in ignore:
+        cands = [p for p in cands if product_attrs.total_terpenes(lab(p)) >= f["terpene_total_min"]]
+    if f["lab_tested"] and "lab_tested" not in ignore:
+        cands = [p for p in cands if product_attrs.has_lab(lab(p))]
+    return cands
+
+
+def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
+                  limit: int = 5, exclude_skus: set[str] | None = None,
+                  ranking_weights: dict | None = None,
+                  labs: dict | None = None) -> list[tuple[Product, str]]:
+    """Ranked (Product, why) picks. `labs` is the caller's per-request memo of batch labs
+    ({batch_id: stored lab | None}); it is filled here — one bulk read for the picks — and the
+    caller reuses it, so a request never reads labs per product.
+
+    The order is prefix-stable: the first N picks for `limit=N` are the first N for any larger limit,
+    which is what makes search-v2 paging (offset) show the same criteria without repeats."""
+    slots = slots if isinstance(slots, dict) else {}
+    exclude_skus = exclude_skus or set()
+    labs = lab_enrich.Memo() if labs is None else labs
+    sort_by = slots.get("sort_by") if slots.get("sort_by") in SORT_MODES else None
+    cats, _master = resolve_category(slots.get("category"))
+    category = cats[0] if cats else None
+    lo, hi, premium_intent = price_window(slots)
+
+    # Every hard filter (stock first; see eligible). Soft behaviour below (the nearest-weight fill) only
+    # ever draws from this set, so it can never leak a product outside category/stock/DOH/price/v2 slots.
+    live = live_stock.stock_map(location)
+    candidates = eligible(location, slots, exclude_skus=exclude_skus, labs=labs, live=live)
+    if not candidates:
+        return []
 
     # ---- Size handling (HARD, with a capped NEAREST-weight fallback) ----
     # Respect the chosen weight. Show that weight; only if there aren't enough
     # exact matches do we fill UP TO 2 of `limit` slots with the NEAREST OTHER
     # weight — closest by grams (4g → 3.5g, NOT the 28g ounce), capped to a sane
     # window so we never substitute something wildly off (a 1g shake / a bulk oz).
-    size = slots.get("size")
+    # A PACK size (single / 5pk) is an exact choice: no fill from other pack counts.
+    size = effective_size(slots)
     nearby: list[Product] = []
     size_fallback = False  # True when no exact-weight match exists at all
     if size and size not in ("any", "stock-up", "disposable"):
@@ -524,6 +754,8 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
                       if (eg := _effective_grams(p)) is not None
                       and 0.5 * target_g <= eg <= 2.0 * target_g]
             nearby.sort(key=lambda p: (abs((_effective_grams(p) or 1e9) - target_g), -float(p.margin)))
+        elif size == "single" or size.endswith("pk"):
+            nearby = []   # a pack count is an exact choice ("5-pack" never fills with singles)
         else:
             nearby = rest
         if exact:
@@ -578,11 +810,24 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
                 aroma_hits[p.sku] = (aroma, *hit)
 
     # (score, product, aroma hit | None): the reason is written once, for the final picks only (_finish).
+    # Requested terpenes (search v2 `terpenes`): `eligible` already kept only products whose lab carries
+    # one of them; here the AMOUNT ranks — the strongest combined share earns the full TERPENE_BOOST.
+    want_terps = parse_filters(slots)["terpenes"]
+    terp_amount: dict[str, float] = {}
+    if want_terps:
+        lab_enrich.labs_for([p.batch_id for p in candidates], memo=labs)
+        for p in candidates:
+            have = product_attrs.lab_terpenes(labs.get(p.batch_id))
+            terp_amount[p.sku] = sum(have.get(t, 0.0) for t in want_terps)
+    terp_top = max(terp_amount.values(), default=0.0) or 1.0
+
     scored = []
     for p in candidates:
         score = score_one(from_product(p), pf, ctx)
         if p.sku in aroma_hits:
             score += AROMA_BOOST
+        if terp_amount:
+            score += TERPENE_BOOST * terp_amount.get(p.sku, 0.0) / terp_top
         scored.append((score, p, aroma_hits.get(p.sku)))
 
     # ---- Explicit sort (Contract B): "stronger" / "cheaper" re-orders THIS filtered set. ----

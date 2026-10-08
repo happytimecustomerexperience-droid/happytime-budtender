@@ -104,6 +104,8 @@ def one_faq_row(db):
         "dash-vendor-queue",
         "dash-publish",
         "dash-analytics",
+        "dash-chat-funnel",
+        "dash-chat-timeline",
         "dash-specials-hours",
         "dash-capabilities",
         "dash-health",

@@ -21,6 +21,8 @@ STAFF_ONLY = (
     "/api/v1/customer/profile-upsert",
     "/api/v1/customer/caller-context",
     "/api/v1/admin/ranking-weights",
+    "/api/v1/analytics/funnel",
+    "/api/v1/analytics/session",
 )
 
 

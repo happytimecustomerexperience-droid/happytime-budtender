@@ -1,0 +1,130 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Chat funnel — Happy Time Voice{% endblock %}
+{% block content %}
+<div class="row between">
+  <h1>Chat funnel &amp; drop-off</h1>
+  <div class="row">
+    <a class="btn" href="{% url 'dash-analytics' %}?days={{ days }}">← Analytics</a>
+    <a class="btn {% if days == 7 %}btn-primary{% endif %}" href="?days=7&store={{ store }}">7d</a>
+    <a class="btn {% if days == 30 %}btn-primary{% endif %}" href="?days=30&store={{ store }}">30d</a>
+    <a class="btn {% if days == 90 %}btn-primary{% endif %}" href="?days=90&store={{ store }}">90d</a>
+    <a class="btn {% if days == 365 %}btn-primary{% endif %}" href="?days=365&store={{ store }}">1y</a>
+  </div>
+</div>
+<div class="row" style="margin:8px 0">
+  <span class="muted">Store:</span>
+  <a class="btn {% if not store %}btn-primary{% endif %}" href="?days={{ days }}">All</a>
+  <a class="btn {% if store == 'yakima' %}btn-primary{% endif %}" href="?days={{ days }}&store=yakima">Yakima</a>
+  <a class="btn {% if store == 'mount-vernon' %}btn-primary{% endif %}" href="?days={{ days }}&store=mount-vernon">Mount Vernon</a>
+  <a class="btn {% if store == 'pullman' %}btn-primary{% endif %}" href="?days={{ days }}&store=pullman">Pullman</a>
+</div>
+
+{% if not f.ok %}
+  <div class="card"><p class="muted">{{ f.reason|default:"Chat analytics unavailable." }}</p></div>
+{% else %}
+<div class="pills" style="margin:16px 0">
+  <div class="pill"><div class="n">{{ f.sessions }}</div><div class="l">Chat sessions</div></div>
+  <div class="pill"><div class="n">{{ f.unique_visitors }}</div><div class="l">Visitors</div></div>
+  <div class="pill"><div class="n">{{ f.opens }}</div><div class="l">Opens</div></div>
+  <div class="pill"><div class="n">{{ f.resumes }}</div><div class="l">Resumes</div></div>
+  <div class="pill"><div class="n">{{ f.actions.searches }}</div><div class="l">Searches</div></div>
+  <div class="pill"><div class="n">{{ f.actions.product_card_clicks }}</div><div class="l">Product clicks</div></div>
+  <div class="pill"><div class="n">{{ f.actions.order_ahead_clicks }}</div><div class="l">Order-ahead clicks</div></div>
+  <div class="pill"><div class="n">{{ f.bounces.total }}</div><div class="l">Bounces{% if f.bounces.rate != None %} ({{ f.bounces.rate }}){% endif %}</div></div>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr">
+  <div class="card">
+    <h2>Funnel (sessions reaching each stage)</h2>
+    <table>
+      <tr><th>Stage</th><th>Sessions</th></tr>
+      {% for row in f.funnel %}<tr><td>{{ row.stage }}</td><td>{{ row.sessions }}</td></tr>{% endfor %}
+    </table>
+  </div>
+  <div class="card">
+    <h2>Where they bounced</h2>
+    <table>
+      <tr><th>Kind</th><th>Sessions</th></tr>
+      <tr><td>Opened the chat, did nothing</td><td>{{ f.bounces.no_interaction }}</td></tr>
+      <tr><td>Saw picks, then left</td><td>{{ f.bounces.left_after_picks }}</td></tr>
+      <tr><td>Left before searching</td><td>{{ f.bounces.left_before_search }}</td></tr>
+      <tr><td>Only zero-result searches</td><td>{{ f.bounces.zero_results }}</td></tr>
+    </table>
+    {% if f.bounces.last_step %}
+    <p class="muted" style="margin-top:10px">Last step before leaving:</p>
+    <table>{% for row in f.bounces.last_step %}<tr><td>{{ row.step }}</td><td>{{ row.sessions }}</td></tr>{% endfor %}</table>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <h2>Questionnaire step drop-off</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Step (in order asked)</th><th>Viewed</th><th>Answered</th><th>Skipped</th><th>Dropped here</th><th>Drop rate</th></tr>
+    {% for s in f.questionnaire_steps %}<tr><td>{{ s.step }}</td><td>{{ s.viewed }}</td><td>{{ s.answered }}</td><td>{{ s.skipped }}</td><td>{{ s.dropped }}</td><td>{{ s.drop_rate|default_if_none:"-" }}</td></tr>
+    {% empty %}<tr><td colspan="6" class="muted">No questionnaire steps recorded in this window.</td></tr>{% endfor %}
+  </table></div>
+</div>
+
+<div class="card">
+  <h2>What people do with picks</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Action</th><th>Count</th></tr>
+    <tr><td>Picks shown</td><td>{{ f.actions.picks_views }}</td></tr>
+    <tr><td>"Show more" clicks</td><td>{{ f.actions.show_more_clicks }}</td></tr>
+    <tr><td>Product card clicks</td><td>{{ f.actions.product_card_clicks }}</td></tr>
+    <tr><td>Card expanded (lab / info / explain)</td><td>{{ f.actions.product_expands }}</td></tr>
+    <tr><td>Order-ahead clicks</td><td>{{ f.actions.order_ahead_clicks }}</td></tr>
+    <tr><td>Find-similar opened / results / picked</td><td>{{ f.actions.find_similar_opens }} / {{ f.actions.find_similar_results }} / {{ f.actions.similar_picks }}</td></tr>
+    <tr><td>Pairing upsell viewed / accepted</td><td>{{ f.actions.pair_upsell_views }} / {{ f.actions.pair_upsell_accepts }}</td></tr>
+    <tr><td>Phone capture submitted / skipped</td><td>{{ f.actions.phone_capture_submits }} / {{ f.actions.phone_capture_skips }}</td></tr>
+  </table></div>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr 1fr">
+  <div class="card">
+    <h2>Top categories searched</h2>
+    <table>{% for c in f.top_categories %}<tr><td>{{ c.category }}</td><td>{{ c.searches }}</td></tr>
+    {% empty %}<tr><td class="muted">No searches.</td></tr>{% endfor %}</table>
+    <h2 style="margin-top:14px">Top slots</h2>
+    <table>{% for c in f.top_slots %}<tr><td>{{ c.slot }}</td><td>{{ c.searches }}</td></tr>
+    {% empty %}<tr><td class="muted">No searches.</td></tr>{% endfor %}</table>
+  </div>
+  <div class="card">
+    <h2>Searches with zero results</h2>
+    <table>{% for c in f.zero_result_searches %}<tr><td>{{ c.slots }}</td><td>{{ c.searches }}</td></tr>
+    {% empty %}<tr><td class="muted">None.</td></tr>{% endfor %}</table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>By store</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Store</th><th>Sessions</th><th>Searches</th><th>Saw picks</th><th>Product clicks</th><th>Order-ahead</th><th>Bounces</th><th>Bounce rate</th></tr>
+    {% for store_name, r in f.by_store.items %}<tr><td>{{ store_name }}</td><td>{{ r.sessions }}</td><td>{{ r.searches }}</td><td>{{ r.picks_viewed }}</td><td>{{ r.product_clicks }}</td><td>{{ r.order_ahead_clicks }}</td><td>{{ r.bounces }}</td><td>{{ r.bounce_rate|default_if_none:"-" }}</td></tr>
+    {% empty %}<tr><td colspan="8" class="muted">No sessions.</td></tr>{% endfor %}
+  </table></div>
+</div>
+
+<div class="card">
+  <h2>By day</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Day</th><th>Sessions</th><th>Searches</th><th>Saw picks</th><th>Product clicks</th><th>Order-ahead</th><th>Bounces</th></tr>
+    {% for r in f.by_day %}<tr><td>{{ r.date }}</td><td>{{ r.sessions }}</td><td>{{ r.searches }}</td><td>{{ r.picks_viewed }}</td><td>{{ r.product_clicks }}</td><td>{{ r.order_ahead_clicks }}</td><td>{{ r.bounces }}</td></tr>
+    {% empty %}<tr><td colspan="7" class="muted">No sessions.</td></tr>{% endfor %}
+  </table></div>
+</div>
+
+<div class="card">
+  <h2>Recent sessions — open one to see what happened where</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Started</th><th>Store</th><th>Events</th><th>Searches</th><th>Seconds</th><th>Outcome</th><th>Last step</th><th></th></tr>
+    {% for r in f.recent_sessions %}<tr>
+      <td>{{ r.started_at }}</td><td>{{ r.store|default:"-" }}</td><td>{{ r.events }}</td><td>{{ r.searches }}</td><td>{{ r.seconds }}</td>
+      <td>{{ r.outcome }}</td><td>{{ r.last_step|default:"-" }}</td>
+      <td><a href="{% url 'dash-chat-timeline' %}?ref={{ r.ref }}">Timeline</a></td></tr>
+    {% empty %}<tr><td colspan="8" class="muted">No sessions.</td></tr>{% endfor %}
+  </table></div>
+</div>
+{% endif %}
+{% endblock %}

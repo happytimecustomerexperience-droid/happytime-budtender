@@ -25,13 +25,13 @@ from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
                      CustomerProfile, Feedback, PhoneCartDraft, Product,
                      SuggestedProduct)
 from .pairing import pair_for
-from . import facets, identity, lab_enrich, live_stock
+from . import analytics, facets, identity, lab_enrich, live_stock
 from .auth import is_website
 from .fire import fire
 from .gemini_chat import (fetch_persona, generate_chat_reply_with_source,
                           invalidate_persona)
 from .intents import classify_intent, conversation_breakdown, intent_breakdown
-from .ranking import MIN_STOCK, W_ANON, W_KNOWN, rank_products
+from .ranking import MIN_STOCK, SEARCH_CAP, W_ANON, W_KNOWN, rank_products
 from .serializers import (customer_detail, customer_row, profile_summary,
                           public_message, public_product)
 from .tasks import (_normalize_phone, ensure_inventory_fresh,
@@ -607,14 +607,21 @@ class ChatHistoryView(APIView):
             # No key means "browse recent sessions", not "read their content" — a bare
             # service token must not be a bulk read of every website conversation.
             # Metadata only; bodies need one specific session's id (or its own token).
-            shown = list(sessions[:limit])
+            # Every conversation is kept, so the list pages (offset) instead of stopping at the newest 100.
+            from django.db.models import Count
+
+            offset = _bounded_int(data.get("offset"), default=0, lo=0, hi=10_000_000)
+            total = ChatSession.objects.count()
+            shown = list(sessions.annotate(message_count=Count("messages"))[offset:offset + limit])
             rows = [
                 {
                     "id": session.pk,
                     "channel": session.channel,
                     "location_slug": session.location_slug,
                     "primary_intent": session.primary_intent,
+                    "started_at": session.started_at.isoformat(),
                     "last_active_at": session.last_active_at.isoformat(),
+                    "message_count": session.message_count,
                 }
                 for session in shown
             ]
@@ -624,7 +631,10 @@ class ChatHistoryView(APIView):
             props__source="fallback",
             session_token__in=[s.session_token for s in shown],
         ).count()
-        return Response({"ok": True, "sessions": rows, "fallback_count": fallback_count})
+        resp = {"ok": True, "sessions": rows, "fallback_count": fallback_count}
+        if not (session_id not in (None, "") or session_token):
+            resp["total"] = total
+        return Response(resp)
 
 
 class CustomerListView(APIView):
@@ -678,7 +688,13 @@ class CustomerDetailView(APIView):
 class ProductSearchView(APIView):
     def post(self, request):
         slots = request.data.get("slots") or {}
-        limit = _bounded_int(request.data.get("limit"), default=5, lo=1, hi=20)
+        if not isinstance(slots, dict):
+            slots = {}
+        limit = _bounded_int(request.data.get("limit"), default=5, lo=1, hi=SEARCH_CAP)
+        # Search v2 paging: "show 5 more" re-sends the SAME slots with offset += 5. The ranking is
+        # prefix-stable, so page N is exactly picks[offset:offset+limit] of one ranked list, capped at 20.
+        offset = _bounded_int(request.data.get("offset"), default=0, lo=0, hi=SEARCH_CAP)
+        limit = max(0, min(limit, SEARCH_CAP - offset))
         location = _safe_location(slots.get("store") or request.data.get("location"))
         exclude = {str(s) for s in (request.data.get("exclude_skus") or [])}
         # Get-or-create the session so EVERY session (incl. anonymous questionnaire
@@ -695,7 +711,9 @@ class ProductSearchView(APIView):
         trusted = not is_website(request) or bool(
             session and session.identity_via == "web_phone" and settings.HHT_WEB_PHONE_IDENTITY
         )
-        profile = identity.follow(session.customer) if session and session.customer and trusted else None
+        # A shared row (one phone folded from many Dutchie customers) never personalises search.
+        profile = (identity.trusted(identity.follow(session.customer))
+                   if session and session.customer and trusted else None)
         if profile is None and not is_website(request):
             profile = _profile_for_phone(request.data.get("phone") or "")
             if profile and session and not session.customer:
@@ -718,19 +736,28 @@ class ProductSearchView(APIView):
         # reads it back — no per-product query. `slots` goes to the ranker untouched, so `sort_by`
         # ('potency' | 'price_asc') arrives there; the ranker ignores any other value.
         labs = lab_enrich.Memo()
+        want = offset + limit
         ranked = rank_products(
             location,
             slots,
             profile,
-            limit=limit,
+            limit=want,
             exclude_skus=exclude,
             ranking_weights=ranking_weights,
             labs=labs,
-        )
+        ) if limit else []
+        # total_matching (capped at 20) and has_more come from the SAME ranked list: when this page came
+        # back full, rank once more to the cap (a page that came back short IS the end of the list).
+        if not limit or (len(ranked) >= want and want < SEARCH_CAP):
+            total = len(rank_products(location, slots, profile, limit=SEARCH_CAP, exclude_skus=exclude,
+                                      ranking_weights=ranking_weights, labs=labs))
+        else:
+            total = len(ranked)
+        ranked = ranked[offset:]
         # One bulk read of the stored product info; whatever lab/info is missing or stale is handed to
         # ONE deduped warm task for the next viewer. The request itself never calls Dutchie.
         labs, details = lab_enrich.for_picks(location, [p for p, _ in ranked], labs)
-        results = [public_product(p, rank=i + 1, why_this=why, lab=labs.get(p.batch_id),
+        results = [public_product(p, rank=offset + i + 1, why_this=why, lab=labs.get(p.batch_id),
                                   info=details.get(p.product_id))
                    for i, (p, why) in enumerate(ranked)]
 
@@ -740,7 +767,9 @@ class ProductSearchView(APIView):
                     session=session, customer=profile, location_slug=location,
                     sku=r["sku"], kind="primary", source=session.channel,
                 )
-        return Response({"results": results, "source": "vps"})
+        total = min(total, SEARCH_CAP)
+        return Response({"results": results, "source": "vps", "total_matching": total,
+                         "has_more": offset + len(results) < total, "offset": offset, "limit": limit})
 
 
 class AdminRankingWeightsView(APIView):
@@ -761,27 +790,28 @@ class PriceBandsView(APIView):
     """Data-driven budget buckets for a store+category+size, so the
     questionnaire's price step is granular and relevant to the subcategory."""
 
+    # Search v2: counted on the SAME candidate set the search uses, under ALL slots chosen so far (the
+    # price step itself excluded); a band with no product is never listed; `skip` = < 2 real bands.
     def post(self, request):
-        slots = request.data.get("slots") or request.data or {}
-        location = _safe_location(slots.get("store") or request.data.get("location"))
-        category = facets.resolve_category(slots.get("category"))
-        # Served from the precomputed cache (warmed on every inventory sync); a cold
-        # combo is computed once + cached. The request path does NO product scan.
-        return Response(facets.bands(location, category, slots.get("size"), slots.get("subcategory")))
+        location, slots = _facet_request(request)
+        return Response(facets.band_options(location, slots))
+
+    get = post
 
 
 class SubtypesView(APIView):
     """Granular product subtypes that actually exist in live inventory for a
-    store+category — e.g. concentrates → rosin / live resin / RSO / diamonds;
-    edibles → gummies / chocolate / peanut butter cups / lollipops. DATA-DRIVEN:
+    store+category — e.g. concentrates → rosin / live resin / live rosin / hash rosin / cured resin /
+    RSO / diamonds; edibles → gummies / chocolate / peanut butter cups / lollipops. DATA-DRIVEN:
     new forms appear automatically as soon as a matching SKU is synced, so the
-    questionnaire's subtype step is never hardcoded."""
+    questionnaire's subtype step is never hardcoded. Search v2: counted under ALL slots chosen so far;
+    a product answers to every kind its name/tags name (multi-label), as the search filter does."""
 
     def post(self, request):
-        slots = request.data.get("slots") or request.data or {}
-        location = _safe_location(slots.get("store") or request.data.get("location"))
-        category = facets.resolve_category(slots.get("category"))
-        return Response({"subtypes": facets.subtypes(location, category)})
+        location, slots = _facet_request(request)
+        return Response(facets.subtype_options(location, slots))
+
+    get = post
 
 
 class SizesView(APIView):
@@ -790,27 +820,172 @@ class SizesView(APIView):
     pre-roll's pack counts (single, 1pk…28pk). DATA-DRIVEN: a new weight/pack
     appears as soon as a matching SKU syncs, so the questionnaire's size step is
     never hardcoded. Categories with no reliable size axis (e.g. edibles) return
-    an empty list and the questionnaire skips the step."""
+    an empty list and the questionnaire skips the step. Search v2: counted under ALL slots."""
 
     def post(self, request):
-        slots = request.data.get("slots") or request.data or {}
-        location = _safe_location(slots.get("store") or request.data.get("location"))
-        category = facets.resolve_category(slots.get("category"))
-        return Response({"sizes": facets.sizes(location, category, slots.get("subcategory"))})
+        location, slots = _facet_request(request)
+        return Response(facets.size_options(location, slots))
+
+    get = post
 
 
 class DohOptionsView(APIView):
     """Whether the 'DOH-certified only?' question is a REAL choice for the current
     filters — i.e. the matching in-stock set has BOTH DOH and non-DOH products. The
     questionnaire SKIPS the DOH step when it isn't (all-DOH = redundant; none-DOH =
-    a dead end), so we never offer a cert filter that can't be fulfilled."""
+    a dead end), so we never offer a cert filter that can't be fulfilled. Search v2: under ALL slots."""
 
     def post(self, request):
-        slots = request.data.get("slots") or request.data or {}
-        location = _safe_location(slots.get("store") or request.data.get("location"))
-        category = facets.resolve_category(slots.get("category"))
-        return Response(facets.doh(location, category, slots.get("size"), slots.get("subcategory"),
-                                   slots.get("price_min"), slots.get("price_max")))
+        location, slots = _facet_request(request)
+        return Response(facets.doh_options(location, slots))
+
+    get = post
+
+
+# ── Search v2 (docs/contracts/search-v2.md): categories, facets, specify-more, similar ──────────────
+_LIST_SLOTS = ("terpenes", "tags", "infusion", "category_blocklist")
+_SCALAR_SLOTS = ("store", "category", "subcategory", "size", "pack", "price_min", "price_max", "price_tier",
+                 "doh_only", "thc_min", "thc_max", "cbd_min", "cbg_min", "cbn_min", "cbc_min", "thcv_min",
+                 "terpene_total_min", "q", "infusion", "solventless", "lab_tested", "sort_by",
+                 "effect_desired", "aroma", "dominant_terpene")
+
+
+def _facet_request(request) -> tuple[str, dict]:
+    """(store, slots) from a POST body `{store, category, slots}` (or the legacy `{slots:{store,...}}` / a
+    flat body) or a GET query string (`?store=&category=&size=&terpenes=a&terpenes=b` or `?slots=<json>`).
+    A top-level `category` fills the slot when `slots` has none. Malformed input is ignored."""
+    if request.method == "GET":
+        qp = request.query_params
+        slots: dict = {}
+        raw = qp.get("slots")
+        if raw:
+            try:
+                parsed = json.loads(raw[:4000])
+                slots = parsed if isinstance(parsed, dict) else {}
+            except ValueError:
+                slots = {}
+        for key in _SCALAR_SLOTS:
+            if key in qp and key not in slots:
+                slots[key] = qp.get(key)
+        for key in _LIST_SLOTS:
+            vals = qp.getlist(key)
+            if len(vals) > 1:
+                slots[key] = vals[:10]
+        top = {"store": qp.get("store"), "location": qp.get("location"), "category": qp.get("category")}
+    else:
+        data = request.data if isinstance(request.data, dict) else {}
+        slots = data.get("slots") if isinstance(data.get("slots"), dict) else data
+        slots = dict(slots)
+        top = {"store": data.get("store"), "location": data.get("location"), "category": data.get("category")}
+    if top["category"] and not slots.get("category"):
+        slots["category"] = top["category"]
+    for key in ("doh_only", "solventless", "lab_tested"):
+        if isinstance(slots.get(key), str):
+            slots[key] = slots[key].strip().lower() in ("1", "true", "yes", "on")
+    location = _safe_location(slots.get("store") or top["store"] or top["location"])
+    return location, slots
+
+
+class CategoriesView(APIView):
+    """GET|POST /api/v1/products/categories?store=<slug> — the Dutchie MASTER categories that have >= 1
+    in-stock product, in the fixed master order, each with the `value` to send back as slots.category.
+    `skip` when fewer than two would be offered."""
+
+    website_ok = True
+
+    def post(self, request):
+        location, slots = _facet_request(request)
+        return Response(facets.category_options(location, slots))
+
+    get = post
+
+
+class FacetsView(APIView):
+    """POST /api/v1/products/facets `{store, category, slots, facet}` -> `{facet, label, options, skip, total}`.
+    Every option leads to >= 1 in-stock product under all slots; each carries `slots`, the exact keys to
+    merge into the request's slots (list values append)."""
+
+    website_ok = True
+
+    def post(self, request):
+        location, slots = _facet_request(request)
+        data = request.data if isinstance(request.data, dict) else {}
+        name = data.get("facet") if request.method != "GET" else request.query_params.get("facet")
+        if name not in facets.FACET_NAMES:
+            return Response({"error": "unknown facet", "facets": list(facets.FACET_NAMES)}, status=400)
+        return Response(facets.facet(location, slots, name))
+
+    get = post
+
+
+class SpecifyMoreView(APIView):
+    """POST /api/v1/products/specify-more `{store, category, slots}` -> `{groups:[{facet,label,options}], skip}`:
+    the extra questions behind "Specify more" for this category, each already non-empty. Empty -> hide it."""
+
+    website_ok = True
+
+    def post(self, request):
+        location, slots = _facet_request(request)
+        return Response(facets.specify_more(location, slots))
+
+    get = post
+
+
+class SimilarView(APIView):
+    """POST /api/v1/products/similar `{store|location, sku | slug | product_id, slots?, limit, offset}` ->
+    `{anchor, results:[public_product...], total_matching, has_more, source}`.
+
+    Same catalog category as the anchor (and the same master category first), in stock only, the anchor
+    itself never; up to two same-strain picks lead (the website's rule #1), then product_similarity's
+    score (strain/type/terpenes/effects/price/potency). Paged like search: offset + limit <= 20. Results
+    are the same card as every other suggestion (`lab` and `info` included)."""
+
+    website_ok = True
+
+    def post(self, request):
+        from .product_similarity import similar_products
+
+        data = request.data if isinstance(request.data, dict) else {}
+        slots = data.get("slots") if isinstance(data.get("slots"), dict) else {}
+        location = _safe_location(data.get("store") or data.get("location") or slots.get("store"))
+        limit = _bounded_int(data.get("limit"), default=5, lo=1, hi=SEARCH_CAP)
+        offset = _bounded_int(data.get("offset"), default=0, lo=0, hi=SEARCH_CAP)
+        limit = max(0, min(limit, SEARCH_CAP - offset))
+        anchor = _anchor_product(location, data)
+        if anchor is None:
+            return Response({"anchor": None, "results": [], "total_matching": 0, "has_more": False,
+                             "source": "vps", "reason": "unknown product"})
+        labs = lab_enrich.Memo()
+        ranked = similar_products(location, anchor, slots=slots, labs=labs, limit=SEARCH_CAP)
+        page = ranked[offset:offset + limit]
+        labs, details = lab_enrich.for_picks(location, [p for p, _ in page], labs)
+        results = [public_product(p, rank=offset + i + 1, why_this=why, lab=labs.get(p.batch_id),
+                                  info=details.get(p.product_id))
+                   for i, (p, why) in enumerate(page)]
+        return Response({
+            "anchor": {"sku": anchor.sku, "name": anchor.name, "category": anchor.category},
+            "results": results, "total_matching": len(ranked),
+            "has_more": offset + len(results) < len(ranked), "offset": offset, "limit": limit, "source": "vps",
+        })
+
+
+def _anchor_product(location: str, data: dict):
+    """The product to find similar ones for, by sku, POS product id, our slug, or the website catalog slug
+    (a slug derived from the name — see _slug_from_name). It may itself be sold out."""
+    qs = Product.objects.filter(location_slug=location)
+    for key, field in (("sku", "sku"), ("product_id", "product_id"), ("slug", "slug")):
+        val = data.get(key)
+        if isinstance(val, (str, int)) and str(val).strip():
+            hit = qs.filter(**{field: str(val).strip()[:200]}).order_by("-availability", "id").first()
+            if hit:
+                return hit
+    slug = data.get("slug")
+    if isinstance(slug, str) and slug.strip():
+        want = slug.strip()[:200]
+        for pk, name in qs.order_by("-availability", "id").values_list("id", "name"):
+            if _slug_from_name(name) == want:
+                return qs.get(pk=pk)
+    return None
 
 
 class AnalyticsSummaryView(APIView):
@@ -1022,6 +1197,8 @@ class PairingView(APIView):
 class ResumeByPhoneView(APIView):
     def post(self, request):
         phone = _normalize_phone(request.data.get("phone", ""))
+        if identity.non_identifying_phone(phone):
+            phone = ""  # a store line / placeholder must not resume (or read) a stranger's chat
         current = request.data.get("current_session_token")
         profile = identity.profile_for_phone(phone) if phone else None
 
@@ -1063,11 +1240,17 @@ class ResumeByPhoneView(APIView):
 
 
 class PersistView(APIView):
+    """The browser's snapshot of its chat. APPEND-ONLY: a conversation, once stored, is never deleted or
+    shortened by a later snapshot (a "Start over", a cleared localStorage, a shorter or reordered
+    snapshot). Each incoming message is matched to a stored one of the same role and text and only the
+    messages we do not hold yet are added, so persisting the same snapshot twice stores it once. Rows keep
+    the time we first saw them, which is what the per-session timeline orders by."""
+
     def post(self, request):
         data = request.data or {}
         token = data.get("session_id") or data.get("session_token")
-        # Same refusal as a missing token: persist replaces a session's whole message log, so
-        # it must not create or address a session under a caller-chosen string.
+        # Same refusal as a missing token: persist must not create or address a session under a
+        # caller-chosen string.
         session = _session_for_token(token)
         if session is None:
             return Response({"ok": False}, status=202)
@@ -1078,28 +1261,39 @@ class PersistView(APIView):
         )
         session.slots = data.get("slots") or session.slots
         session.stage = data.get("stage") or session.stage
-        if phone:
+        if phone and profile is not None:  # a junk/store/shared number never lands on a session
             session.phone = phone
             session.customer = profile
         session.save()
-        # Replace message log with the latest snapshot.
         msgs = data.get("messages") if isinstance(data.get("messages"), list) else []
         if msgs:
-            session.messages.all().delete()
+            held: dict[tuple[str, str], list[ChatMessage]] = {}
+            for row in session.messages.all():
+                held.setdefault((row.role, row.content), []).append(row)
+            fresh = []
             # ponytail: cap browser snapshots; move to paged transcript ingest if sessions exceed 500 turns.
             for m in msgs[-500:]:
                 if not isinstance(m, dict):
                     continue
-                ChatMessage.objects.create(
-                    session=session, role=_safe_message_role(m.get("role")),
-                    content=_redact_phoneish(m.get("content"))[:4000],
-                    chips=_safe_list(m.get("chips"), limit=20, item_limit=80),
-                    result_skus=[
-                        str(r.get("sku"))[:64]
-                        for r in (m.get("search_results") or [])[:50]
-                        if isinstance(r, dict) and r.get("sku")
-                    ],
-                )
+                role = _safe_message_role(m.get("role"))
+                content = _redact_phoneish(m.get("content"))[:4000]
+                chips = _safe_list(m.get("chips"), limit=20, item_limit=80)
+                skus = [
+                    str(r.get("sku"))[:64]
+                    for r in (m.get("search_results") or [])[:50]
+                    if isinstance(r, dict) and r.get("sku")
+                ]
+                match = held.get((role, content))
+                if match:
+                    row = match.pop(0)  # already stored: at most fill in what it lacked
+                    if (skus and not row.result_skus) or (chips and not row.chips):
+                        ChatMessage.objects.filter(pk=row.pk).update(
+                            result_skus=row.result_skus or skus, chips=row.chips or chips)
+                    continue
+                fresh.append(ChatMessage(session=session, role=role, content=content, chips=chips,
+                                         result_skus=skus))
+            if fresh:
+                ChatMessage.objects.bulk_create(fresh)
         return Response({"ok": True}, status=202)
 
 
@@ -1238,28 +1432,36 @@ class PhoneCartClaimView(APIView):
 
 
 class TrackView(APIView):
-    """Analytics ingest — records EVERYTHING. Accepts two shapes:
+    """Analytics ingest. Accepts two shapes:
       • batch from the site-wide tracker: {v, events:[{event, props, session_id, ...}]}
       • single event from the menu widget:  {event_type, channel, session_token, ...}
-    Phone is always HASHED. Best-effort: never errors the caller."""
+    Only names in ``analytics.EVENT_WHITELIST`` (the contract's event types, the names the live site
+    already sends, the site-wide beacons) are stored; anything else is counted in ``ignored`` and
+    dropped, so a typo or a probe cannot fill the table. Props never carry PII (``_safe_props``); a
+    phone is HASHED. Best-effort: never errors the caller."""
 
-    def _store_one(self, *, event_type, props, session_token, phone, location_slug, channel):
-        if not event_type:
-            return
-        AnalyticsEvent.objects.create(
+    MAX_EVENTS = 100  # the tracker queue caps at 100; a bigger batch is not ours
+
+    def _row(self, *, event_type, props, session_token, phone, location_slug, channel, visitor_id=""):
+        name = str(event_type or "").strip()
+        if not name or len(name) > analytics.MAX_EVENT_NAME or name not in analytics.EVENT_WHITELIST:
+            return None
+        props = props if isinstance(props, dict) else {}
+        return AnalyticsEvent(
             session_token=str(session_token or "")[:64],
+            visitor_id=str(visitor_id or props.get("visitor_id") or "")[:64],
             phone_hash=_hash_phone(phone or ""),
             location_slug=_safe_location(location_slug, default=""),
             channel=_safe_channel(channel, default="web"),
-            event_type=str(event_type)[:32],
-            props=props if isinstance(props, dict) else {},
+            event_type=name,
+            props=props,
         )
 
     def post(self, request):
         d = request.data or {}
         rows = []
         if isinstance(d.get("events"), list):
-            for e in d["events"]:
+            for e in d["events"][: self.MAX_EVENTS]:
                 if not isinstance(e, dict):
                     continue
                 props = e.get("props") if isinstance(e.get("props"), dict) else {}
@@ -1273,6 +1475,7 @@ class TrackView(APIView):
                     phone=props.get("phone"),
                     location_slug=props.get("store") or props.get("location_slug"),
                     channel=props.get("channel") or "web",
+                    visitor_id=e.get("visitor_id"),
                 ))
         else:
             rows.append(dict(
@@ -1280,12 +1483,65 @@ class TrackView(APIView):
                 session_token=d.get("session_token"), phone=d.get("phone"),
                 location_slug=d.get("location_slug"), channel=d.get("channel") or "chat",
             ))
+        built = []
         for r in rows:
             try:
-                self._store_one(**r)
+                row = self._row(**r)
             except Exception:  # noqa: BLE001 — never fail a tracking beacon
-                pass
-        return Response({"ok": True, "stored": len(rows)}, status=202)
+                row = None
+            if row is not None:
+                built.append(row)
+        try:
+            AnalyticsEvent.objects.bulk_create(built)
+        except Exception:  # noqa: BLE001 — a bad batch must not lose the others
+            import logging
+
+            logging.getLogger("budtender.track").warning("track: bulk insert failed, saving one by one", exc_info=True)
+            built = [r for r in built if self._save_one(r)]
+        return Response({"ok": True, "stored": len(built), "ignored": len(rows) - len(built)}, status=202)
+
+    @staticmethod
+    def _save_one(row) -> bool:
+        try:
+            row.save()
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+
+class AnalyticsFunnelView(APIView):
+    """POST /api/v1/analytics/funnel {days=30 (1-365), store="" , recent=50}
+
+    The per-session funnel behind the owner dashboard (see ``budtender.analytics.funnel``): sessions,
+    opens/resumes, questionnaire step drop-off, searches, picks viewed, show-more, product and
+    order-ahead clicks, find-similar, bounces (no interaction / left after picks), by store and by day,
+    top searched slots/categories, zero-result searches, plus the most recent sessions with an opaque
+    ``ref`` that opens the per-session timeline. Backend token only; no phone, no session token."""
+
+    def post(self, request):
+        data = request.data or {}
+        store = _safe_location(data.get("store"), default="") if data.get("store") else ""
+        return Response({"ok": True, **analytics.funnel(
+            days=_bounded_int(data.get("days"), default=30, lo=1, hi=365),
+            store=store, recent=_bounded_int(data.get("recent"), default=50, lo=0, hi=200))})
+
+
+class AnalyticsSessionView(APIView):
+    """POST /api/v1/analytics/session {ref | id}
+
+    "What happened where" for one session: its events, chat messages and shown picks merged in the order
+    they happened, with seconds since the first item. ``ref`` comes from the funnel's ``recent_sessions``;
+    ``id`` is the chat-history row id. Backend token only; the session token and phone are never returned."""
+
+    def post(self, request):
+        data = request.data or {}
+        chat_id = _bounded_int(data.get("id"), default=0, lo=0, hi=2**31) if data.get("id") not in (None, "") else None
+        token = analytics.resolve_token(ref=str(data.get("ref") or ""), chat_id=chat_id,
+                                        days=_bounded_int(data.get("days"), default=90, lo=1, hi=3650))
+        result = analytics.timeline(token)
+        if result is None:
+            return Response({"ok": False, "error": "session not found"}, status=404)
+        return Response({"ok": True, **result})
 
 
 class FeedbackView(APIView):
@@ -1343,7 +1599,8 @@ class CallerContextView(APIView):
     def post(self, request):
         data = request.data or {}
         e164 = _normalize_phone(data.get("phone", ""))
-        if not e164:
+        # Blank, junk, a store's own line: nobody to look up (and no row is created for it).
+        if not e164 or identity.non_identifying_phone(e164):
             return Response({"ok": True, **identity.context(None)})
         if data.get("create", True):
             profile, created = identity.ensure_profile(e164, "voice")
@@ -1368,7 +1625,9 @@ class SessionContextView(APIView):
         data = request.data or {}
         e164 = _normalize_phone(data.get("phone", ""))
         token = str(data.get("session_token") or "").strip()
-        if not settings.HHT_WEB_PHONE_IDENTITY or not e164 or not token:  # no session: nothing to link
+        # No phone, a junk/store/placeholder number, or no session to link: anonymous, always.
+        if (not settings.HHT_WEB_PHONE_IDENTITY or not e164 or not token
+                or identity.non_identifying_phone(e164)):
             return Response({"ok": True, **identity.context(None)})
         session = _session_for_token(token, channel="chat")
         # Asking again for the number this session is already linked to reveals nothing new (the chat
@@ -1380,7 +1639,8 @@ class SessionContextView(APIView):
         profile, created = identity.ensure_profile(e164, "web", data.get("name", ""))
         if session is not None:
             identity.link_session(session.session_token, profile, e164, "web_phone")
-        return Response({"ok": True, **identity.context(profile, created)})
+        # web=True: the number was typed, not verified, so a name rides along only for a row with purchases.
+        return Response({"ok": True, **identity.context(profile, created, web=True, vouched=data.get("name", ""))})
 
 
 class PersonaRefreshView(APIView):

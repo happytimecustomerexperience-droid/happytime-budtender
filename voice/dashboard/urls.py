@@ -17,6 +17,8 @@ urlpatterns = [
     path("playground/", playground, name="dash-playground"),
     path("playground/send", playground_send, name="dash-playground-send"),
     path("analytics/", views.analytics_dashboard, name="dash-analytics"),
+    path("analytics/chat/", views.chat_funnel, name="dash-chat-funnel"),
+    path("analytics/chat/session/", views.chat_timeline, name="dash-chat-timeline"),
     # agents
     path("agents/", views.agent_config, name="dash-agents"),
     path("agents/<int:pk>/save", views.agent_save, name="dash-agent-save"),

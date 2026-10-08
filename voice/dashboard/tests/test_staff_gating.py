@@ -16,6 +16,8 @@ DASH_ROUTES = [
     ("dash-playground", {}),
     ("dash-playground-send", {}),
     ("dash-analytics", {}),
+    ("dash-chat-funnel", {}),
+    ("dash-chat-timeline", {}),
     ("dash-agents", {}),
     ("dash-agent-save", {"pk": 1}),
     ("dash-agent-assist", {"pk": 1}),

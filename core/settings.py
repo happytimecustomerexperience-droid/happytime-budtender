@@ -57,6 +57,9 @@ HHT_WEBSITE_TOKEN = env("HHT_WEBSITE_TOKEN", "")
 # A phone the website visitor TYPED may identify their own chat session (budtender.identity,
 # SessionContextView). Owner decision 2026-10-05; 0 turns it off and the site is anonymous again.
 HHT_WEB_PHONE_IDENTITY = env_bool("HHT_WEB_PHONE_IDENTITY", True)
+# Extra numbers that identify nobody (comma-separated, any US format): a placeholder staff type for
+# walk-ins, a shared tablet. Every store's own line is always included (budtender.identity).
+HHT_NON_IDENTIFYING_PHONES = [p.strip() for p in env("HHT_NON_IDENTIFYING_PHONES", "").split(",") if p.strip()]
 
 # ── Bundle landing (/custom-order) ───────────────────────────────────────────
 # Shared with alpine-automations, which SIGNS the emailed links this app VERIFIES.
@@ -214,6 +217,13 @@ if REDIS_URL and "pytest" not in sys.modules:
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL}}
 else:
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+    if not DEBUG and "pytest" not in sys.modules:
+        # LocMem is per gunicorn worker and dies with it: the chat/identity rate caps, the ranking
+        # weights the owner sets and the facet cache would silently reset on every restart and differ
+        # between workers. Conversations and analytics do NOT depend on this (they are Postgres rows),
+        # but a production process without REDIS_URL is misconfigured, so say so loudly at boot.
+        sys.stderr.write("WARNING: REDIS_URL is unset with DEBUG=0: using per-process LocMem cache "
+                         "(rate limits and owner ranking weights are NOT shared or durable).\n")
 
 # ── Dutchie per-store config (copied from marketing_dashboard) ────────────────
 def _users() -> list:

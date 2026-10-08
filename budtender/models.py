@@ -185,7 +185,13 @@ class ChatSession(models.Model):
     last_active_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        indexes = [models.Index(fields=["phone", "-last_active_at"])]
+        # Conversations are kept forever (see docs/data-retention in budtender/CLAUDE.md): these
+        # indexes keep the owner dashboard and the per-store/day rollups fast as history grows.
+        indexes = [
+            models.Index(fields=["phone", "-last_active_at"]),
+            models.Index(fields=["-last_active_at"], name="chatsession_active_idx"),
+            models.Index(fields=["location_slug", "-started_at"], name="chatsession_store_idx"),
+        ]
 
 
 class ChatMessage(models.Model):
@@ -197,7 +203,8 @@ class ChatMessage(models.Model):
     ts = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["ts"]
+        ordering = ["ts", "id"]  # id breaks ties: a persisted snapshot inserts many rows in one instant
+        indexes = [models.Index(fields=["session", "ts"], name="chatmessage_session_ts_idx")]
 
 
 class Feedback(models.Model):
@@ -223,6 +230,9 @@ class AnalyticsEvent(models.Model):
     """Every chat/menu interaction. Phone is stored HASHED (never raw) so the
     analytics tables hold no PII. Visible only behind the Cloudflare-Access admin."""
     session_token = models.CharField(max_length=64, db_index=True, blank=True)
+    # The browser's anonymous visitor id (hht-visitor-id), lifted out of props so "distinct
+    # shoppers" is an indexed SQL count, not a scan of JSON. Empty for rows written before it existed.
+    visitor_id = models.CharField(max_length=64, blank=True, db_index=True)
     phone_hash = models.CharField(max_length=64, blank=True, db_index=True)
     location_slug = models.CharField(max_length=32, blank=True, db_index=True)
     channel = models.CharField(max_length=16, default="chat")  # chat|menu|questionnaire
@@ -231,7 +241,11 @@ class AnalyticsEvent(models.Model):
     ts = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
-        indexes = [models.Index(fields=["event_type", "-ts"]), models.Index(fields=["location_slug", "-ts"])]
+        indexes = [
+            models.Index(fields=["event_type", "-ts"]),
+            models.Index(fields=["location_slug", "-ts"]),
+            models.Index(fields=["session_token", "ts"], name="analyticsevent_session_ts_idx"),
+        ]
 
 
 class PhoneCartDraft(models.Model):
@@ -356,4 +370,5 @@ class SuggestedProduct(models.Model):
         indexes = [
             models.Index(fields=["customer", "-shown_at"]),
             models.Index(fields=["session", "-shown_at"]),
+            models.Index(fields=["kind", "-shown_at"], name="suggested_kind_shown_idx"),
         ]

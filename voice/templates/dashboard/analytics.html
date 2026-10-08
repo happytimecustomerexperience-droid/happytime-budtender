@@ -4,6 +4,7 @@
 <div class="row between">
   <h1>Analytics</h1>
   <div class="row">
+    <a class="btn" href="{% url 'dash-chat-funnel' %}?days={{ days }}">Chat funnel &amp; drop-off</a>
     <a class="btn {% if days == 7 %}btn-primary{% endif %}" href="?days=7">7d</a>
     <a class="btn {% if days == 30 %}btn-primary{% endif %}" href="?days=30">30d</a>
     <a class="btn {% if days == 90 %}btn-primary{% endif %}" href="?days=90">90d</a>

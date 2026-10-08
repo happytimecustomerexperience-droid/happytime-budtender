@@ -10,7 +10,7 @@ batch lab data for product cards, chat persistence. Called by the website's serv
 
 ## Scripts & commands
 Postgres host `db` only resolves inside docker, so run tests on in-memory sqlite:
-- `SQL_ENGINE=django.db.backends.sqlite3 SQL_DATABASE=:memory: DJANGO_DEBUG=1 uv run pytest budtender -q -p no:cacheprovider`
+- `SQL_ENGINE=django.db.backends.sqlite3 SQL_DATABASE=:memory: DEBUG=1 uv run pytest budtender -q -p no:cacheprovider`
 - `... uv run python manage.py makemigrations --check --dry-run`
 - Weekly merge by hand: `... python manage.py shell -c "from budtender import identity; print(identity.merge_duplicates())"`
 
@@ -27,6 +27,20 @@ Postgres host `db` only resolves inside docker, so run tests on in-memory sqlite
   personalises from that link. A phone in any other website request body is still ignored. The view is
   capped per session and site-wide (number-enumeration guard). `caller-context`/`profile-upsert`
   are backend-token only (`test_website_token.py` pins both lists).
+- **Nobody is named unless one real person's number was given.** `identity.profile_for_phone`/`ensure_profile`
+  return None for a blank/short/junk number, a store's own line, `HHT_NON_IDENTIFYING_PHONES`, and a "shared"
+  row (>= `SHARED_DUTCHIE_IDS` Dutchie customer ids folded into one phone). On the website a typed number is
+  unverified, so `context(web=True)` returns a first name only for a row with purchases or a name the visitor
+  typed in that same request. `manage.py diagnose_greeting --name X` lists the offending rows (read-only).
+  Pinned by `test_anonymous_never_named.py`.
+- **Conversations are kept forever.** `ChatSession`/`ChatMessage`/`SuggestedProduct`/`AnalyticsEvent`/`Feedback`
+  are Postgres rows (named volume `pgdata`, nightly `db-backup` dump). `PersistView` is append-only; no job
+  deletes them; `reset_analytics --yes` also needs `HHT_ALLOW_ANALYTICS_RESET=1`; `purge_pii` never touches
+  them. Only `prune_site_noise` deletes (web-vitals/scroll beacons older than 90 days). Redis holds only
+  disposable state (caps, caches, broker, the ranking-weight override) and runs with AOF.
+- `TrackView` stores only `analytics.EVENT_WHITELIST` names (contract events + names the site sends today);
+  add a new event name there. `analytics/funnel` and `analytics/session` (backend token only) feed the
+  voice dashboard's "Chat funnel" pages.
 - No cost/margin in any response (`test_no_leak.py`).
 - Request paths read the DB only (labs, product details); Dutchie is called by Celery tasks, never in
   a request.

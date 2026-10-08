@@ -73,6 +73,16 @@ def similarity(a: dict, b: dict) -> dict:
         if fx >= 0.33:
             reasons.append("overlapping effects")
 
+    # Lab terpene profile (the strongest few canonical terpenes). Only the website's similar search
+    # passes these; a caller without them (the POS) scores exactly as before.
+    tp = _jaccard(a.get("terpenes") or [], b.get("terpenes") or [])
+    if tp:
+        score += 0.08 * tp
+        if tp >= 0.5:
+            reasons.append("similar terpene profile")
+    if a.get("master") and a.get("master") == b.get("master"):
+        score += 0.05
+
     fl = _jaccard(a.get("flavors") or [], b.get("flavors") or [])
     if fl:
         score += 0.05 * fl
@@ -121,3 +131,78 @@ def similarity(a: dict, b: dict) -> dict:
 
     score = min(1.0, round(score, 4))
     return {"score": score, "reasons": list(dict.fromkeys(reasons))[:4]}
+
+
+# ── Website "find similar" (search v2) ───────────────────────────────────────
+# The reasons similarity() writes that a customer may read. Category/bucket/brand-family reasons are
+# left out: the card already shows the category, and the bucket is server-side merchandising.
+_CUSTOMER_REASONS = ("same strain", "same terpene", "similar terpene profile", "overlapping effects",
+                     "overlapping flavors")
+
+
+def features(p, lab=None, info=None) -> dict:
+    """similarity() input for a Product: catalog facts + the stored lab's terpenes and THC. No bucket,
+    margin or cost (similarity's bucket term stays off for customer-facing use)."""
+    from . import lab_enrich, product_attrs
+    from .ranking import _effective_grams, master_of, product_subtype
+
+    terps = sorted(product_attrs.lab_terpenes(lab).items(), key=lambda kv: -kv[1])
+    return {
+        "category": p.category or "",
+        "subcategory": product_subtype(p.name, p.category),
+        "strain": product_attrs.norm_text(p.strain),
+        "strain_type": (p.strain_type or "").lower(),
+        "dominant_terpene": lab_enrich.dominant_terpene(lab) or (p.dominant_terpene or "").lower(),
+        "terpenes": [t for t, _ in terps[:3]],
+        "effects": list(p.effects or []),
+        "flavors": list(p.flavors or []),
+        "price": float(p.price or 0),
+        "price_z": float(p.price_z or 0),
+        "thc": lab_enrich.effective_thc(p.thc_percent, lab) or 0,
+        "unit_weight": _effective_grams(p),
+        "potency_mg": p.potency_mg,
+        "brand": p.brand or "",
+        "master": master_of(p, info),
+    }
+
+
+def _why(reasons: list[str]) -> str:
+    keep = [r for r in reasons if r.startswith(_CUSTOMER_REASONS)]
+    return ("Similar: " + ", ".join(keep[:3]) + ".") if keep else "A similar pick."
+
+
+def similar_products(location: str, anchor, *, slots: dict | None = None, labs=None,
+                     limit: int = 20) -> list[tuple]:
+    """[(Product, why)] most similar to `anchor`, in stock only (ranking.eligible), in the anchor's
+    catalog category, never the anchor itself (nor another listing with its exact name). Same master
+    category first (a disposable anchor shows disposables before carts); within it up to two same-strain
+    picks lead, then similarity score; the order is deterministic, so paging by offset is stable."""
+    from . import lab_enrich
+    from .ranking import eligible
+
+    labs = lab_enrich.Memo() if labs is None else labs
+    details = lab_enrich.Memo()
+    s = dict(slots or {})
+    s["category"] = anchor.category or s.get("category")
+    s.pop("subcategory", None)
+    cands = eligible(location, s, exclude_skus={anchor.sku}, labs=labs, details=details)
+    name = (anchor.name or "").strip().lower()
+    cands = [p for p in cands if (p.name or "").strip().lower() != name]
+    if not cands:
+        return []
+    lab_enrich.labs_for([anchor.batch_id] + [p.batch_id for p in cands], memo=labs)
+    lab_enrich.details_for([anchor.product_id] + [p.product_id for p in cands], memo=details)
+    fa = features(anchor, labs.get(anchor.batch_id) or None, details.get(anchor.product_id) or None)
+    scored = []
+    for p in cands:
+        fb = features(p, labs.get(p.batch_id) or None, details.get(p.product_id) or None)
+        res = similarity(fa, fb)
+        same_master = bool(fa["master"]) and fa["master"] == fb["master"]
+        same_strain = bool(fa["strain"]) and fa["strain"] == fb["strain"]
+        scored.append((same_master, same_strain, res["score"], p, res["reasons"]))
+    scored.sort(key=lambda t: (not t[0], -t[2], t[3].id))
+    # Rule #1 (owner): the first two are same-strain matches whenever two exist (same master first).
+    pins = [t for t in scored if t[1]][:2]
+    pin_ids = {t[3].id for t in pins}
+    ordered = pins + [t for t in scored if t[3].id not in pin_ids]
+    return [(t[3], _why(t[4])) for t in ordered[:limit]]

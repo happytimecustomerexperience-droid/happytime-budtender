@@ -5,9 +5,9 @@ nightly classifier never overwrites a human decision.
 """
 from django.contrib import admin
 
-from .models import (AdminAudit, AnalyticsEvent, BatchLab, CustomerProfile, Feedback,
-                     ManualPairing, PhoneCartDraft, Product, ProductDetail, Setting,
-                     SuggestedProduct)
+from .models import (AdminAudit, AnalyticsEvent, BatchLab, ChatMessage, ChatSession,
+                     CustomerProfile, Feedback, ManualPairing, PhoneCartDraft, Product,
+                     ProductDetail, Setting, SuggestedProduct)
 
 
 @admin.register(Product)
@@ -45,10 +45,48 @@ class CustomerProfileAdmin(admin.ModelAdmin):
 class AnalyticsEventAdmin(admin.ModelAdmin):
     list_display = ("ts", "event_type", "channel", "location_slug", "session_token")
     list_filter = ("event_type", "channel", "location_slug")
+    search_fields = ("session_token", "visitor_id")
     date_hierarchy = "ts"
-    readonly_fields = ("session_token", "phone_hash", "location_slug", "channel", "event_type", "props", "ts")
+    readonly_fields = ("session_token", "visitor_id", "phone_hash", "location_slug", "channel", "event_type",
+                       "props", "ts")
 
     def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # analytics history is kept permanently
+
+
+class ChatMessageInline(admin.TabularInline):
+    model = ChatMessage
+    extra = 0
+    can_delete = False
+    fields = ("ts", "role", "content", "chips", "result_skus")
+    readonly_fields = fields
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ChatSession)
+class ChatSessionAdmin(admin.ModelAdmin):
+    """Every website/voice chat ever held, read-only: the transcript is the record, so staff may look
+    (with the events behind it on the Analytics events page, searchable by the same session token) but
+    never edit or delete it."""
+    list_display = ("started_at", "location_slug", "channel", "stage", "primary_intent", "identity_via",
+                    "last_active_at")
+    list_filter = ("location_slug", "channel", "primary_intent", "stage")
+    search_fields = ("session_token",)
+    date_hierarchy = "started_at"
+    inlines = [ChatMessageInline]
+    exclude = ("phone",)  # the raw number stays out of the admin; identity is "identity_via" + customer
+    readonly_fields = ("session_token", "location_slug", "customer", "slots", "stage", "primary_intent",
+                       "channel", "identity_via", "is_active", "started_at", "last_active_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
         return False
 
 

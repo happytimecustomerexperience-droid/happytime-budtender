@@ -10,10 +10,16 @@ only real, post-reset usage. KEEPS:
 
 Dry run by default (prints counts, changes nothing). Pass --yes to actually wipe.
 
+CONVERSATIONS ARE KEPT FOREVER (owner decision: every conversation and suggestion is stored durably).
+So --yes alone is refused; the wipe also needs HHT_ALLOW_ANALYTICS_RESET=1 in the environment, which
+exists only for clearing a staging/test database.
+
     python manage.py reset_analytics          # dry run
     python manage.py reset_analytics --yes     # delete
 """
-from django.core.management.base import BaseCommand
+import os
+
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from budtender.models import (AnalyticsEvent, ChatMessage, ChatSession,
@@ -57,6 +63,11 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(
                 "\nDRY RUN — nothing deleted. Re-run with --yes to wipe."))
             return
+
+        if os.environ.get("HHT_ALLOW_ANALYTICS_RESET") != "1":
+            raise CommandError(
+                "Refusing to delete stored conversations/analytics: they are kept permanently. "
+                "Set HHT_ALLOW_ANALYTICS_RESET=1 to wipe a staging or test database.")
 
         with transaction.atomic():
             for name, model in WIPE:

@@ -16,6 +16,11 @@ urlpatterns = [
     path("products/subtypes", views.SubtypesView.as_view()),
     path("products/sizes", views.SizesView.as_view()),
     path("products/doh-options", views.DohOptionsView.as_view()),
+    # search v2 (docs/contracts/search-v2.md)
+    path("products/categories", views.CategoriesView.as_view()),
+    path("products/facets", views.FacetsView.as_view()),
+    path("products/specify-more", views.SpecifyMoreView.as_view()),
+    path("products/similar", views.SimilarView.as_view()),
     path("pairing/for-sku", views.PairingView.as_view()),
     path("chat/resume-by-phone", views.ResumeByPhoneView.as_view()),
     path("chat/persist/", views.PersistView.as_view()),
@@ -29,6 +34,8 @@ urlpatterns = [
     path("customer/detail", views.CustomerDetailView.as_view()),   # P7 full profile (dashboard)
     path("track/", views.TrackView.as_view()),
     path("analytics/summary", views.AnalyticsSummaryView.as_view()),
+    path("analytics/funnel", views.AnalyticsFunnelView.as_view()),     # owner dashboard: per-session funnel
+    path("analytics/session", views.AnalyticsSessionView.as_view()),   # owner dashboard: one session's timeline
     path("admin/ranking-weights", views.AdminRankingWeightsView.as_view()),
     path("feedback/", views.FeedbackView.as_view()),
     path("persona/refresh", views.PersonaRefreshView.as_view()),

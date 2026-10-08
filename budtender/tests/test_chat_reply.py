@@ -424,7 +424,7 @@ class ChatReplyTests(TestCase):
         track = self.client.post(
             "/api/v1/track/",
             data=json.dumps({
-                "event_type": "click",
+                "event_type": "chip_click",
                 "location_slug": "attacker-store",
                 "channel": "voice-admin",
                 "props": {
@@ -449,7 +449,7 @@ class ChatReplyTests(TestCase):
 
         self.assertEqual(track.status_code, 202)
         self.assertEqual(feedback.status_code, 201)
-        click = AnalyticsEvent.objects.get(event_type="click")
+        click = AnalyticsEvent.objects.get(event_type="chip_click")
         self.assertEqual(click.location_slug, "")
         self.assertEqual(click.channel, "web")
         self.assertNotIn("phone", click.props)
@@ -463,7 +463,7 @@ class ChatReplyTests(TestCase):
         r = self.client.post(
             "/api/v1/track/",
             data=json.dumps({
-                "event_type": "huge",
+                "event_type": "chip_click",
                 "props": {"blob": "x" * 13000},
             }),
             content_type="application/json",
@@ -471,7 +471,7 @@ class ChatReplyTests(TestCase):
         )
 
         self.assertEqual(r.status_code, 202)
-        self.assertEqual(AnalyticsEvent.objects.get(event_type="huge").props, {"_truncated": True})
+        self.assertEqual(AnalyticsEvent.objects.get(event_type="chip_click").props, {"_truncated": True})
 
     def test_analytics_bad_days_falls_back(self):
         r = self.client.post(

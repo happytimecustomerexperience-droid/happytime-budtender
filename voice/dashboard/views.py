@@ -165,6 +165,62 @@ def _chatbot_analytics(days: int) -> dict:
         return {"ok": False, "reason": "budtender analytics fetch failed"}
 
 
+def _budtender_post(path: str, payload: dict) -> dict:
+    """POST to budtender with the server-side service token; ``{"ok": False, "reason": …}`` on any trouble."""
+    import logging
+
+    import requests
+    from django.conf import settings
+
+    logger = logging.getLogger(__name__)
+    base = (getattr(settings, "HHT_BUDTENDER_BASE_URL", "") or "").rstrip("/")
+    token = getattr(settings, "HHT_BACKEND_TOKEN", "") or ""
+    if not base or not token:
+        return {"ok": False, "reason": "budtender analytics not configured"}
+    try:
+        resp = requests.post(
+            f"{base}{path}",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=(2.0, int(getattr(settings, "HHT_BUDTENDER_TIMEOUT", 8) or 8) * 3),
+        )
+        if resp.status_code == 404:
+            return {"ok": False, "reason": "not found"}
+        if resp.status_code >= 300:
+            return {"ok": False, "reason": f"budtender HTTP {resp.status_code}"}
+        data = resp.json() if resp.content else {}
+        return data if isinstance(data, dict) else {"ok": False, "reason": "unexpected budtender answer"}
+    except (requests.Timeout, requests.ConnectionError) as exc:
+        return {"ok": False, "reason": f"budtender unreachable ({type(exc).__name__})"}
+    except Exception:
+        logger.warning("budtender %s failed", path, exc_info=True)
+        return {"ok": False, "reason": "budtender analytics fetch failed"}
+
+
+@staff_member_required
+def chat_funnel(request):
+    """Where chat visitors go and where they drop off: funnel, questionnaire steps, bounces, searches,
+    by store and by day (budtender ``/analytics/funnel``). Every conversation is kept, so any window works."""
+    days = _bounded_int(request.GET.get("days"), default=30, lo=1, hi=365)
+    store = str(request.GET.get("store") or "").strip()
+    store = store if store in ("yakima", "mount-vernon", "pullman") else ""
+    data = _budtender_post("/api/v1/analytics/funnel", {"days": days, "store": store, "recent": 50})
+    return render(request, "dashboard/chat_funnel.html", {"f": data, "days": days, "store": store})
+
+
+@staff_member_required
+def chat_timeline(request):
+    """One session replayed: events, messages and shown picks in the order they happened."""
+    ref = str(request.GET.get("ref") or "").strip()[:16]
+    payload = {"ref": ref}
+    chat_id = str(request.GET.get("id") or "").strip()[:12]
+    if chat_id.isdigit():
+        payload = {"id": int(chat_id)}
+    data = _budtender_post("/api/v1/analytics/session", payload) if (ref or chat_id) else {
+        "ok": False, "reason": "missing session reference"}
+    return render(request, "dashboard/chat_timeline.html", {"t": data})
+
+
 def _chatbot_history(limit: int = 25) -> dict:
     return _chatbot_history_for_payload({"limit": limit, "message_limit": 200})
 
