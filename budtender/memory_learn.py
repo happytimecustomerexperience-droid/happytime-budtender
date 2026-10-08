@@ -339,25 +339,15 @@ def llm_enabled() -> bool:
 
 
 def _gemini_json(prompt: str) -> str:
-    """One strict-JSON Gemini call. Raises on any problem (the caller swallows it)."""
-    from google import genai
-    from google.genai import types
+    """One strict-JSON, thinking-off Gemini call (budtender.llm). Raises on any problem (the caller
+    swallows it)."""
+    from . import llm
 
-    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
-    if not key:
-        raise RuntimeError("no Gemini key")
-    client = genai.Client(api_key=key)
-    resp = client.models.generate_content(
-        model=os.environ.get("HHT_MEMORY_LLM_MODEL", "gemini-2.5-flash"),
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=_LLM_SYSTEM, temperature=0.1, max_output_tokens=200,
-            response_mime_type="application/json",
-            response_schema={"type": "OBJECT", "properties": {"notes": {"type": "ARRAY", "items": {"type": "STRING"}}},
-                             "required": ["notes"]},
-        ),
+    return llm.generate_json(
+        system=_LLM_SYSTEM, prompt=prompt, max_output_tokens=200,
+        schema={"type": "OBJECT", "properties": {"notes": {"type": "ARRAY", "items": {"type": "STRING"}}},
+                "required": ["notes"]},
     )
-    return resp.text or ""
 
 
 def _grounded(note: str, source: str) -> bool:

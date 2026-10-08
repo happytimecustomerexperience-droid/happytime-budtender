@@ -1478,6 +1478,169 @@ def vendor_callback_update(request, pk: int):
     return redirect("dash-vendor-queue")
 
 
+# ── Vendor allowlist (voice/vendor_allowlist.py) ───────────────────────────────
+def _allowlist_page(request, *, form=None, bulk_text="", bulk_results=None, test=None, status=200):
+    from voice import vendor_allowlist as va
+
+    from .forms import VendorAllowlistEntryForm
+    from .models import VendorAllowlistEntry
+
+    owner = va.owner_number()
+    return render(
+        request,
+        "dashboard/vendor_allowlist.html",
+        {
+            "entries": VendorAllowlistEntry.objects.all(),
+            "form": form or VendorAllowlistEntryForm(),
+            "bulk_text": bulk_text,
+            "bulk_results": bulk_results,
+            "test": test,
+            "routing": va.routing_status(),
+            # superusers edit the full number (it is a Credential); staff see the last 4 digits only
+            "owner_full": owner if request.user.is_superuser else "",
+            "owner_last4": owner[-4:] if owner else "",
+        },
+        status=status,
+    )
+
+
+@staff_member_required
+def vendor_allowlist(request):
+    return _allowlist_page(request)
+
+
+@staff_member_required
+@require_POST
+def vendor_allowlist_add(request):
+    from django.contrib import messages
+
+    from .forms import VendorAllowlistEntryForm
+
+    form = VendorAllowlistEntryForm(request.POST)
+    if not form.is_valid():
+        return _allowlist_page(request, form=form)
+    entry = form.save()
+    messages.success(request, f"Added {entry.name}.")
+    return redirect("dash-vendor-allowlist")
+
+
+@staff_member_required
+@require_POST
+def vendor_allowlist_bulk(request):
+    """One ``Name, number`` per line. Good lines are added; every bad line is reported with its
+    line number and nothing on it is saved."""
+    from django.contrib import messages
+    from django.db import IntegrityError, transaction
+
+    from .forms import parse_bulk_lines
+    from .models import VendorAllowlistEntry
+
+    text = request.POST.get("lines", "")[:20000]
+    results = parse_bulk_lines(text)
+    added = 0
+    for i, (n, name, phone, error) in enumerate(results):
+        if error:
+            continue
+        try:
+            with transaction.atomic():
+                VendorAllowlistEntry.objects.create(name=name, phone=phone)
+            added += 1
+        except IntegrityError:  # added elsewhere between the parse and this write
+            results[i] = (n, name, phone, "Already on the list")
+    bad = [r for r in results if r[3]]
+    if not bad:
+        messages.success(request, f"Added {added} vendor{'s' if added != 1 else ''}.")
+        return redirect("dash-vendor-allowlist")
+    return _allowlist_page(request, bulk_text=text, bulk_results={"added": added, "errors": bad})
+
+
+@staff_member_required
+def vendor_allowlist_edit(request, pk: int):
+    from django.contrib import messages
+
+    from .forms import VendorAllowlistEntryForm
+    from .models import VendorAllowlistEntry
+
+    entry = get_object_or_404(VendorAllowlistEntry, pk=pk)
+    form = VendorAllowlistEntryForm(request.POST or None, instance=entry)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, f"Saved {entry.name}.")
+        return redirect("dash-vendor-allowlist")
+    return render(request, "dashboard/vendor_allowlist_edit.html", {"form": form, "entry": entry})
+
+
+@staff_member_required
+@require_POST
+def vendor_allowlist_toggle(request, pk: int):
+    from django.contrib import messages
+
+    from .models import VendorAllowlistEntry
+
+    entry = get_object_or_404(VendorAllowlistEntry, pk=pk)
+    entry.active = not entry.active
+    entry.save(update_fields=["active"])
+    messages.success(request, f"{entry.name} {'reactivated' if entry.active else 'deactivated'}.")
+    return redirect("dash-vendor-allowlist")
+
+
+@staff_member_required
+@require_POST
+def vendor_allowlist_delete(request, pk: int):
+    from django.contrib import messages
+
+    from .models import VendorAllowlistEntry
+
+    entry = get_object_or_404(VendorAllowlistEntry, pk=pk)
+    name = entry.name
+    entry.delete()
+    messages.success(request, f"Deleted {name}.")
+    return redirect("dash-vendor-allowlist")
+
+
+@superuser_required
+@require_POST
+def vendor_allowlist_owner(request):
+    """Set or clear the owner's destination phone (the ``HHT_OWNER_PHONE`` Credential). Owner only,
+    like the Credentials page: it decides where calls are sent. The number is never logged."""
+    from django.contrib import messages
+
+    from voice.vendor_allowlist import normalize_us_e164, owner_number
+
+    from . import credentials as cred
+
+    raw = (request.POST.get("owner_phone") or "").strip()
+    if request.POST.get("action") == "clear":
+        cred.clear_credential("HHT_OWNER_PHONE")
+        fallback = owner_number()  # the server's env default, if it has one
+        messages.success(
+            request,
+            f"Saved owner phone cleared — using the server default (ending {fallback[-4:]})."
+            if fallback
+            else "Owner phone cleared — every vendor now talks to the AI.",
+        )
+        return redirect("dash-vendor-allowlist")
+    phone = normalize_us_e164(raw)
+    if not phone:
+        messages.error(request, "Not saved: the owner phone must be a full US number, e.g. (509) 555-1212.")
+        return redirect("dash-vendor-allowlist")
+    cred.set_credential("HHT_OWNER_PHONE", phone)
+    messages.success(request, f"Owner phone saved (ending {phone[-4:]}) — live now.")
+    return redirect("dash-vendor-allowlist")
+
+
+@staff_member_required
+@require_POST
+def vendor_allowlist_test(request):
+    """'Would this number be routed?' — the same matcher the webhook runs; nothing is placed or
+    recorded."""
+    from voice import vendor_allowlist as va
+
+    raw = (request.POST.get("number") or "")[:40]
+    decision = va.evaluate(raw)
+    return _allowlist_page(request, test={"input": raw, "decision": decision})
+
+
 # ── Publish to Vapi ────────────────────────────────────────────────────────────
 @staff_member_required
 @ensure_csrf_cookie

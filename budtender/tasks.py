@@ -547,11 +547,40 @@ def learn_from_session(session_id: int) -> dict:
         rows = list(rows.order_by("-id").values_list("id", "content")[: memory_learn.MAX_TURNS])[::-1]
         if not rows:
             return {"ok": True, "stored": "none"}
-        return memory_learn.learn(session, [c for _, c in rows], channel=session.channel,
-                                  use_llm=memory_learn.llm_enabled(), upto=rows[-1][0])
+        out = memory_learn.learn(session, [c for _, c in rows], channel=session.channel,
+                                 use_llm=memory_learn.llm_enabled(), upto=rows[-1][0])
+        _queue_summary(session, out.get("tier"))
+        return out
     except Exception:  # noqa: BLE001 - best-effort
         logger.warning("learn_from_session failed for %s", session_id, exc_info=True)
         return {"ok": False, "stored": "none"}
+
+
+def _queue_summary(session, tier: str | None, turns: list | None = None, channel: str = "") -> bool:
+    """Queue the AI conversation summary (HHT_MEMORY_SUMMARIES + a Gemini key) for a session that
+    names someone; the task itself is idempotent and re-checks the tier under a lock."""
+    from . import memory, memory_summary
+    from .fire import fire
+
+    if session is None or tier in (None, memory.ANONYMOUS) or not memory_summary.enabled():
+        return False
+    return fire(summarize_conversation, session.pk, turns, channel)
+
+
+@shared_task(ignore_result=True)
+def summarize_conversation(session_id: int, turns: list | None = None, channel: str = "") -> dict:
+    """One AI summary of what the customer said in a finished call/chat (budtender.memory_summary)."""
+    from . import memory_summary
+
+    return memory_summary.summarize_session(session_id, turns, channel)
+
+
+@shared_task(ignore_result=True)
+def consolidate_memory_summaries(profile_id: int) -> dict:
+    """Fold a customer's conversation summaries into ONE (budtender.memory_summary.consolidate)."""
+    from . import memory_summary
+
+    return memory_summary.consolidate(profile_id)
 
 
 @shared_task(ignore_result=True)

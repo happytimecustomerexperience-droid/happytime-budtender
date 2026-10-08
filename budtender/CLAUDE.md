@@ -50,6 +50,9 @@ Postgres host `db` only resolves inside docker, so run tests on in-memory sqlite
   add a new event name there. `analytics/funnel` and `analytics/session` (backend token only) feed the
   voice dashboard's "Chat funnel" pages.
 - No cost/margin in any response (`test_no_leak.py`).
+- **Every model call goes through `llm.py`, thinking OFF** (owner rule; `test_memory_summaries.py` fails on a
+  `generate_content` anywhere else). Customer memory is never read back to the customer (`memory.echoes`
+  guards `chat/message`); conversation summaries reach the website brief only with `HHT_MEMORY_WEB_SUMMARIES`.
 - Request paths read the DB only (labs, product details); Dutchie is called by Celery tasks, never in
   a request.
 

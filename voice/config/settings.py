@@ -180,6 +180,9 @@ HHT_NOTIFY_BUDTENDER = _env_bool("HHT_NOTIFY_BUDTENDER", "1") and ("pytest" not 
 HHT_TRANSFER_NUMBER_YAKIMA = os.environ.get("HHT_TRANSFER_NUMBER_YAKIMA", "")
 HHT_TRANSFER_NUMBER_MTVERNON = os.environ.get("HHT_TRANSFER_NUMBER_MTVERNON", "")
 HHT_TRANSFER_NUMBER_PULLMAN = os.environ.get("HHT_TRANSFER_NUMBER_PULLMAN", "")
+# Vendor allowlist (voice/vendor_allowlist.py): the owner's phone an allowlisted vendor is sent to
+# without the AI. US E.164. Editable on /dashboard/vendor-allowlist/ (a Credential row overrides it).
+HHT_OWNER_PHONE = os.environ.get("HHT_OWNER_PHONE", "")
 HHT_DEFAULT_STORE = os.environ.get("HHT_DEFAULT_STORE", "yakima")
 # Dynamic greeting (voice/caller.py): ON makes provision_vapi bind the inbound number to NO squad so
 # Vapi sends ``assistant-request``, and answers it with a per-call squad that greets the caller by

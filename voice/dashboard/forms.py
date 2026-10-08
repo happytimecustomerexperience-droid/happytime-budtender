@@ -14,6 +14,7 @@ import json
 from django import forms
 
 from crm.models import VendorCallback
+from dashboard.models import VendorAllowlistEntry
 from kb.models import (
     BlogDoc,
     EducationDoc,
@@ -249,3 +250,57 @@ class VendorCallbackForm(forms.ModelForm):
     class Meta:
         model = VendorCallback
         fields = ["status"]
+
+
+PHONE_HELP = "A full US number, e.g. (509) 555-1212. Saved as +15095551212 and matched exactly."
+
+
+class VendorAllowlistEntryForm(forms.ModelForm):
+    """One allowlist entry. The phone is normalised to US E.164 (``+1XXXXXXXXXX``) on clean; a
+    number that is not a full US number, or is already on the list, is refused."""
+
+    class Meta:
+        model = VendorAllowlistEntry
+        fields = ["name", "phone", "store", "note", "active"]
+        help_texts = {"phone": PHONE_HELP, "store": "A label only: which store this vendor serves."}
+
+    def clean_phone(self) -> str:
+        from voice.vendor_allowlist import normalize_us_e164
+
+        phone = normalize_us_e164(self.cleaned_data.get("phone"))
+        if not phone:
+            raise forms.ValidationError("Not a full US phone number. " + PHONE_HELP)
+        return phone
+
+
+def parse_bulk_lines(text: str) -> list[tuple[int, str, str, str]]:
+    """``Name, number`` per line → ``[(line_no, name, number, error)]`` for every non-blank line.
+    ``error`` is "" when the line is fine. The number is normalised; a duplicate of an existing
+    entry or of an earlier line is an error. Nothing is saved here."""
+    from voice.vendor_allowlist import normalize_us_e164
+
+    existing = set(VendorAllowlistEntry.objects.values_list("phone", flat=True))
+    seen: set[str] = set()
+    out = []
+    for n, line in enumerate((text or "").splitlines(), start=1):
+        if not line.strip():
+            continue
+        name, sep, number = line.rpartition(",")
+        name = " ".join(name.split())
+        if not sep or not name:
+            out.append((n, "", "", "Write it as: Name, number"))
+            continue
+        if len(name) > 120:
+            out.append((n, name[:120], "", "Name is longer than 120 characters"))
+            continue
+        phone = normalize_us_e164(number)
+        if not phone:
+            out.append((n, name, "", "Not a full US phone number"))
+        elif phone in existing:
+            out.append((n, name, phone, "Already on the list"))
+        elif phone in seen:
+            out.append((n, name, phone, "Same number as an earlier line"))
+        else:
+            seen.add(phone)
+            out.append((n, name, phone, ""))
+    return out

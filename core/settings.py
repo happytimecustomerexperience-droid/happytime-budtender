@@ -60,6 +60,17 @@ HHT_WEB_PHONE_IDENTITY = env_bool("HHT_WEB_PHONE_IDENTITY", True)
 # Extra numbers that identify nobody (comma-separated, any US format): a placeholder staff type for
 # walk-ins, a shared tablet. Every store's own line is always included (budtender.identity).
 HHT_NON_IDENTIFYING_PHONES = [p.strip() for p in env("HHT_NON_IDENTIFYING_PHONES", "").split(",") if p.strip()]
+# Customer memory: AI conversation summaries (budtender.memory_summary, docs/contracts/customer-memory-v1.md).
+# On by default; runs only when a Gemini key is set (GEMINI_API_KEY/GOOGLE_API_KEY), thinking always off.
+HHT_MEMORY_SUMMARIES = env_bool("HHT_MEMORY_SUMMARIES", True)
+# Fold the per-conversation summaries into ONE consolidated summary once this many are stored.
+try:
+    HHT_MEMORY_CONSOLIDATE_AT = max(2, int(env("HHT_MEMORY_CONSOLIDATE_AT", "10")))
+except ValueError:
+    HHT_MEMORY_CONSOLIDATE_AT = 10
+# The UNVERIFIED website tier (a typed phone, not proof of identity) reads the summaries only when
+# this is on. Default off: a stranger typing someone's number must not steer on their conversations.
+HHT_MEMORY_WEB_SUMMARIES = env_bool("HHT_MEMORY_WEB_SUMMARIES", False)
 
 # ── Bundle landing (/custom-order) ───────────────────────────────────────────
 # Shared with alpine-automations, which SIGNS the emailed links this app VERIFIES.

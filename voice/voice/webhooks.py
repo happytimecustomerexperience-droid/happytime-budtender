@@ -155,6 +155,14 @@ def handle_assistant_request(message: dict) -> JsonResponse:
 
     store = _resolve_store(message)
 
+    # An allowlisted vendor skips the AI and rings the owner (voice/vendor_allowlist.py). ``None``
+    # (no match, switch off, no owner number, junk caller-ID, any error) = answer exactly as before.
+    from voice import vendor_allowlist
+
+    direct = vendor_allowlist.direct_destination(message, store)
+    if direct is not None:
+        return JsonResponse(direct)
+
     assistant_id = ""
     prompt = AgentPrompt.objects.filter(role="faq", is_active=True).first()
     if prompt and prompt.vapi_assistant_id:
@@ -387,6 +395,9 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
 
     # P2 deterministic classification (code owns the label; the model only fills slots).
     outcome, reason = outcomes.classify_outcome(message, transcript)
+    prior = VoiceCall.objects.filter(call_id=call_id).values_list("outcome", "reason").first()
+    if prior and prior[0] == "vendor_direct":  # the allowlist sent it to the owner: keep that label
+        outcome, reason = prior
     human_count = outcomes.human_requested_count(message, transcript)
     transferred, disposition = outcomes.transfer_disposition(message, reason)
     # Which store's number was ACTUALLY dialled (not the caller's store): "" when the call had no

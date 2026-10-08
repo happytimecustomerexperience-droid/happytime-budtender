@@ -97,6 +97,15 @@ CAPABILITIES: tuple[Capability, ...] = (
         (PHONE,),
     ),
     Capability(
+        "call.vendor_allowlist", "Staff & vendors", "Send allowlisted vendors straight to the owner",
+        "A call from a number on the Vendor allowlist page skips the AI and rings the owner's phone "
+        "(set on that page) directly. Only exact numbers on the list match. Needs the dynamic "
+        "greeting turned on for the phone line (README: Dynamic greeting rollout).",
+        "Every vendor talks to the AI vendor agent: it asks them to hold, tries the store line, and "
+        "takes a callback if nobody answers.",
+        (PHONE,),
+    ),
+    Capability(
         "call.sms_on_transfer", "Staff & vendors", "Tell staff who's calling on a transfer",
         "When a call is transferred, sends that store's staff one short note: the caller's first "
         "name only if they said it, the last 4 digits of their number, what they want, and whether "

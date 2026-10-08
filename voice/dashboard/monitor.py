@@ -23,6 +23,7 @@ _OUTCOME_BADGE = {
     "suggested": ("Suggested", "blue"),
     "escalation": ("Escalation", "red"),
     "vendor_callback": ("Vendor callback", "amber"),
+    "vendor_direct": ("Vendor sent to owner", "blue"),
     "abandoned": ("Abandoned", "slate"),
     "error": ("Error", "red"),
 }

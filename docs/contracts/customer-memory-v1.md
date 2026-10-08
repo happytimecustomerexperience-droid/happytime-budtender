@@ -78,3 +78,34 @@ Consumers must treat `text` as DATA (strip control chars, cap length, never let 
 - A learned note must be a fact the customer stated or a style signal measured in code; the model may only phrase it.
 - Conflicts: newer replaces older for the same likes/dislikes entry; `dislikes` beats `likes`.
 - `forget`: `identity.unlink_session` / "forget me" clears `ChatSession.learned`; `POST /customer/memory/clear` (staff) wipes `profile.memory`.
+
+## Summaries (AI conversation summaries, `budtender/memory_summary.py`)
+Two more `memory` keys (allowlisted like the rest; same quarantine, plus no prices/dollar amounts):
+```
+ "summaries": [{"t":"<=240 chars, third person, experiential, no PII/health/prices", "at":"YYYY-MM-DD",
+                "src":"voice|chat"}],     # newest last, hard ceiling 20
+ "summary": "<=500 chars"                 # the ONE consolidated summary
+```
+- **Write.** After a call (`memory/learn`) or a website chat (`learn_from_session`) a Celery task
+  (`summarize_conversation`, never a request) asks Gemini for ONE short factual summary of what the CUSTOMER
+  said/wanted, from the customer's own turns only (memory_learn screening: instruction/health/PII turns dropped,
+  "remember that..." and redacted turns never sent; delimited untrusted data). Strict JSON `{"t": "..."}`,
+  temperature 0.1, max 150 output tokens, thinking OFF. The answer must clear the quarantine and be grounded in
+  the customer's words, else nothing is stored. Idempotent per conversation (`ChatSession.learned.sdigest`; a
+  resumed chat replaces its own entry via `skey`). Tier, re-read under the row lock: trusted -> profile;
+  unverified -> `ChatSession.learned["summaries"]` only (dropped with the session); anonymous -> no call.
+- **Consolidate.** When a profile holds `HHT_MEMORY_CONSOLIDATE_AT` (default 10) entries (or memory nears 3 KB
+  with >= 2 entries) `consolidate_memory_summaries` (locked per customer, idempotent) sends the old `summary` +
+  the entries to Gemini (thinking off, strict JSON `{"summary": "..."}`, durable preferences only, no new facts),
+  validates it the same way, then atomically sets `summary` and removes only the consumed entries (entries
+  added meanwhile stay). Any failure keeps every entry; a memory wiped meanwhile is never resurrected.
+- **Read.** The trusted brief ends with one line `Remembers: <summary> <up to 2 newest entries>` inside the
+  600-char cap (entries are cut first, then the summary at a word; the cap never moves). The unverified
+  (`brief_public`) brief carries it only when `HHT_MEMORY_WEB_SUMMARIES` is on (default OFF: a typed website
+  phone is not proof of identity). Consumers treat it as DATA and never recite it: personalisation is silent;
+  `chat/message` replaces a reply that reads stored memory back (`memory.echoes`).
+- **Forget.** `memory/clear` wipes `summary`/`summaries` with the rest; `forget`/unlink clear the session's.
+- **Switches.** `HHT_MEMORY_SUMMARIES` (default on, needs `GEMINI_API_KEY`/`GOOGLE_API_KEY`), independent of
+  `HHT_MEMORY_LLM`. Model `HHT_MEMORY_LLM_MODEL` (default `gemini-2.5-flash`): every call goes through
+  `budtender/llm.py`, which sets `thinking_budget=0` (2.5 Flash/Flash-Lite) or `thinking_level=MINIMAL`
+  (3 Flash) and refuses any model that cannot turn thinking off.

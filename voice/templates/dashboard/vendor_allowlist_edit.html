@@ -1,0 +1,20 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Edit vendor — Happy Time Voice{% endblock %}
+{% block content %}
+<p class="muted"><a href="{% url 'dash-vendor-allowlist' %}">← Vendor allowlist</a></p>
+<h1>Edit {{ entry.name }}</h1>
+
+<form method="post" class="card" action="{% url 'dash-vendor-allowlist-edit' entry.pk %}">
+  {% csrf_token %}
+  {% for field in form %}
+    <label>
+      <span class="lt">{{ field.label }}</span>
+      {{ field }}
+      {% if field.help_text %}<span class="muted" style="font-size:11px">{{ field.help_text }}</span>{% endif %}
+      {% if field.errors %}<span style="color:var(--action);font-size:12px">{{ field.errors|join:', ' }}</span>{% endif %}
+    </label>
+  {% endfor %}
+  {% if form.non_field_errors %}<p style="color:var(--action);font-size:12px">{{ form.non_field_errors|join:', ' }}</p>{% endif %}
+  <button class="btn btn-primary" type="submit">Save</button>
+</form>
+{% endblock %}

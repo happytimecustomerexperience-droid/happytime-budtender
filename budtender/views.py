@@ -531,6 +531,21 @@ def _chat_throttled(request, token: str) -> bool:
     return False
 
 
+_NEUTRAL_REPLY = "Happy to help — tell me what you're in the mood for and I'll pull a few options."
+
+
+def _recites_memory(reply: str, session: ChatSession) -> bool:
+    """Owner rule: personalisation is silent; a reply never reads the customer's stored memory (notes,
+    conversation summaries) back to them. Checks the linked profile's memory and this session's own."""
+    try:
+        mems = [session.learned]
+        if session.customer_id and (profile := identity.follow(session.customer)) is not None:
+            mems.append(profile.memory)
+        return any(memory.echoes(reply, m) for m in mems if m)
+    except Exception:  # noqa: BLE001 - the guard must never break a reply
+        return False
+
+
 class ChatReplyView(APIView):
     """Persist one website chat turn and answer with the shared voice brain.
 
@@ -584,6 +599,8 @@ class ChatReplyView(APIView):
         history = list(session.messages.order_by("ts", "id"))
         reply, source, brain_intent = generate_chat_reply_with_source(history, store=session.location_slug)
         reply = _safe_chat_text(reply)
+        if _recites_memory(reply, session):
+            reply, source = _NEUTRAL_REPLY, "guard"
 
         # Classify the turn — trust the brain's own classification when it answered,
         # so the offline regex in intents.py is only ever the fallback path.
@@ -1799,11 +1816,12 @@ class MemoryLearnView(APIView):
     call or chat -> customer memory, per trust tier (budtender.memory_learn). Body
     ``{call_id | session_token, transcript_user_turns: [str<=500 x<=40], channel}``. A call is found
     by the ``vc-<call id>`` session caller-context linked. Turns are untrusted data. DB only (the
-    optional model phrasing, HHT_MEMORY_LLM, is queued to Celery); never a 5xx."""
+    optional model phrasing, HHT_MEMORY_LLM, and the AI conversation summary, HHT_MEMORY_SUMMARIES,
+    are queued to Celery); never a 5xx."""
 
     def post(self, request):
         from . import memory_learn
-        from .tasks import learn_llm_notes
+        from .tasks import _queue_summary, learn_llm_notes
 
         data = request.data if isinstance(request.data, dict) else {}
         turns = data.get("transcript_user_turns")
@@ -1817,6 +1835,9 @@ class MemoryLearnView(APIView):
         out = memory_learn.learn(session, turns, channel=channel, use_llm=False)
         if session is not None and out.get("stored") != "none" and memory_learn.llm_enabled():
             fire(learn_llm_notes, session.pk, turns, channel)
+        # The AI conversation summary (HHT_MEMORY_SUMMARIES) is a Celery task, never this request;
+        # the response carries counts only, never memory text (the customer is never read their profile).
+        _queue_summary(session, out.get("tier"), turns, channel)
         return Response({"ok": bool(out.get("ok")), "tier": out.get("tier", "anonymous"),
                          "stored": out.get("stored", "none"), "counts": out.get("counts", {})})
 

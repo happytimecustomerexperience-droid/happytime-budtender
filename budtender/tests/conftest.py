@@ -24,3 +24,6 @@ def _isolate_cache():
 @pytest.fixture(autouse=True)
 def _no_real_celery(monkeypatch):
     monkeypatch.setattr("budtender.tasks.warm_ids", mock.Mock(name="warm_ids"))
+    # The memory-summary tasks call Gemini; a deploy .env with a key must not queue real ones here.
+    monkeypatch.setattr("budtender.tasks.summarize_conversation", mock.Mock(name="summarize_conversation"))
+    monkeypatch.setattr("budtender.tasks.consolidate_memory_summaries", mock.Mock(name="consolidate_memory_summaries"))

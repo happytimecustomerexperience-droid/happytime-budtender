@@ -1,0 +1,110 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Vendor allowlist — Happy Time Voice{% endblock %}
+{% block content %}
+<h1>Vendor allowlist</h1>
+<p class="muted" style="max-width:760px">A call from a number on this list skips the AI and rings the owner's phone directly.
+Every other vendor talks to the AI vendor agent: it asks them to hold, tries the store line, and takes a callback
+(<a href="{% url 'dash-vendor-queue' %}">Vendor callbacks</a>) if nobody answers. Only the exact number matches.</p>
+
+<div class="{% if routing.active %}note-green{% else %}note-red{% endif %}" data-testid="allowlist-status">
+  {% if routing.active %}
+    Direct routing is on: {{ routing.entries }} active number{{ routing.entries|pluralize }} ring{{ routing.entries|pluralize:"s," }} the owner's phone ending {{ owner_last4 }}.
+  {% else %}
+    Direct routing is off right now, so every vendor gets the AI:
+    {% if not routing.dynamic_greeting %}the dynamic greeting (HHT_DYNAMIC_GREETING) is off, and routing cannot work without it, because only then does Vapi ask this server who answers each call (turn it on, then Publish).{% endif %}
+    {% if not routing.switch %}the switch "Send allowlisted vendors straight to the owner" is off on <a href="{% url 'dash-capabilities' %}">Capabilities</a>.{% endif %}
+    {% if not routing.owner %}no owner phone is set (below).{% endif %}
+    {% if not routing.entries %}no active numbers on the list.{% endif %}
+  {% endif %}
+</div>
+
+<div class="card" data-testid="allowlist-owner">
+  <h2>Owner phone</h2>
+  {% if request.user.is_superuser %}
+  <form method="post" action="{% url 'dash-vendor-allowlist-owner' %}" class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+    {% csrf_token %}
+    <label><span class="lt">US number allowlisted vendors ring</span>
+      <input name="owner_phone" value="{{ owner_full }}" placeholder="(509) 555-1212" maxlength="32" autocomplete="off"></label>
+    <button class="btn btn-primary" name="action" value="save" data-testid="owner-save">Save</button>
+    <button class="btn" name="action" value="clear" data-testid="owner-clear">Clear</button>
+  </form>
+  {% else %}
+  <p>{% if owner_last4 %}Set (ending {{ owner_last4 }}).{% else %}Not set.{% endif %} Only the owner (a superuser) can change it.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Numbers</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Name</th><th>Number</th><th>Store</th><th>Note</th><th>State</th><th>Last match</th><th>Matches</th><th></th></tr>
+    {% for e in entries %}
+      <tr data-testid="allowlist-row-{{ e.pk }}">
+        <td>{{ e.name }}</td>
+        <td>{{ e.phone_display }}</td>
+        <td>{{ e.get_store_display }}</td>
+        <td>{{ e.note|default:'—' }}</td>
+        <td><span class="badge {% if e.active %}green{% else %}slate{% endif %}">{{ e.active|yesno:"active,off" }}</span></td>
+        <td>{{ e.last_matched_at|default:'never' }}</td>
+        <td>{{ e.match_count }}</td>
+        <td class="row" style="gap:6px">
+          <a class="btn" href="{% url 'dash-vendor-allowlist-edit' e.pk %}">Edit</a>
+          <form method="post" action="{% url 'dash-vendor-allowlist-toggle' e.pk %}">{% csrf_token %}<button class="btn">{% if e.active %}Deactivate{% else %}Reactivate{% endif %}</button></form>
+          <form method="post" action="{% url 'dash-vendor-allowlist-delete' e.pk %}" onsubmit="return confirm('Delete this number?')">{% csrf_token %}<button class="btn" style="color:var(--action)">Delete</button></form>
+        </td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="8" class="muted">No vendors on the list yet.</td></tr>
+    {% endfor %}
+  </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Add a vendor</h2>
+  <form method="post" action="{% url 'dash-vendor-allowlist-add' %}" data-testid="allowlist-add">
+    {% csrf_token %}
+    {% for field in form %}
+      <label>
+        <span class="lt">{{ field.label }}</span>
+        {{ field }}
+        {% if field.help_text %}<span class="muted" style="font-size:11px">{{ field.help_text }}</span>{% endif %}
+        {% if field.errors %}<span style="color:var(--action);font-size:12px">{{ field.errors|join:', ' }}</span>{% endif %}
+      </label>
+    {% endfor %}
+    {% if form.non_field_errors %}<p style="color:var(--action);font-size:12px">{{ form.non_field_errors|join:', ' }}</p>{% endif %}
+    <button class="btn btn-primary" type="submit">Add</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Add many</h2>
+  <p class="muted" style="font-size:12px;margin-top:0">One vendor per line, written <code>Name, number</code>. Good lines are added; bad lines are listed and not saved.</p>
+  {% if bulk_results %}
+    <div class="note-red" data-testid="bulk-errors">
+      Added {{ bulk_results.added }}. These lines were not saved:
+      <ul>{% for n, name, phone, error in bulk_results.errors %}<li>Line {{ n }}{% if name %} ({{ name }}){% endif %}: {{ error }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+  <form method="post" action="{% url 'dash-vendor-allowlist-bulk' %}">
+    {% csrf_token %}
+    <textarea name="lines" rows="6" style="width:100%" placeholder="Cascade Crest Distribution, (509) 555-1212">{{ bulk_text }}</textarea>
+    <button class="btn btn-primary" type="submit">Add all</button>
+  </form>
+</div>
+
+<div class="card" data-testid="allowlist-test">
+  <h2>Would this number be routed?</h2>
+  <p class="muted" style="font-size:12px;margin-top:0">Runs the same check a real call runs. Nothing is dialled and nothing is recorded.</p>
+  <form method="post" action="{% url 'dash-vendor-allowlist-test' %}" class="row" style="gap:8px">
+    {% csrf_token %}
+    <input name="number" value="{{ test.input|default:'' }}" placeholder="(509) 555-1212" maxlength="40" autocomplete="off">
+    <button class="btn" type="submit">Check</button>
+  </form>
+  {% if test %}
+    <p data-testid="test-result"><span class="badge {% if test.decision.route %}green{% else %}slate{% endif %}">{{ test.decision.route|yesno:"routed to owner,AI answers" }}</span>
+      {{ test.decision.why }}
+      {% if test.decision.route and not routing.dynamic_greeting %}But the dynamic greeting is off, so a real call still reaches the AI.{% endif %}</p>
+  {% endif %}
+</div>
+{% endblock %}

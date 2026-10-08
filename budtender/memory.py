@@ -4,7 +4,10 @@ merged and turned into the short ``brief`` both bots read (website chat and the 
 Memory is PERSONAL data. What goes in passes an allowlist (closed keys, enum styles, short strings
 that clear the quarantine rules below) and a 4 KB cap; what comes out (``brief``) is plain text of at
 most 600 characters, and the ``public`` variant for an UNVERIFIED reader (a typed website phone) carries
-only purchase-backed taste and style: never notes, stated likes/dislikes, context or recent topics.
+only purchase-backed taste and style: never notes, stated likes/dislikes, context or recent topics,
+and conversation summaries only when the owner sets HHT_MEMORY_WEB_SUMMARIES. Summaries
+(``summaries``/``summary``) are written by budtender.memory_summary; ``echoes`` guards reply paths so
+the bot never reads memory back to the customer.
 
 Who may read/write which tier is decided by ``identity.tier(session)``; this module never looks at a
 request. Pure apart from ``set_derived`` (one locked UPDATE).
@@ -38,8 +41,13 @@ STYLE_BOOLS = ("emoji", "wants_explanations")
 LISTS = {"likes": (8, 40), "dislikes": (8, 40), "context": (4, 60), "last_topics": (4, 40)}
 NOTES_MAX, NOTE_CHARS = 8, 120
 SOURCES = ("voice", "chat")
-# Session-only bookkeeping (ChatSession.learned): which turns were already learned (idempotency).
-SESSION_META = ("digest", "ldigest", "upto")
+# Conversation summaries (customer-memory-v1 "Summaries"): ``summaries`` = short AI notes, one per
+# conversation, newest last; ``summary`` = the ONE consolidated string they are folded into.
+SUMMARY_ENTRY_CHARS, SUMMARY_CHARS = 240, 500
+SUMMARIES_MAX = 20        # hard ceiling; consolidation (HHT_MEMORY_CONSOLIDATE_AT, default 10) keeps it lower
+# Session-only bookkeeping (ChatSession.learned): which turns were already learned (idempotency);
+# ``sdigest``/``skey`` = which turns were summarised and which profile entry that summary is.
+SESSION_META = ("digest", "ldigest", "upto", "sdigest", "skey")
 
 # ── quarantine: a string that may be stored ───────────────────────────────────
 _CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f​-‏ -‮⁠-⁯﻿]")
@@ -102,6 +110,27 @@ def quarantined(text: str) -> bool:
 def _ok_str(value: object, limit: int) -> str:
     text = clean_text(value, limit)
     return "" if quarantined(text) else text
+
+
+# A summary never carries a price or dollar amount (on top of the quarantine above).
+_PRICE = re.compile(r"\$|\b\d+(?:\.\d+)?\s*(?:dollars?|bucks|usd|cents?)\b|\b(?:dollars?|bucks)\b", re.I)
+
+
+def summary_ok(text: str) -> bool:
+    """A conversation summary that may be stored: clears the quarantine and names no price."""
+    return bool(text) and not quarantined(text) and not _PRICE.search(text)
+
+
+def _summary_str(value: object, limit: int) -> str:
+    text = clean_text(value, limit)
+    return text if summary_ok(text) else ""
+
+
+def entry_key(text: str) -> str:
+    """Stable short id of a summary entry (ChatSession.learned["skey"] points at its own entry)."""
+    import hashlib
+
+    return hashlib.sha256(_key(text).encode()).hexdigest()[:16]
 
 
 def _key(text: str) -> str:
@@ -232,6 +261,22 @@ def _notes(raw: object) -> list[dict]:
     return list(reversed(out))[-NOTES_MAX:]
 
 
+def _summaries(raw: object) -> list[dict]:
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for n in reversed(raw):  # newest last: keep the newest copy of a repeated entry
+        if not isinstance(n, dict):
+            continue
+        t = _summary_str(n.get("t"), SUMMARY_ENTRY_CHARS)
+        if not t or _key(t) in seen:
+            continue
+        seen.add(_key(t))
+        out.append({"t": t, "at": _at(n.get("at")), "src": n.get("src") if n.get("src") in SOURCES else "chat"})
+    return list(reversed(out))[-SUMMARIES_MAX:]
+
+
 def _list(raw: object, n: int, limit: int) -> list[str]:
     if not isinstance(raw, list):
         return []
@@ -250,8 +295,9 @@ def _size(mem: dict) -> int:
 
 
 def _fit(mem: dict) -> dict:
-    """Trim to MAX_BYTES: oldest notes first, then the oldest list entries, then derived detail."""
-    order = ["notes", "last_topics", "context", "likes", "dislikes"]
+    """Trim to MAX_BYTES: oldest conversation summaries first, then oldest notes, then the oldest list
+    entries, then derived detail; the consolidated ``summary`` goes last."""
+    order = ["summaries", "notes", "last_topics", "context", "likes", "dislikes"]
     while _size(mem) > MAX_BYTES:
         for k in order:
             if mem.get(k):
@@ -266,8 +312,11 @@ def _fit(mem: dict) -> dict:
                     d.pop(k)
                     break
             else:
-                mem.pop("derived", None)
-                if _size(mem) > MAX_BYTES:  # only style/meta left; cannot happen with these caps
+                if "derived" in mem:
+                    mem.pop("derived")
+                elif "summary" in mem:
+                    mem.pop("summary")
+                elif _size(mem) > MAX_BYTES:  # only style/meta left; cannot happen with these caps
                     return {"v": VERSION}
     return mem
 
@@ -284,10 +333,16 @@ def sanitize(raw: object, *, session: bool = False) -> dict:
     for k, (n, limit) in LISTS.items():
         if vals := _list(raw.get(k), n, limit):
             out[k] = vals
+    if summaries := _summaries(raw.get("summaries")):
+        out["summaries"] = summaries
+    if not session and (summary := _summary_str(raw.get("summary"), SUMMARY_CHARS)):
+        out["summary"] = summary
     if session:
-        for k in ("digest", "ldigest"):
+        for k in ("digest", "ldigest", "sdigest"):
             if isinstance(raw.get(k), str) and re.fullmatch(r"[0-9a-f]{8,64}", raw[k]):
                 out[k] = raw[k]
+        if isinstance(raw.get("skey"), str) and re.fullmatch(r"[0-9a-f]{16}", raw["skey"]):
+            out["skey"] = raw["skey"]
         if isinstance(raw.get("upto"), int) and not isinstance(raw.get("upto"), bool) and raw["upto"] >= 0:
             out["upto"] = raw["upto"]
     elif derived := sanitize_derived(raw.get("derived")):
@@ -320,6 +375,21 @@ def merge(existing: object, learned: object, *, session: bool = False) -> dict:
         out[k] = [x for x in base.get(k, []) if _key(x) not in fk] + fresh
     nk = {_key(n["t"]) for n in new.get("notes", [])}
     out["notes"] = [n for n in base.get("notes", []) if _key(n["t"]) not in nk] + new.get("notes", [])
+    # Conversation summaries normally arrive through memory_summary, never through ``learned``; a
+    # profile merge (identity._merge) folds the shell row's in: its entries are appended, and its
+    # consolidated summary becomes an entry when this row already has one (the next consolidation
+    # folds it), so nothing the same person said is lost.
+    extra = list(new.get("summaries", []))
+    other = _summary_str(learned.get("summary") if isinstance(learned, dict) else "", SUMMARY_CHARS)
+    if other and not session:
+        if base.get("summary"):
+            extra.insert(0, {"t": clean_text(other, SUMMARY_ENTRY_CHARS), "at": timezone.localdate().isoformat(),
+                             "src": "voice"})
+        else:
+            out["summary"] = other
+    if extra:
+        sk = {_key(n["t"]) for n in extra}
+        out["summaries"] = [n for n in base.get("summaries", []) if _key(n["t"]) not in sk] + extra
     if session:
         for k in SESSION_META:
             if k in new:
@@ -438,9 +508,11 @@ def _last_bought(profile) -> str:
 def brief(profile, tier: str) -> dict:
     """``{"text", "style", "public"}`` for this profile at this trust tier; text <= 600 chars.
 
-    trusted    name, cadence, style, usual buys + last purchase, likes/avoids, what they said, topics
+    trusted    name, cadence, style, usual buys + last purchase, likes/avoids, what they said, topics,
+               and a last ``Remembers:`` line (consolidated summary + up to 2 newest entries, cut to fit)
     unverified (``public``) style + purchase-backed taste only; a name only when purchases back the
-               row (identity.context's website rule); no notes/likes/dislikes/context/topics/last buy
+               row (identity.context's website rule); no notes/likes/dislikes/context/topics/last buy;
+               the ``Remembers:`` line only while HHT_MEMORY_WEB_SUMMARIES is on (default off)
     anonymous  nothing"""
     from . import identity
 
@@ -490,4 +562,67 @@ def brief(profile, tier: str) -> dict:
         cut = text[:BRIEF_MAX - 1]
         cut = cut[:max(cut.rfind(" "), cut.rfind("\n"))] if (" " in cut or "\n" in cut) else cut
         text = cut.rstrip(" ,;:") + "…"
+    # Conversation summaries: trusted always; the unverified (typed website phone) tier only when the
+    # owner sets HHT_MEMORY_WEB_SUMMARIES (a typed number is not proof of identity).
+    if not public or web_summaries_enabled():
+        if line := remembers_line(mem, BRIEF_MAX - len(text) - (1 if text else 0)):
+            text = f"{text}\n{line}" if text else line
     return {"text": text[:BRIEF_MAX], "style": style, "public": public}
+
+
+def web_summaries_enabled() -> bool:
+    from django.conf import settings
+
+    return bool(getattr(settings, "HHT_MEMORY_WEB_SUMMARIES", False))
+
+
+def _sentence(text: str) -> str:
+    text = text.strip().rstrip(" ,;:")
+    return text if text.endswith((".", "!", "?", "…")) else f"{text}."
+
+
+def remembers_line(mem: dict, budget: int) -> str:
+    """``Remembers: <consolidated summary> <up to 2 newest entries>`` within ``budget`` characters.
+    Entries are cut first (oldest of the two, then the other); the consolidated summary is cut at a
+    word only when it alone does not fit; "" when nothing fits (the brief cap is never exceeded)."""
+    label = "Remembers: "
+    if budget <= len(label) + 12:
+        return ""
+    summary = mem.get("summary") or ""
+    entries = [e["t"] for e in (mem.get("summaries") or [])[-2:]]
+    for keep in range(len(entries), -1, -1):
+        parts = ([_sentence(summary)] if summary else []) + [_sentence(t) for t in entries[len(entries) - keep:]]
+        if not parts:
+            return ""
+        line = label + " ".join(parts)
+        if len(line) <= budget:
+            return line
+    room = budget - len(label) - 1
+    cut = (summary or entries[-1])[:room]
+    cut = cut[:cut.rfind(" ")] if " " in cut else ""
+    return f"{label}{cut.rstrip(' ,;:')}…" if len(cut) >= 12 else ""
+
+
+def _shingles(text: str, n: int = 8) -> set[str]:
+    words = _key(text).split()
+    return {" ".join(words[i:i + n]) for i in range(max(0, len(words) - n + 1))}
+
+
+def echoes(reply: str, mem: object) -> bool:
+    """True when ``reply`` recites stored memory: a conversation summary, the consolidated summary or a
+    note, verbatim or as a run of 8+ of its words. The bot personalises silently; it never reads the
+    customer's memory back to them (owner rule), so a reply that does is replaced, not shown."""
+    mem = mem if isinstance(mem, dict) else {}
+    secrets = [mem.get("summary") or ""] + [
+        e.get("t", "") for k in ("summaries", "notes") for e in (mem.get(k) or []) if isinstance(e, dict)]
+    said = _key(str(reply or ""))
+    if not said:
+        return False
+    said_sh = _shingles(said)
+    for s in secrets:
+        k = _key(str(s or ""))
+        if not k:
+            continue
+        if (len(k) >= 24 and k in said) or (_shingles(k) & said_sh):
+            return True
+    return False

@@ -80,6 +80,19 @@ urlpatterns = [
     path(
         "vendor-callbacks/<int:pk>/update", views.vendor_callback_update, name="dash-vendor-update"
     ),
+    # vendor allowlist: allowlisted vendor numbers ring the owner with no AI
+    path("vendor-allowlist/", views.vendor_allowlist, name="dash-vendor-allowlist"),
+    path("vendor-allowlist/add", views.vendor_allowlist_add, name="dash-vendor-allowlist-add"),
+    path("vendor-allowlist/bulk", views.vendor_allowlist_bulk, name="dash-vendor-allowlist-bulk"),
+    path("vendor-allowlist/owner", views.vendor_allowlist_owner, name="dash-vendor-allowlist-owner"),
+    path("vendor-allowlist/test", views.vendor_allowlist_test, name="dash-vendor-allowlist-test"),
+    path("vendor-allowlist/<int:pk>/edit", views.vendor_allowlist_edit, name="dash-vendor-allowlist-edit"),
+    path(
+        "vendor-allowlist/<int:pk>/toggle", views.vendor_allowlist_toggle, name="dash-vendor-allowlist-toggle"
+    ),
+    path(
+        "vendor-allowlist/<int:pk>/delete", views.vendor_allowlist_delete, name="dash-vendor-allowlist-delete"
+    ),
     # what the bots may do (voice/voice/capabilities.py)
     path("capabilities/", views.capabilities_page, name="dash-capabilities"),
     path("capabilities/toggle", views.capability_toggle, name="dash-capability-toggle"),

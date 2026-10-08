@@ -23,6 +23,7 @@ class Outcome(models.TextChoices):
     SUGGESTED = "suggested", "Suggested"  # set by P1
     ESCALATION = "escalation", "Escalation"  # set by P2
     VENDOR_CALLBACK = "vendor_callback", "Vendor callback"  # set by P3
+    VENDOR_DIRECT = "vendor_direct", "Vendor sent to owner"  # voice/vendor_allowlist.py (no AI)
     ABANDONED = "abandoned", "Abandoned"
     ERROR = "error", "Error"
 

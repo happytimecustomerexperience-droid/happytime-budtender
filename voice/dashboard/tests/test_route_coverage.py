@@ -102,6 +102,7 @@ def one_faq_row(db):
         "dash-conversation-history",
         "dash-escalations",
         "dash-vendor-queue",
+        "dash-vendor-allowlist",
         "dash-publish",
         "dash-analytics",
         "dash-chat-funnel",
