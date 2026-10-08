@@ -500,3 +500,15 @@ class SweepTests(TestCase):
 def test_migrations_are_complete(db):
     out = StringIO()
     call_command("makemigrations", "budtender", "--check", "--dry-run", stdout=out)
+
+
+class DerivedPairingsSurviveSanitizeTests(TestCase):
+    """customer_model emits pairings as "cat|cat" and ratios may have three parts; the stored copy must keep both."""
+
+    def test_pairings_and_three_part_ratios_are_kept(self):
+        out = memory.sanitize_derived({
+            "ratio_pref": ["1:1", "1:1:1", "x:y"],
+            "pairings": {"accepted": ["flower|pre-rolls", "bad pipe|x", "a|b|c"], "declined": ["edibles|tinctures"]},
+        })
+        self.assertEqual(out["ratio_pref"], ["1:1", "1:1:1"])
+        self.assertEqual(out["pairings"], {"accepted": ["flower|pre-rolls"], "declined": ["edibles|tinctures"]})

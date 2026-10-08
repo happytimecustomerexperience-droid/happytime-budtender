@@ -112,6 +112,8 @@ def _key(text: str) -> str:
 _DERIVED_SHARE_MAPS = ("forms", "extraction")
 _DERIVED_BAND_MAPS = ("price_by_cat", "thc_by_cat")
 _LABEL = re.compile(r"^[a-z0-9][a-z0-9 :/&+._-]{0,31}$", re.I)
+# A pairing is "category|category" (customer_model.compute_derived); the pipe is allowed ONLY here.
+_PAIR = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}\|[a-z0-9][a-z0-9-]{0,30}$", re.I)
 
 
 def _num(v, lo: float, hi: float):
@@ -138,7 +140,7 @@ def sanitize_derived(raw: object) -> dict:
     if not isinstance(raw, dict):
         return {}
     out: dict = {}
-    if ratio := [r for r in _labels(raw.get("ratio_pref"), 6) if re.fullmatch(r"\d{1,3}:\d{1,3}", r)]:
+    if ratio := [r for r in _labels(raw.get("ratio_pref"), 6) if re.fullmatch(r"\d{1,3}:\d{1,3}(:\d{1,3})?", r)]:
         out["ratio_pref"] = ratio
     if (v := _num(raw.get("cbd_lean"), 0, 1)) is not None:
         out["cbd_lean"] = v
@@ -174,7 +176,15 @@ def sanitize_derived(raw: object) -> dict:
         out["due_for_reorder"] = raw["due_for_reorder"]
     pairs = raw.get("pairings")
     if isinstance(pairs, dict):
-        p = {k: _labels(pairs.get(k), 8) for k in ("accepted", "declined")}
+        def _pairs(v: object) -> list[str]:
+            seen: list[str] = []
+            for x in (v if isinstance(v, list) else [])[:16]:
+                x = clean_text(x, 62)
+                if x and _PAIR.match(x) and x not in seen:
+                    seen.append(x)
+            return seen[:8]
+
+        p = {k: _pairs(pairs.get(k)) for k in ("accepted", "declined")}
         if p := {k: v for k, v in p.items() if v}:
             out["pairings"] = p
     if nl := _labels(raw.get("next_likely"), 5):
