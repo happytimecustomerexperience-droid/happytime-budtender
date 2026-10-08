@@ -96,7 +96,9 @@ _BRIEF_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u206
 # customer once SAID, so they are untrusted text): template tokens, chat-role markers, tags, fences.
 _BRIEF_UNSAFE = re.compile(
     r"\{\{|\}\}|\{%|%\}|<\||\|>|<<|>>|\[/?(?:INST|SYS)|```|###|</?[A-Za-z!]"
-    r"|\b(?:system|assistant|developer|human|user|ai|bot|tool|function)\s*:",
+    r"|\b(?:system|assistant|developer|human|user|ai|bot|tool|function)\s*:"
+    # Third-person memory never addresses the agent; these slipped past the KB guard (2026-10-08).
+    r"|\b(?:new|updated|revised|real)\s+instructions?\b|\byou\s+are\s+now\b",
     re.IGNORECASE,
 )
 _BRIEF_STRAY = re.compile(r"[{}<>\[\]|\\`^]")

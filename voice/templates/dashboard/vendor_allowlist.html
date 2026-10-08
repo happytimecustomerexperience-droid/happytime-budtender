@@ -11,7 +11,7 @@ Every other vendor talks to the AI vendor agent: it asks them to hold, tries the
     Direct routing is on: {{ routing.entries }} active number{{ routing.entries|pluralize }} ring{{ routing.entries|pluralize:"s," }} the owner's phone ending {{ owner_last4 }}.
   {% else %}
     Direct routing is off right now, so every vendor gets the AI:
-    {% if not routing.dynamic_greeting %}the dynamic greeting (HHT_DYNAMIC_GREETING) is off, and routing cannot work without it, because only then does Vapi ask this server who answers each call (turn it on, then Publish).{% endif %}
+    {% if not routing.dynamic_greeting %}the dynamic greeting (HHT_DYNAMIC_GREETING) is off, and routing cannot work without it, because only then does Vapi ask this server who answers each call (turn it on in voice/.env, restart, then run provision_vapi: the dashboard Publish button does not change the phone number).{% endif %}
     {% if not routing.switch %}the switch "Send allowlisted vendors straight to the owner" is off on <a href="{% url 'dash-capabilities' %}">Capabilities</a>.{% endif %}
     {% if not routing.owner %}no owner phone is set (below).{% endif %}
     {% if not routing.entries %}no active numbers on the list.{% endif %}
