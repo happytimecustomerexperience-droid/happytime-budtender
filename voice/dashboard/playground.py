@@ -2,11 +2,12 @@
 
 Three ways in, one audit trail out:
 
-* **type** / **browser mic** → this module calls ``voice.chat.answer_text_chat`` in-process.
-  That is the SAME brain the Vapi phone agent and the website chat both run, so the answer,
-  the grounding decision, the tool picks and the escalation flag are the real ones. The mic
-  path is transcribed client-side by the browser's Web Speech API and POSTs identical text —
-  it exercises our agent, NOT Vapi's speech layer.
+* **type** / **browser mic** → this module calls ``voice.chat.answer_text_chat`` in-process: the
+  website chat's brain and the SAME tools the phone calls. It is NOT what the phone says — on a
+  call, Gemini inside Vapi runs the concierge prompt and decides when to call those tools. To test
+  the phone's own words use ``manage.py eval_answers --live --channel voice`` (paid; it runs the
+  provisioned prompt) or the real Vapi call below. The mic path is transcribed client-side by the
+  browser's Web Speech API and POSTs identical text — NOT Vapi's speech layer.
 * **real Vapi call** → the page opens a live web call with Vapi's browser SDK. That one goes
   through Vapi's own ASR/LLM/TTS and hits the signed webhook, so it is logged by
   ``voice.webhooks`` exactly like a phone call. Nothing here intercepts it.

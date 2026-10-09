@@ -290,6 +290,11 @@ def needs_size(args: dict) -> bool:
 def _size_phrase(size: str) -> str:
     if size in _SIZE_SPOKEN:
         return _SIZE_SPOKEN[size]
+    pack = re.fullmatch(r"(\d{1,3})pk", size)
+    if pack:  # budtender cards state packs as "5pk" (2026-10-09); never read "five P K" aloud
+        return f"a {pack[1]}-pack"
+    if size == "single":
+        return "a single"
     match = _SIZE_RE.fullmatch(size)
     return f"{match[1]} {'grams' if match[2] == 'g' else 'milligrams'}" if match else size
 
@@ -510,13 +515,16 @@ def handle_suggest_products(args: dict, ctx: dict) -> dict:
 
     slots = _slots_from_args(args, store)
     exclude = _clean_skus(args.get("exclude_skus"))
-    out = budtender().search(
+    client = budtender()
+    out = client.search(
         slots,
         limit=12,
         phone=ctx.get("_caller_phone"),  # presence → W_KNOWN; absence → W_ANON (margin-first)
         session_token=ctx.get("session_token"),
         exclude_skus=exclude,
         location=store,
+        source="phone",
+        record=False,  # 12 fetched, 3 spoken: only the spoken ones are reported below
     )
     results = out.get("results") or []
     # The price gate: no size on a size-required category -> the picks carry NO price (never computed)
@@ -524,14 +532,25 @@ def handle_suggest_products(args: dict, ctx: dict) -> dict:
     gated = needs_size(args)
     # Fetch a bit wider than the final limit so dedupe can still return 3 useful options.
     # ponytail: one-wide fetch window; adjust the limit here if upstream quality drops.
-    picks = [_speakable_pick(r, store, priced=not gated) for r in _dedupe_results(results, limit=6)][:3]
+    spoken = _dedupe_results(results, limit=6)[:3]
+    picks = [_speakable_pick(r, store, priced=not gated) for r in spoken]
     _stamp_suggested(ctx, [p["sku"] for p in picks if p.get("sku")])
+    if spoken:
+        client.suggestions_shown(store, spoken, phone=ctx.get("_caller_phone"),
+                                 session_token=ctx.get("session_token"))
 
     if gated and picks:
         options = _size_options(results)  # every real size the search found, not just the three shown
+        # Like text chat (chat.py, owner 2026-10-09 "match the chatbot"): only a PRICE ask leads with the
+        # size question; any other ask hears about the picks, just without a price.
+        # Opt-in: only an explicit asked_price=false (the concierge) skips the question; a caller that
+        # does not send the flag (multi-mode budtender, older prompts) keeps the size-first behaviour.
+        asks_price = args.get("asked_price") is not False or args.get("sort_by") == "price_asc" or (
+            isinstance(args.get("price_max"), (int, float)) and args.get("sort_by") != "potency")
+        question = size_question(options)
         return {
-            "picks": picks, "needs_size": True, "size_options": options,
-            "spoken_summary": size_question(options),
+            "picks": picks, "needs_size": True, "size_options": options, "size_question": question,
+            "spoken_summary": question if asks_price else _spoken_summary(picks),
         }
     return {"picks": picks, "spoken_summary": _spoken_summary(picks)}
 

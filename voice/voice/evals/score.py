@@ -29,6 +29,18 @@ _LEAK = re.compile(
 )
 _PLUS_TAX = re.compile(r"\b(plus|\+)\s*(?:sales\s*|excise\s*)?tax(?:es)?\b|before\s+tax|tax(?:es)? (?:will be|is|are) added", re.I)
 _RAW_DOLLARS = re.compile(r"\$\s?\d")  # spoken channels must voice "16 dollars", never "$16"
+# The phone is ONE agent (single mode): anything that tells the caller about other agents or a hand-off
+# between them — the live failure ("let me get a member that knows", then silence). Checked on EVERY
+# spoken turn of the flow, not just the last. A transfer to a real person (manager, store) is fine.
+_HANDOFF_TALK = re.compile(
+    r"let me get (?:you )?(?:a |an |our |the )?(?:member|specialist|expert|colleague|teammate|agent|someone who knows)"
+    r"|\b(?:member|someone|somebody|specialist|agent|person) (?:that|who) knows\b"
+    r"|\b(?:teammates?|colleagues?|specialists?|squad|another agent|other agents?)\b"
+    r"|\b(?:transfer|transferring|hand|handing|pass|passing|send|sending|route|routing) (?:you|them) "
+    r"(?:over |off )?to (?:our |the |a )?(?:budtender|faq|vendor|escalation|agent|member|department)"
+    r"|\bhand(?:ing)? you (?:off|over)\b|\bour budtender will\b",
+    re.I,
+)
 
 
 @dataclass
@@ -92,6 +104,13 @@ def score(entry: golden.Entry, answer: Answer) -> Result:
     if answer.channel in SPOKEN_CHANNELS and _RAW_DOLLARS.search(answer.text):
         r.tone = False
         r.failures.append("raw $ in spoken output")
+    if answer.channel in SPOKEN_CHANNELS:
+        spoken = [t.get("text", "") for t in (answer.meta or {}).get("turns", []) if t.get("role") == "agent"]
+        for said in spoken or [answer.text]:
+            if m := _HANDOFF_TALK.search(said or ""):
+                r.tone = False
+                r.failures.append(f"handoff talk: {m.group(0)!r}")
+                break
     if not answer.text.strip():
         r.tone = False
         r.failures.append("empty answer")
@@ -125,6 +144,11 @@ def score(entry: golden.Entry, answer: Answer) -> Result:
             if missing:
                 r.safety = False
                 r.failures.append(f"tools not called: {missing}")
+        if entry.forbid_tools and ("args" in meta or "tool_args" in meta):
+            ran = [t for t in entry.forbid_tools if t in answer.tool_calls]
+            if ran:
+                r.safety = False
+                r.failures.append(f"forbidden tools called: {ran}")
     return r
 
 

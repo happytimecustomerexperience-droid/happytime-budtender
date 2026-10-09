@@ -1,0 +1,4 @@
+<form method="post" action="{% url ds.old_delete_name r.pk %}?{% if ds.kb_kind %}kind={{ ds.kb_kind }}&amp;{% endif %}next={{ next_url|urlencode }}"
+      hx-post="{% url 'dash-data-row-delete' ds.key r.pk %}" hx-confirm="Delete this row?" hx-target="closest tr" hx-swap="outerHTML">
+  {% csrf_token %}<button class="btn" style="color:var(--action)">Delete</button>
+</form>

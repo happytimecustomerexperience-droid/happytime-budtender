@@ -46,9 +46,13 @@ class FakeBudtender:
         self.check = None
         self.search_calls: list[dict] = []
 
-    def search(self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None):
+    def search(self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None,
+               source=None, record=True):
         self.search_calls.append({"slots": dict(slots)})
         return {"results": self.results[:limit]}
+
+    def suggestions_shown(self, store, picks, **kw):
+        return {"ok": True, "recorded": len(picks)}
 
     def check_sku(self, store, sku, *, category=None):
         return self.check or {"in_stock": False}
@@ -103,6 +107,27 @@ def test_no_price_key_survives_without_a_size_for_every_size_required_category(f
     # ...and what makes a pick worth hearing about is all still there.
     assert out["picks"][0]["thc_spoken"] == "24.1 percent THC"
     assert out["picks"][0]["why_this"] == "Dialed in for relaxed", "the '$9' sale bit is price-derived"
+
+
+@pytest.mark.parametrize("category", sorted(C.SIZE_REQUIRED_CATEGORIES))
+def test_a_stock_ask_names_the_picks_without_a_price_or_the_size_question(fake_bt, category):
+    """"Match the chatbot" (owner 2026-10-09): asked_price=false -> the picks, no price, no size question
+    (text chat does the same for any ask that is not a price ask). The gate itself is unchanged."""
+    out = suggest.handle_suggest_products({"store": "yakima", "category": category, "asked_price": False},
+                                          dict(CTX))
+    assert out["needs_size"] is True and out["size_options"] == ["1g", "3.5g", "28g"]
+    assert not suggest.is_size_question(out["spoken_summary"])
+    assert out["spoken_summary"].startswith("My top pick is")
+    assert out["size_question"].startswith("Prices depend on the size")  # still there for a later price ask
+    _assert_no_price(out)
+
+
+@pytest.mark.parametrize("extra", [{}, {"asked_price": True}, {"asked_price": False, "price_max": 40},
+                                   {"asked_price": False, "sort_by": "price_asc"}])
+def test_a_price_ask_or_a_caller_that_does_not_say_still_gets_the_size_question(fake_bt, extra):
+    out = suggest.handle_suggest_products({"store": "yakima", "category": "flower", **extra}, dict(CTX))
+    assert suggest.is_size_question(out["spoken_summary"])
+    _assert_no_price(out)
 
 
 @pytest.mark.parametrize("category", sorted(C.SIZE_REQUIRED_CATEGORIES))
@@ -195,7 +220,7 @@ def test_a_shelf_with_no_stated_sizes_asks_the_open_question(fake_bt):
     (["1g", "3.5g", "7g", "14g", "28g"],
      "are you thinking a gram, an eighth, a quarter, a half ounce, or an ounce?"),
     (["2g", "10mg"], "are you thinking 2 grams or 10 milligrams?"),
-    (["5pk"], "are you thinking 5pk?"),
+    (["5pk"], "are you thinking a 5-pack?"),  # spoken, never "five P K"
 ])
 def test_the_size_question_is_built_from_the_options_only(options, said):
     assert suggest.size_question(options) == f"Prices depend on the size — {said}"

@@ -195,7 +195,7 @@ def test_control_every_dashboard_route_is_staff_gated(client):
     """Enumerate dashboard/urls.py and assert anonymous access is redirected/denied."""
     from dashboard import urls as dash_urls
 
-    sample = {"pk": "1", "kind": "faq", "role": "faq"}
+    sample = {"pk": "1", "kind": "faq", "role": "faq", "key": "faq", "ref": "r1"}
     failures = []
     for pattern in dash_urls.urlpatterns:
         route = str(pattern.pattern)

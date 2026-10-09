@@ -60,6 +60,10 @@ CREDENTIAL_CATALOG: list[dict] = [
      "help": "E.164 warm-transfer destination for Mount Vernon."},
     {"group": "Transfer numbers", "name": "HHT_TRANSFER_NUMBER_PULLMAN", "label": "Pullman transfer #", "secret": False,
      "help": "E.164 warm-transfer destination for Pullman."},
+    {"group": "Transfer numbers", "name": "HHT_OWNER_PHONE", "label": "Owner phone (allowlisted vendors)",
+     "secret": False, "allow": "us_e164",
+     "help": "US number an allowlisted vendor's call rings directly, with no AI (Vendor allowlist page). "
+             "Blank = every vendor talks to the AI vendor agent."},
     {"group": "Transfer heads-up", "name": "PUSHOVER_APP_TOKEN", "label": "Pushover app token", "secret": True,
      "help": "Application token from pushover.net. With a store's user key below, staff phones get a push "
              "describing who is calling when a call is transferred."},
@@ -162,7 +166,17 @@ _ALLOW = {
         "or internal name).",
     ),
     "slack_url": (_ok_slack, "Not saved: must start with https://hooks.slack.com/."),
+    "us_e164": (
+        lambda v: _us_e164(v) == v,
+        "Not saved: must be a full US number written +1 then 10 digits, e.g. +15095551212.",
+    ),
 }
+
+
+def _us_e164(value: str) -> str:
+    from voice.vendor_allowlist import normalize_us_e164
+
+    return normalize_us_e164(value)
 
 
 def validate(name: str, value: str) -> str | None:

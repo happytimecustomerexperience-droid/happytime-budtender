@@ -6,6 +6,7 @@ service and never imports Dutchie/POS register clients.
 
 from __future__ import annotations
 
+from voice import pricing
 from voice.budtender_client import budtender
 from voice.tools import register
 
@@ -29,7 +30,6 @@ def _summary(action: str, out: dict) -> str:
         return "I could not stage that cart change right now. A team member can help finish it."
     draft = out.get("draft") or {}
     quote = draft.get("quote") or {}
-    token = draft.get("draft_token") or ""
     try:
         total = float(quote.get("total"))
     except (TypeError, ValueError):
@@ -38,18 +38,20 @@ def _summary(action: str, out: dict) -> str:
         discounts = float(quote.get("discounts") or 0)
     except (TypeError, ValueError):
         discounts = 0.0
+    # Spoken on the phone: dollars as words (pricing.spoken), never "$60.00", and never the internal
+    # pickup token (the register finds the order by the caller's number).
     if action == "release":
         return (
-            f"I released the staged phone cart for the register. The pickup token is {token}. "
+            "I released the staged phone cart for the register. "
             "Staff will verify ID, availability, discounts, and the final total before checkout."
         )
-    if action == "quote" and total is not None:
-        if discounts:
+    if action == "quote" and total is not None and pricing.spoken(total):
+        if discounts and pricing.spoken(discounts):
             return (
-                f"The current staged estimate is ${total:.2f} after about ${discounts:.2f} in visible discounts. "
-                "The register confirms the final total."
+                f"The current staged estimate is {pricing.spoken(total)} after about "
+                f"{pricing.spoken(discounts)} in visible discounts. The register confirms the final total."
             )
-        return f"The current staged estimate is ${total:.2f}. The register confirms the final total."
+        return f"The current staged estimate is {pricing.spoken(total)}. The register confirms the final total."
     return "I updated the staged cart. The register will confirm availability, discounts, and final total."
 
 

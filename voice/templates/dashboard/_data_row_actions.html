@@ -1,0 +1,4 @@
+{% comment %}Edit link for one row. Works without JS (the old standalone page + a validated next=) and
+   upgrades to in-place editing with htmx. needs: ds, r, next_url{% endcomment %}
+<a href="{% url ds.old_edit_name r.pk %}?{% if ds.kb_kind %}kind={{ ds.kb_kind }}&amp;{% endif %}next={{ next_url|urlencode }}"
+   hx-get="{% url 'dash-data-row-edit' ds.key r.pk %}" hx-target="closest tr" hx-swap="outerHTML">Edit</a>

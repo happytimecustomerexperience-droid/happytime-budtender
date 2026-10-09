@@ -48,6 +48,9 @@ class FakeBudtender:
     def search(self, slots, **kw):
         return {"results": self.results}
 
+    def suggestions_shown(self, store, picks, **kw):
+        return {"ok": True, "recorded": len(picks)}
+
     def pair_for_sku(self, store, anchor_sku, **kw):
         return self.pairing or {"pairing": None, "strength": 0.0}
 

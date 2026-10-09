@@ -1,0 +1,20 @@
+<tr id="row-{{ ds.key }}-{{ r.pk }}" data-testid="row-{{ r.pk }}">
+  <td><input type="checkbox" name="ids" value="{{ r.pk }}" form="bulk-form" aria-label="Select this row" style="width:auto"></td>
+  <td><span class="badge blue">{{ r.get_kind_display }}</span></td>
+  <td>{{ r.store|default:"all" }}</td>
+  <td>{{ r.label }}{% if r.label|slice:":9" == "Dutchie #" %} <span class="badge blue">Dutchie</span>{% endif %}</td>
+  <td class="muted">{{ r.value|truncatechars:60 }}</td>
+  <td class="muted">
+    {% if r.valid_from or r.valid_to %}
+      {{ r.valid_from|date:"M j, Y"|default:"any time" }} &ndash;
+      {{ r.valid_to|date:"M j, Y"|default:"no end" }}
+    {% else %}always{% endif %}
+  </td>
+  <td>
+    {% if not r.is_active %}<span class="badge slate">inactive</span>
+    {% elif not r.is_current %}<span class="badge slate">not running</span>
+    {% elif r.confirmed %}<span class="badge green">confirmed</span>
+    {% else %}<span class="badge amber">call to confirm</span>{% endif %}
+  </td>
+  <td class="row" style="gap:8px">{% include "dashboard/_data_row_actions.html" %}{% include "dashboard/_data_row_delete_form.html" %}</td>
+</tr>

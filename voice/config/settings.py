@@ -180,11 +180,24 @@ HHT_NOTIFY_BUDTENDER = _env_bool("HHT_NOTIFY_BUDTENDER", "1") and ("pytest" not 
 HHT_TRANSFER_NUMBER_YAKIMA = os.environ.get("HHT_TRANSFER_NUMBER_YAKIMA", "")
 HHT_TRANSFER_NUMBER_MTVERNON = os.environ.get("HHT_TRANSFER_NUMBER_MTVERNON", "")
 HHT_TRANSFER_NUMBER_PULLMAN = os.environ.get("HHT_TRANSFER_NUMBER_PULLMAN", "")
+# Vendor allowlist (voice/vendor_allowlist.py): the owner's phone an allowlisted vendor is sent to
+# without the AI. US E.164. Editable on /dashboard/vendor-allowlist/ (a Credential row overrides it).
+HHT_OWNER_PHONE = os.environ.get("HHT_OWNER_PHONE", "")
 HHT_DEFAULT_STORE = os.environ.get("HHT_DEFAULT_STORE", "yakima")
 # Dynamic greeting (voice/caller.py): ON makes provision_vapi bind the inbound number to NO squad so
 # Vapi sends ``assistant-request``, and answers it with a per-call squad that greets the caller by
 # first name and hands every agent their profile. OFF (default) is the static squad binding.
 HHT_DYNAMIC_GREETING = _env_bool("HHT_DYNAMIC_GREETING", "0")
+# Squad topology (voice/constants.squad_mode): "single" (default) = ONE concierge assistant that
+# greets, answers, helps shop, handles vendors and problems itself, in a one-member squad with no
+# handoffs; "multi" = the old five-member squad (entry_router -> budtender/faq/vendor/escalation).
+# Rollback: HHT_SQUAD_MODE=multi, then provision_vapi. The old assistants are never deleted.
+HHT_SQUAD_MODE = os.environ.get("HHT_SQUAD_MODE", "single").strip().lower() or "single"
+# Consult before connecting (voice/consult.py): every transfer to a real person first calls that
+# person, says who is calling and why, and connects only when they accept; a decline, no answer or
+# voicemail returns the caller to the agent, who offers to take a message. 0 = the old transfers
+# (warm summary, and the allowlist's direct no-AI forward to the owner).
+HHT_TRANSFER_CONSULT = _env_bool("HHT_TRANSFER_CONSULT", "1")
 
 # ── Transfer heads-up (the call.sms_on_transfer switch) ───────────────
 # A push describing the caller, sent when a call is transferred. Pushover is inert until the app

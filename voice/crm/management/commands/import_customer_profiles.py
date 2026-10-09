@@ -88,6 +88,7 @@ class Command(BaseCommand):
                     "orders": int(p.get("Orders", 0) or 0),
                     "total_spend": float(p.get("TotalSpend", 0) or 0),
                     "aov": float(p.get("AOV", 0) or 0),
+                    "items": _as_int(p.get("TotalUnits")),  # None = unknown (never coerced to 0)
                     "recency_days": _as_int(p.get("Recency")),
                     "cadence_days": _cadence_days(
                         str(p.get("FirstOrder", "")), str(p.get("LastOrder", "")),
@@ -115,7 +116,12 @@ class Command(BaseCommand):
             if n % 1000 == 0:
                 self.stdout.write(f"  …{n} imported")
 
-        self.stdout.write(self.style.SUCCESS(f"Imported {n} customer profiles ({len(rich)} with rich detail)."))
+        bad = (CustomerProfile.objects.filter(last_order_date__isnull=True)
+               .exclude(last_order="").count())
+        msg = f"Imported {n} customer profiles ({len(rich)} with rich detail)."
+        if bad:
+            msg += f" WARNING: {bad} have a last-order date that could not be parsed."
+        self.stdout.write(self.style.SUCCESS(msg))
 
     def _fetch(self, url: str) -> dict:
         """Download customers.json from a URL (the analytics repo regenerates + commits it nightly)."""
@@ -188,6 +194,7 @@ def _merge_rows(rows: list[tuple[str, dict, dict]]) -> tuple[str, dict, dict]:
         "Orders": orders,
         "TotalSpend": spend,
         "AOV": (spend / orders) if orders else float(best_p.get("AOV", 0) or 0),
+        "TotalUnits": _sum_units(p for _, p, _ in rows),
         "Recency": min((v for _, p, _ in rows if (v := _as_int(p.get("Recency"))) is not None), default=None),
         "FirstOrder": min((str(p.get("FirstOrder")) for _, p, _ in rows if p.get("FirstOrder")), default=""),
         "LastOrder": max((str(p.get("LastOrder")) for _, p, _ in rows if p.get("LastOrder")), default=""),
@@ -197,6 +204,12 @@ def _merge_rows(rows: list[tuple[str, dict, dict]]) -> tuple[str, dict, dict]:
     })
     rich_detail = _merge_rich([r for _, _, r in rows])
     return best_name, profile, rich_detail
+
+
+def _sum_units(profiles) -> int | None:
+    """Total units across merged rows; None when no row knows its units (unknown stays unknown)."""
+    known = [u for p in profiles if (u := _as_int(p.get("TotalUnits"))) is not None]
+    return sum(known) if known else None
 
 
 def _merge_dicts(dicts) -> dict:

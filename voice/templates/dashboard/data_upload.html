@@ -1,0 +1,139 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Bulk upload — {{ ds.label }} — Happy Time Voice{% endblock %}
+{% block content %}
+<p class="muted"><a href="{{ list_page }}">← {{ ds.label }}</a></p>
+<h1>Bulk upload: {{ ds.label }}</h1>
+
+{% if error %}<div class="note-red" data-testid="upload-error"><div>{{ error }}</div></div>{% endif %}
+{% if warning %}<div class="note-red" data-testid="upload-warning"><div>{{ warning }}</div></div>{% endif %}
+
+{% if result %}
+<div class="card" data-testid="upload-result">
+  <h2>{% if result.applied %}Applied{% elif result.stopped %}Nothing was saved{% else %}Not saved{% endif %}</h2>
+  {% if result.applied %}
+    <p>
+      <span class="badge green">{{ result.created }} created</span>
+      <span class="badge blue">{{ result.updated }} updated</span>
+      <span class="badge red">{{ result.deleted }} deleted</span>
+      <span class="badge slate">{{ result.unchanged }} unchanged</span>
+      {% if result.errors %}<span class="badge amber">{{ result.errors }} skipped because of errors</span>{% endif %}
+    </p>
+    <p class="muted">Specials, hours and facts are live on the next call. Use <strong>Reindex</strong> on the KB page if you also want the Vapi file mirror refreshed.</p>
+  {% elif result.stopped %}
+    <p>You chose "stop if any error" and {{ result.errors }} row{{ result.errors|pluralize }} had errors, so the whole file was left alone. Fix the file and upload it again.</p>
+  {% else %}
+    <p>{{ result.failed }}</p>
+  {% endif %}
+  <a class="btn" href="{{ list_page }}">Back to {{ ds.label }}</a>
+</div>
+{% elif plan %}
+<div class="card" data-testid="upload-preview">
+  <h2>Preview: nothing has been saved yet</h2>
+  {% if plan.file_errors %}
+    <div class="note-red"><div><strong>This file cannot be used:</strong>
+      <ul>{% for e in plan.file_errors %}<li>{{ e }}</li>{% endfor %}</ul></div></div>
+  {% endif %}
+  {% if plan.unknown %}
+    <div class="note-red" style="background:var(--amber-bg);border-color:#fde68a;color:var(--amber)" data-testid="unknown-columns"><div>
+      <strong>Columns that were not recognised and will be ignored (their values are NOT saved):</strong>
+      <ul>{% for name, guess in plan.unknown %}<li>{{ name }}{% if guess %} &mdash; did you mean <code>{{ guess }}</code>?{% endif %}</li>{% endfor %}</ul>
+    </div></div>
+  {% endif %}
+  <div class="pills" data-testid="upload-counts">
+    <div class="pill"><div class="n">{{ counts.create }}</div><div class="l">new rows</div></div>
+    <div class="pill"><div class="n">{{ counts.update }}</div><div class="l">updated</div></div>
+    <div class="pill"><div class="n">{{ counts.unchanged }}</div><div class="l">unchanged</div></div>
+    <div class="pill"><div class="n">{{ counts.delete }}</div><div class="l">deleted</div></div>
+    <div class="pill"><div class="n" {% if counts.error %}style="color:var(--red)"{% endif %}>{{ counts.error }}</div><div class="l">errors</div></div>
+  </div>
+  {% if counts.delete %}
+    <div class="note-red"><div>{{ counts.delete }} row{{ counts.delete|pluralize }} will be deleted (the <code>delete</code> column says yes and you ticked "Allow deletes").</div></div>
+  {% endif %}
+
+  {% if plan.preview_rows %}
+  <h2 style="margin-top:16px">First changes</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Row</th><th>What</th><th>Key</th><th>Changes</th></tr>
+    {% for r in plan.preview_rows %}
+      <tr>
+        <td>{{ r.line }}</td>
+        <td><span class="badge {% if r.action == 'create' %}green{% elif r.action == 'delete' %}red{% else %}blue{% endif %}">{{ r.action }}</span></td>
+        <td>{{ r.key_display }}</td>
+        <td class="muted">{% for f, old, new in r.changes %}<div>{{ f }}: {% if r.action == 'update' %}{{ old|default:"(blank)" }} &rarr; {% endif %}{{ new|default:"(blank)"|truncatechars:80 }}</div>{% endfor %}</td>
+      </tr>
+    {% endfor %}
+  </table></div>
+  {% endif %}
+
+  {% if plan.errors %}
+  <h2 style="margin-top:16px" id="errors">Errors ({{ counts.error }})</h2>
+  <div class="table-wrap"><table data-testid="upload-errors">
+    <tr><th>Row</th><th>Key</th><th>Problem</th></tr>
+    {% for r in plan.errors %}
+      <tr><td>{{ r.line }}</td><td>{{ r.key_display }}</td><td style="color:var(--action)">{% for e in r.errors %}<div>{{ e }}</div>{% endfor %}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% endif %}
+
+  {% if can_apply %}
+  <form method="post" action="{% url 'dash-data-upload' ds.key %}" style="margin-top:16px" data-testid="upload-apply">
+    {% csrf_token %}
+    <input type="hidden" name="token" value="{{ token }}">
+    {% if counts.error %}
+      <label class="row" style="gap:6px"><input type="checkbox" name="stop_on_error" style="width:auto"> <span>Stop if any row has an error (save nothing unless the whole file is clean)</span></label>
+      <p class="muted" style="font-size:12px">Left unticked, the {{ counts.error }} row{{ counts.error|pluralize }} with errors are skipped and every valid row is saved.</p>
+    {% endif %}
+    <button class="btn btn-primary" type="submit">Apply {{ counts.create|add:counts.update|add:counts.delete }} change{{ counts.create|add:counts.update|add:counts.delete|pluralize }}</button>
+    <a class="btn" href="{% url 'dash-data-upload' ds.key %}">Start over</a>
+  </form>
+  {% else %}
+  <p class="muted" style="margin-top:16px">{% if plan.file_errors %}Fix the file and upload it again.{% else %}Nothing to apply.{% endif %}</p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if not result %}
+<div class="card">
+  <h2>{% if plan %}Upload a different file{% else %}1. Choose your CSV{% endif %}</h2>
+  <form method="post" enctype="multipart/form-data" action="{% url 'dash-data-upload' ds.key %}" data-testid="upload-form">
+    {% csrf_token %}
+    <input type="file" name="file" accept=".csv,text/csv" required>
+    <label class="row" style="gap:6px;margin-top:10px"><input type="checkbox" name="allow_deletes" style="width:auto">
+      <span>Allow deletes (a row is only deleted if its <code>delete</code> cell says yes)</span></label>
+    <button class="btn btn-primary" type="submit">Check the file</button>
+  </form>
+  <p class="muted" style="font-size:12px">Step 1 only checks the file and shows you what would change. Nothing is saved until you press Apply on the next screen.</p>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>How this works</h2>
+  <ol>
+    <li><a href="{% url 'dash-data-template' ds.key %}">Download the template</a> (or <a href="{% url 'dash-data-export' ds.key %}">export what is there now</a>) and open it in Excel or Google Sheets. The two example rows are switched off; replace or delete them.</li>
+    <li>Rows are matched on <strong>{% for k in ds.key_fields %}{{ k }}{% if not forloop.last %} + {% endif %}{% endfor %}</strong>: a match updates that row, anything else is added. Rows missing from your file are never deleted.</li>
+    <li>To delete a row, put <code>yes</code> in its <code>delete</code> cell <em>and</em> tick "Allow deletes".</li>
+    <li>A blank cell clears a text or date field. For yes/no and number fields a blank cell keeps the current value (or the default for a new row). A column you leave out is not touched.</li>
+    <li>Save as CSV (UTF-8 is best; UTF-16 and Windows-1252 also work). Up to 1 MB and {{ max_rows }} rows.</li>
+    <li>Text that starts with <code>=</code> or <code>@</code> (or <code>+</code>/<code>-</code> when it is not a plain number) is refused, because a spreadsheet would run it as a formula. Put an apostrophe in front (<code>'-10% off</code>) if it really is text. Downloads add that apostrophe for you and it is removed again on upload.</li>
+    <li>Press <em>Apply</em> on the preview. Everything valid is saved together in one step.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h2>Columns</h2>
+  <div class="table-wrap"><table data-testid="column-table">
+    <tr><th>Column</th><th>Type</th><th>Required</th><th>Allowed / length</th><th>Notes</th><th>Example</th></tr>
+    {% for c in columns %}
+      <tr>
+        <td><code>{{ c.name }}</code></td>
+        <td>{{ c.type_label }}</td>
+        <td>{% if c.required %}yes{% else %}no{% endif %}</td>
+        <td>{% if c.choices %}{{ c.choices|join:", " }}{% elif c.max_length %}up to {{ c.max_length }} characters{% endif %}</td>
+        <td class="muted">{{ c.help }}</td>
+        <td>{{ c.example }}</td>
+      </tr>
+    {% endfor %}
+    <tr><td><code>delete</code></td><td>yes / no</td><td>no</td><td></td><td class="muted">yes deletes the matching row (needs "Allow deletes").</td><td></td></tr>
+  </table></div>
+</div>
+{% endblock %}

@@ -2,24 +2,30 @@
 out concretely. Numbers-Guard: every figure the agent can speak lives in a row here, so the
 LLM quotes it and never invents it.
 
-Idempotent — every block is ``update_or_create`` by the model's natural key (P0 acceptance
-D1: run twice → no duplicate rows). ``seed_all()`` runs blocks 1–16 (§7 mapping) in order;
-``manage.py seed_kb`` calls it.
+Idempotent and CREATE-ONLY by default — every block writes through ``_seed()`` by the model's
+natural key (P0 acceptance D1: run twice → no duplicate rows): a missing row is inserted, an existing
+row is left exactly as it is, so owner dashboard edits survive the ``seed_kb`` that the root
+docker-compose runs at every voice-web start. ``seed_all(refresh=True)`` (``seed_kb --refresh``)
+overwrites existing rows with the code defaults — the deliberate reset / new-seed-content deploy.
+``seed_all()`` runs blocks 1–16 (§7 mapping) in order; ``manage.py seed_kb`` calls it.
 
 Provenance tags from _research-education-blogs.md: [CONFIRMED] confirmed store facts;
 [WA-LAW] statutory; [SITE]/[GENERAL] distilled/general knowledge. Education + blog rows are
-provisional=True (verbatim house copy blocked by the Vercel wall — re-run seed_kb to update).
+provisional=True (verbatim house copy blocked by the Vercel wall — ``seed_kb --refresh`` to update).
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
+from collections import Counter
 from pathlib import Path
 
 from kb import models as m
 from kb.taxonomy_source import CONCENTRATE_SUBTYPE_VALUES  # parity-anchored to budtender
 from voice.constants import (
     AROMA_QUESTION,  # the one scent question: the phone prompt + the text brain
+    MEMBER_TOOLS,
 )
 from voice.constants import (
     ASSISTANT_MODEL as VAPI_MODEL,  # ADR-024 — single source is voice/constants.py
@@ -28,6 +34,47 @@ from voice.constants import ASSISTANT_PROVIDER as MODEL_PROVIDER
 
 VOICE_ID = "a3520a8f-226a-428d-9fcd-b0a4711a6829"  # Cartesia sonic-3 voice (default; switchable to 11labs in dashboard)
 VOICE_PROVIDER = "cartesia"  # default voice provider; dashboard can switch a role to "11labs"
+
+
+# ── The one write path every block uses (create-only unless refreshing) ─────────
+#
+# Every KB row below is owner-editable on the dashboard (prompts, model, voice, greeting, tools,
+# hours/address/phone, FAQ/policy/education text, is_active/confirmed toggles). The seed used to
+# ``update_or_create`` them at every boot, which reset those edits and — with publish-on-save on —
+# pushed the defaults to Vapi. Now no field is force-updated on an existing row: re-forcing
+# ``is_active`` would undo an owner's deactivation and re-forcing ``confirmed`` would turn an
+# owner's "call to confirm" back into a spoken fact (Numbers-Guard). Specials are not seeded at all.
+# New seed content reaches an existing DB only through ``seed_kb --refresh``.
+_refresh = False
+LAST_RUN: Counter = Counter()  # created / kept / refreshed by the most recent seed run
+
+
+@contextlib.contextmanager
+def seed_mode(*, refresh: bool):
+    """Run the blocks inside in create-only (``refresh=False``) or overwrite (``refresh=True``)
+    mode. The mode is module-level so no block can forget it: they all call ``_seed``."""
+    global _refresh
+    previous, _refresh = _refresh, bool(refresh)
+    try:
+        yield
+    finally:
+        _refresh = previous
+
+
+def _seed(model, lookup: dict, defaults: dict) -> bool:
+    """Insert ``lookup + defaults`` when no row matches ``lookup``; otherwise keep the existing row
+    untouched (create-only), or overwrite its ``defaults`` fields in refresh mode. Returns True
+    when a row was created."""
+    if _refresh:
+        _obj, created = model.objects.update_or_create(**lookup, defaults=defaults)
+        LAST_RUN["created" if created else "refreshed"] += 1
+        return created
+    if model.objects.filter(**lookup).exists():
+        LAST_RUN["kept"] += 1
+        return False
+    model.objects.create(**lookup, **defaults)
+    LAST_RUN["created"] += 1
+    return True
 
 
 # ── 1. FAQ Q&As (§8.1) ────────────────────────────────────────────────────────
@@ -317,9 +364,10 @@ FAQ_ROWS = [
 
 def seed_faq() -> int:
     for r in FAQ_ROWS:
-        m.FAQEntry.objects.update_or_create(
-            key=r["key"],
-            defaults={
+        _seed(
+            m.FAQEntry,
+            {"key": r["key"]},
+            {
                 "question": r["question"],
                 "answer": r["answer"],
                 "topic": r["topic"],
@@ -370,9 +418,10 @@ def seed_site_education() -> int:
     except (OSError, ValueError):
         return 0
     for r in rows:
-        m.EducationDoc.objects.update_or_create(
-            slug=r["slug"],
-            defaults={
+        _seed(
+            m.EducationDoc,
+            {"slug": r["slug"]},
+            {
                 "title": r["title"],
                 "topic": r.get("topic", ""),
                 "body": r["body"],
@@ -400,9 +449,10 @@ def seed_site_faqs() -> int:
     rows = rows + _FOOTER_FAQ_ROWS
     for r in rows:
         r = {**r, "paraphrases": r.get("paraphrases") or _SITE_FAQ_PARAPHRASES.get(r["key"], [])}
-        m.FAQEntry.objects.update_or_create(
-            key=r["key"],
-            defaults={
+        _seed(
+            m.FAQEntry,
+            {"key": r["key"]},
+            {
                 "question": r["question"],
                 "answer": r["answer"],
                 "topic": r.get("topic", "general"),
@@ -444,9 +494,10 @@ POLICY_CATEGORY_ROWS = [
 def seed_policy_categories() -> int:
     n = 0
     for slug, label, topic, weight in POLICY_CATEGORY_ROWS:
-        m.PolicyCategory.objects.update_or_create(
-            slug=slug,
-            defaults={"label": label, "topic": topic, "weight": weight, "is_active": True},
+        _seed(
+            m.PolicyCategory,
+            {"slug": slug},
+            {"label": label, "topic": topic, "weight": weight, "is_active": True},
         )
         n += 1
     return n
@@ -455,9 +506,10 @@ def seed_policy_categories() -> int:
 def seed_return_policy() -> int:
     seed_policy_categories()
     category = m.PolicyCategory.objects.get(slug="return_policy")
-    m.PolicyDocument.objects.update_or_create(
-        category=category,
-        defaults={
+    _seed(
+        m.PolicyDocument,
+        {"category": category},
+        {
             "title": "Return policy",
             "body": RETURN_POLICY_BODY,
             "citation": "WAC 314-55-079",
@@ -549,11 +601,10 @@ VENDOR_FACT_ROWS = [
 def seed_store_facts() -> int:
     n = 0
     for store, kind, label, value, confirmed in STORE_FACT_ROWS:
-        m.StoreFact.objects.update_or_create(
-            store=store,
-            kind=kind,
-            label=label,
-            defaults={"value": value, "confirmed": confirmed, "is_active": True},
+        _seed(
+            m.StoreFact,
+            {"store": store, "kind": kind, "label": label},
+            {"value": value, "confirmed": confirmed, "is_active": True},
         )
         n += 1
     return n  # never touches kind="special" rows — see the note above VENDOR_FACT_ROWS
@@ -564,11 +615,10 @@ def seed_vendor_facts() -> int:
     member speaks on the no-answer leg, KB-grounded (Numbers-Guard)."""
     n = 0
     for store, kind, label, value, confirmed in VENDOR_FACT_ROWS:
-        m.StoreFact.objects.update_or_create(
-            store=store,
-            kind=kind,
-            label=label,
-            defaults={"value": value, "confirmed": confirmed, "is_active": True},
+        _seed(
+            m.StoreFact,
+            {"store": store, "kind": kind, "label": label},
+            {"value": value, "confirmed": confirmed, "is_active": True},
         )
         n += 1
     return n
@@ -590,25 +640,23 @@ def seed_wa_limits() -> int:
     n = 0
     for term, value, notes in WA_LIMIT_ROWS:
         # As a StoreFact (so a "limits" FAQ query hits them).
-        m.StoreFact.objects.update_or_create(
-            store="",
-            kind="limit",
-            label=f"WA limit: {term}",
-            defaults={"value": f"{value} per visit. {notes}", "confirmed": True, "is_active": True},
+        _seed(
+            m.StoreFact,
+            {"store": "", "kind": "limit", "label": f"WA limit: {term}"},
+            {"value": f"{value} per visit. {notes}", "confirmed": True, "is_active": True},
         )
         # As a WeightTypeTaxonomy axis=limit row (so a "flower limit" weights query hits them).
-        m.WeightTypeTaxonomy.objects.update_or_create(
-            axis="limit",
-            term=term,
-            defaults={"value": value, "notes": notes, "is_active": True},
+        _seed(
+            m.WeightTypeTaxonomy,
+            {"axis": "limit", "term": term},
+            {"value": value, "notes": notes, "is_active": True},
         )
         n += 2
     # The age/ID rule note: DOH-Approved maps to budtender's doh_only filter.
-    m.StoreFact.objects.update_or_create(
-        store="",
-        kind="limit",
-        label="WA limit: age and ID",
-        defaults={
+    _seed(
+        m.StoreFact,
+        {"store": "", "kind": "limit", "label": "WA limit: age and ID"},
+        {
             "value": "21+, valid government photo ID; purchases are tracked so limits can't "
             "be exceeded in a transaction. We can filter to DOH-Compliant products if you'd like.",
             "confirmed": True,
@@ -778,10 +826,10 @@ def seed_weights_types() -> int:
 
     def _tax(axis, term, value, synonyms, notes):
         nonlocal n
-        m.WeightTypeTaxonomy.objects.update_or_create(
-            axis=axis,
-            term=term,
-            defaults={"value": value, "synonyms": synonyms, "notes": notes, "is_active": True},
+        _seed(
+            m.WeightTypeTaxonomy,
+            {"axis": axis, "term": term},
+            {"value": value, "synonyms": synonyms, "notes": notes, "is_active": True},
         )
         n += 1
 
@@ -862,9 +910,10 @@ EDUCATION_ROWS = [
 
 def seed_education() -> int:
     for r in EDUCATION_ROWS:
-        m.EducationDoc.objects.update_or_create(
-            slug=r["slug"],
-            defaults={
+        _seed(
+            m.EducationDoc,
+            {"slug": r["slug"]},
+            {
                 "title": r["title"],
                 "topic": r["topic"],
                 "body": r["body"],
@@ -906,9 +955,10 @@ BLOG_ROWS = [
 
 def seed_blogs() -> int:
     for r in BLOG_ROWS:
-        m.BlogDoc.objects.update_or_create(
-            slug=r["slug"],
-            defaults={
+        _seed(
+            m.BlogDoc,
+            {"slug": r["slug"]},
+            {
                 "title": r["title"],
                 "body": r["body"],
                 "source_url": r.get("source_url", ""),
@@ -1242,9 +1292,9 @@ VENDOR_BODY = (
     "  1. Greet B2B and warm: 'Hey — thanks for calling Happy Time {store_name}. Are you here "
     "with a delivery, a wholesale order, a manifest, or something else?' — but if they ALREADY "
     "said why they're calling or who they're with, don't re-ask it; go straight to step 2.\n"
-    "  2. ALWAYS try the warm transfer FIRST. Tell them 'Let me get our receiving team on the "
-    "line for you — one sec,' then use the transfer. The operator hears a short summary of the "
-    "call before connecting.\n"
+    "  2. ALWAYS try the warm transfer FIRST. Tell them plainly to hold: 'Please hold for just a "
+    "moment while I check if someone from our receiving team is free,' then use the transfer. The "
+    "operator hears a short summary of the call before connecting.\n"
     "  3. IF the team ANSWERS: the warm transfer completes and you're done — do NOT log a callback "
     "(the callback is only for when no one picks up).\n"
     "  4. IF NO ONE ANSWERS and the call comes back to you: apologize briefly and pivot to "
@@ -1323,16 +1373,218 @@ UNDER_21_DECLINE = (
 )
 
 
-# Appended to the two members that carry the remember_caller tool (voice/caller.py NAME_ROLES; the
+# Appended to the members that carry the remember_caller tool (voice/caller.py NAME_ROLES; the
 # tool is attached only while HHT_DYNAMIC_GREETING is on). It does nothing unless the prompt ends
 # with a CALLER line that says the name is unknown, so a static-mode call never triggers it.
-CALLER_NAME_ROLES = ("entry_router", "budtender")
+CALLER_NAME_ROLES = ("entry_router", "budtender", "concierge")
 CALLER_NAME_RULE = (
     "\n\nCALLER NAME: when the CALLER line at the end of your prompt says we do not know the "
     "caller's name, ask who you are speaking with ONCE, early and naturally, then call "
     "remember_caller with the first name they give. Never ask twice, never hold up their request "
     "for it, and if they would rather not say, carry on without it.\n"
 )
+
+
+# ── 16f. The concierge (HHT_SQUAD_MODE=single) — ONE voice for the whole call ─────────────
+# Composed from the tested multi-agent bodies above, so no rule is lost: each intent section below is
+# a verbatim slice of the persona that owned it (``_part`` fails at import if a slice drifts), plus
+# new text only where the old wording talked about another agent or a handoff. The multi bodies are
+# untouched (rollback to HHT_SQUAD_MODE=multi is byte-identical).
+
+
+def _part(text: str, start: str, end: str | None = None) -> str:
+    """The verbatim slice of ``text`` from ``start`` up to (not including) ``end``."""
+    i = text.index(start)  # ValueError at import = a source body changed under this slice
+    return text[i : text.index(end, i)] if end else text[i:]
+
+
+CONCIERGE_OPENING = (
+    HAPPY_TIME_TONE + " Three stores: Yakima, Mt Vernon, Pullman. You ALWAYS speak first; the call "
+    "opens with your greeting. You are the one voice on this line for the whole call: you answer store "
+    "questions, help people shop, handle vendors and deliveries, and take care of problems yourself.\n\n"
+)
+# The owner's complaint (2026-10): "let me get a member that knows" and then dead silence. The phrases
+# quoted below exist ONLY here, as prohibitions (the tests strip this block before scanning for them).
+CONCIERGE_ONE_VOICE = (
+    "ONE VOICE (binding): never say or hint that someone else is on this line or that you are passing "
+    "the caller along. Never say things like 'let me get a member that knows', 'let me get someone who "
+    "knows', 'a specialist', 'a colleague', 'a teammate', 'another agent', 'our budtender will help', "
+    "'transferring you to our budtender' or 'handing you over'. You do it yourself. The only person you "
+    "ever put a caller through to is a real person at the store, and only with transferCall (section "
+    "E); never say you are connecting them before a person has said yes.\n"
+)
+CONCIERGE_NO_SILENCE = (
+    "NEVER GO QUIET (binding): the caller must never hear dead air. When you call a tool, first say one "
+    "short natural filler ('One sec, let me check.') and then ALWAYS speak the result in your next "
+    "words; never end your turn on the filler. If a tool fails, errors, or returns nothing usable, say "
+    "so plainly ('Sorry, I can't pull that up right now.') and offer to take a message for the team or "
+    "to try something else; never pretend it worked.\n"
+)
+CONCIERGE_FIRST_SENTENCE = (
+    "ACT ON WHAT THEY ALREADY SAID: you already know what the caller wants from what they said, so "
+    "never re-ask it and never answer a clear request with 'how can I help?'. When the first sentence "
+    "states a need ('a 1:1 gummy for tonight', 'what time do you close', 'I'm dropping off a "
+    "delivery'), go straight into the matching section below with it. Ask at most ONE question per "
+    "turn, and keep every turn short: one to three short sentences.\n"
+)
+CONCIERGE_GROUNDING = (
+    "NEVER INVENT (binding): every hour, deal, price, stock level, product, potency, policy and callback "
+    "time you say comes from a tool result in this call (faq_lookup for store facts, the product tools "
+    "for products). If no tool gave it to you, say you're not sure and offer to have the team follow "
+    "up; never a guess, never from memory.\n"
+)
+CONCIERGE_STORE = (
+    "STORE: you usually know which store from the line they dialed. Never hold up a lookup to ask which "
+    "store; the server fills in the store the caller dialed. Ask which store (Yakima, Mt Vernon, or "
+    "Pullman) only when the caller means a different location or a store-specific answer depends on it, "
+    "and when you learn it emit structuredData.store = yakima | mount-vernon | pullman. If the caller "
+    "names a city or store that isn't one of our three, warmly say those are our only three locations "
+    "and ask which of the three; never invent, confirm, or look up a store we don't have.\n\n"
+)
+CONCIERGE_INFO = (
+    "A) STORE INFO (hours, deals and specials, returns, payment, pickup, location, limits, ID, and "
+    "cannabis basics like what indica, sativa, hybrid or terpenes mean, which are education, not "
+    "medical advice): "
+    + _part(FAQ_PERSONA_BODY, "Answer ONLY from the faq_lookup tool")
+    + " Pass the caller's own words as the query. Then ask whether there's anything else, or carry on "
+    "with what they were doing.\n\n"
+)
+CONCIERGE_RETAIL = (
+    "B) HELPING SOMEONE SHOP (looking for / recommend / what's good for / do you have): you are a warm, "
+    "no-pressure budtender here and you speak only what the tools return; you NEVER invent a product, "
+    "price, stock count, SKU, or THC number (Numbers-Guard). "
+    + _part(ENTRY_ROUTER_BODY, "Confirm 21+ with a SPOKEN question", " Keep it warm and brief.")
+    + " Category words: "
+    + _part(ENTRY_ROUTER_BODY, "a 'cart / 510 / vape pen", " (The budtender will ask")
+    + "\n"
+    + _part(BUDTENDER_BODY, "RUN THE CONSULTATION")
+    + "\n\n"
+)
+CONCIERGE_VENDOR = (
+    "C) VENDORS AND DELIVERIES (a wholesale rep, a driver dropping off, a manifest or purchase order, a "
+    "sample drop, an invoice or accounts-payable question): "
+    + _part(VENDOR_BODY, "This is B2B:", "\n\nDO THIS")
+    + " The under-21 rule does not apply to them.\n"
+    "  1. If they haven't said what it's about, ask once: 'Are you here with a delivery, a wholesale "
+    "order, a manifest, or something else?' If they already said why or who they're with, don't re-ask.\n"
+    "  2. ALWAYS try the transfer to the store FIRST, following section E (who and why, one short "
+    "'please hold' line, then transferCall).\n"
+    "  3. IF the team takes the call, you're done; do NOT log a callback (the callback is only for when "
+    "no one picks up).\n"
+    "  4. IF the team can't take it and the call comes back to you: use the name, company and reason you "
+    "already have, and only ask for what is missing.\n"
+    + _part(VENDOR_BODY, "  5. Once you have the reason", "  6. State the callback window")
+    + "  6. Speak the tool's spoken text, word for word, and nothing more about a follow-up: NEVER invent "
+    "a time or a window, and never promise a callback it did not confirm (it says so plainly when the "
+    "alert could not go out).\n\n"
+    "HOUSE RULES (binding): "
+    + _part(VENDOR_BODY, "warm transfer FIRST, callback is the fallback", " If the vendor turns into")
+    + " If the vendor turns into a DISPUTE ('your last order shorted me, I want money back') or asks for "
+    "a person repeatedly, follow section D instead of the callback loop.\n\n"
+)
+CONCIERGE_PROBLEMS = (
+    "D) PROBLEMS (a complaint, a defective product, a return or billing dispute, or a caller who has "
+    "asked for a person two or more times): be calm and caring. Your job is to DE-ESCALATE, FULLY "
+    "understand the issue, and get it to the team; you do NOT resolve the dispute or promise a refund "
+    "yourself.\n"
+    + _part(ESCALATION_BODY, "DO THIS, in order:", "  5. LAST RESORT only")
+    + "  5. LAST RESORT only: if the caller insists on a person right now and won't accept the "
+    "follow-up, THEN try the transfer in section E.\n\n"
+    + _part(ESCALATION_BODY, "HOUSE RULES (binding): your default is GATHER + EMAIL")
+    + "\n\n"
+)
+CONCIERGE_TRANSFER = (
+    "E) PUTTING SOMEONE THROUGH TO A PERSON (transferCall): for a vendor (section C), a problem the "
+    "caller still wants a person for (section D), or a caller who simply asks for a person (no "
+    "complaint): there, say the store-team line and go straight to step 1; never treat the request "
+    "itself as a complaint. The person is asked first and the caller is connected only if they say yes.\n"
+    "  1. Before you transfer, if you don't already know, ask ONE question: 'Who should I say is calling, "
+    "and what is it about?' If they would rather not say, carry on: the team will hear 'a caller'.\n"
+    "  2. Say ONE short line that repeats both, then call transferCall once: 'Thanks, NAME, one moment "
+    "while I see if someone from the team is free to help with REASON.' Never promise that someone is "
+    "available, and never say you are connecting them.\n"
+    "  3. If the call comes back to you because nobody could take it (declined, no answer, or "
+    "voicemail), say so plainly in one sentence and offer to take a message: get what they need and the "
+    "best way to reach them, then call notify_vendor_callback for a vendor or notify_staff_issue for "
+    "anyone else, and speak the confirmation it returns. Don't try the transfer again unless the caller "
+    "asks.\n"
+    "  4. Never say a phone number, and never tell the caller what the team was told beyond their name "
+    "and reason.\n"
+)
+# 2026-10-09: what a real-model simulation and an audit against the website chat showed the concierge
+# getting wrong (voice/evals traces). Concierge only; it follows the sections it corrects.
+CONCIERGE_PHONE_RULES = (
+    "F) GETTING THE DETAILS RIGHT (binding; these win over anything above):\n"
+    "  - 'Do you have / got any / what X do you have': call suggest_products RIGHT AWAY with what they "
+    "said (no consultation questions first), speak its spoken_summary, then ask at most ONE question to "
+    "narrow. ALWAYS set asked_price on suggest_products: true when they asked a price or how much, false "
+    "otherwise. With asked_price=false and no size, the tool gives you the picks without a price: speak "
+    "that instead of asking the size (this overrides the size-first rule in section B).\n"
+    "  - Categories: a pre-roll is category pre-roll, never flower. Indica, sativa or hybrid goes in "
+    "subcategory (with the effect). A named product ('the Jetty Blue Dream cart'): search its brand and "
+    "category, find it by name in the picks, then check_inventory with its sku; never put a product or "
+    "strain name in subcategory.\n"
+    "  - Holds: 'hold / set aside / save me one / order ahead' for something you suggested means "
+    "stage_phone_cart action=add_item with that pick's sku and the quantity they said (1 if they didn't). "
+    "Never say you can't hold items, and never ask for their phone number: the line already knows it. "
+    "When they say that's everything, call stage_phone_cart action=release.\n"
+    "  - Follow-ups: call notify_staff_issue or notify_vendor_callback BEFORE you say anything about a "
+    "follow-up, then speak the spoken text it returns; never promise a callback the tool didn't confirm.\n"
+    "  - Returns and refunds: call faq_lookup first and say what it says; never imply cash back. Say "
+    "'Washington state law' instead of reading out a WAC or RCW code.\n"
+    "  - Order status, cancelling or changing an online order, or a points balance: you can't see orders; "
+    "offer the store team (section E). Unsubscribe from texts or emails: take it with notify_staff_issue "
+    "(issue_type other) and never say they're already removed. 'Can you get X back in stock': "
+    "notify_staff_issue with issue_type restock_request.\n"
+    "  - After the 'not able to answer that safely' or 'not certain on that one' line, ask: 'Want me to "
+    "put you through to the store team, or take a message?' and follow section E or take the message.\n"
+    "  - A question about privacy or what we do with their number is a store-policy question: faq_lookup.\n"
+    "  - Never read a web address aloud (say 'our website'), and never repeat another business's name back "
+    "to the caller ('No, this is Happy Time' is enough).\n"
+)
+CONCIERGE_UNDER_21_SCOPE = (
+    "\n\nUNDER-21 APPLIES TO RETAIL ONLY: the rule below is for shopping, product questions, holds and "
+    "orders. Store info is fine for anyone, and a vendor or delivery caller is never asked their age."
+)
+CONCIERGE_SECTIONS = (
+    CONCIERGE_OPENING,
+    CONCIERGE_ONE_VOICE,
+    CONCIERGE_NO_SILENCE,
+    CONCIERGE_FIRST_SENTENCE,
+    CONCIERGE_GROUNDING + "\n",
+    CONCIERGE_STORE,
+    CONCIERGE_INFO,
+    CONCIERGE_RETAIL,
+    CONCIERGE_VENDOR,
+    CONCIERGE_PROBLEMS,
+    CONCIERGE_TRANSFER,
+    CONCIERGE_PHONE_RULES,
+)
+CONCIERGE_BODY = "".join(CONCIERGE_SECTIONS)
+
+
+# The concierge's custom tools: the one list in voice/constants.MEMBER_TOOLS.
+CONCIERGE_TOOLS = tuple(MEMBER_TOOLS["concierge"])
+
+
+def concierge_body() -> str:
+    """The full seeded concierge prompt: the sections above + the shared rule blocks every persona
+    carries (speaking rules, no medical claims, the retail-only under-21 decline, the caller-name rule)."""
+    return (
+        CONCIERGE_BODY
+        + SPEAKING_RULES
+        + NO_MEDICAL_CLAIMS
+        + CONCIERGE_UNDER_21_SCOPE
+        + UNDER_21_DECLINE
+        + CALLER_NAME_RULE
+    )
+
+
+def _entry_greeting_default() -> str:
+    """The concierge's greeting at creation: the owner's (possibly dashboard-edited) entry_router
+    greeting when there is one, so switching to single mode keeps the opener they already chose."""
+    row = m.AgentPrompt.objects.filter(role="entry_router").first()
+    return (row.first_message if row and row.first_message.strip() else "") or ENTRY_FIRST_MESSAGE
 
 
 def seed_agent_prompts() -> int:
@@ -1362,20 +1614,32 @@ def seed_agent_prompts() -> int:
             "body": ESCALATION_BODY,
             "tool_names": ["notify_staff_issue"],  # gather+email default; + transferCall (last-resort)
         },
+        # Single mode (the default): the one front agent. Its body is composed whole (the retail-only
+        # under-21 scope line must sit in front of the decline block). A NEW row: create-only, so no
+        # existing row or dashboard edit is touched, and the five rows above stay for rollback.
+        "concierge": {
+            "full_body": concierge_body(),
+            "tool_names": list(CONCIERGE_TOOLS),  # + transferCall (call.transfer) + remember_caller
+            "first_message": None,  # filled from the entry_router greeting at creation
+        },
     }
     for role, data in rows.items():
         speaking_rules = WRITTEN_SPEAKING_RULES if role == "written" else SPEAKING_RULES
-        body = data["body"] + speaking_rules + NO_MEDICAL_CLAIMS
-        if role != "vendor":  # vendor is B2B — deliberately no 21+ gate
+        body = data.get("full_body") or data["body"] + speaking_rules + NO_MEDICAL_CLAIMS
+        if role != "vendor" and "full_body" not in data:  # vendor is B2B — deliberately no 21+ gate
             body += UNDER_21_DECLINE
-        if role in CALLER_NAME_ROLES:
+        if role in CALLER_NAME_ROLES and "full_body" not in data:
             body += CALLER_NAME_RULE
-        # ponytail: seed sets the provider DEFAULTS; a dashboard edit overrides per-row and is the
-        # live source of truth. Re-running seed_kb resets these to defaults (same as body) — that's
-        # the intended "reset" behavior, not a bug. Add seed-vs-edit reconciliation only if asked.
-        m.AgentPrompt.objects.update_or_create(
-            role=role,
-            defaults={
+        first_message = data.get("first_message", "")
+        if first_message is None:
+            first_message = _entry_greeting_default()
+        # ponytail: seed sets the provider DEFAULTS for a role that has no row yet; a dashboard edit
+        # is the live source of truth and survives every boot-time seed_kb (create-only). Only an
+        # explicit ``seed_kb --refresh`` resets prompt/model/voice/tools/greeting to these defaults.
+        _seed(
+            m.AgentPrompt,
+            {"role": role},
+            {
                 "body": body,
                 "model_provider": MODEL_PROVIDER,
                 "vapi_model": VAPI_MODEL,
@@ -1383,7 +1647,7 @@ def seed_agent_prompts() -> int:
                 "voice_id": VOICE_ID,
                 "tool_names": data["tool_names"],
                 "is_active": True,
-                "first_message": data.get("first_message", ""),
+                "first_message": first_message,
             },
         )
     return len(rows)
@@ -1392,14 +1656,20 @@ def seed_agent_prompts() -> int:
 # ── seed_all (blocks 1–16) ────────────────────────────────────────────────────
 
 
-def seed_all() -> dict[str, int]:
-    """Run every seed block in order (idempotent). Returns per-block row counts.
+def seed_all(*, refresh: bool = False) -> dict[str, int]:
+    """Run every seed block in order (idempotent). Returns per-block seed-row counts (the same
+    numbers whether a row was created or kept); ``LAST_RUN`` holds this run's created / kept /
+    refreshed split.
+
+    ``refresh=False`` (the boot-time default) only inserts missing rows; ``refresh=True``
+    (``seed_kb --refresh``) also overwrites existing rows with the code defaults.
 
     Wrapped in ``kb.signals.bulk()`` so the boot-time seed sends one downstream nudge per
     system at the end instead of one per row."""
     from kb import signals
 
-    with signals.bulk():
+    LAST_RUN.clear()
+    with seed_mode(refresh=refresh), signals.bulk():
         return _seed_all_inner()
 
 

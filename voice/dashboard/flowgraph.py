@@ -4,7 +4,7 @@ The canvas DOCUMENTS the live Squad shape + per-transition trigger conditions; i
 runtime guardrail. ``clean_graph`` is the fail-closed enforcement boundary (ported + tightened from
 swedish-bot ``dashboard/views.py::_clean_graph``):
 
-  * role allowlist = exactly the 5 Squad members (``_AGENT_ROLES``) — an unknown role is rejected.
+  * role allowlist = exactly the phone Squad members (``_AGENT_ROLES``) — an unknown role is rejected.
   * node-kind allowlist = the Vapi node kinds (``NODE_KINDS``) — an unknown kind is rejected.
   * MAX_NODES=80 / MAX_EDGES=160 / MAX_COLLECT=30 size caps; char caps on every string.
   * coords clamped to ``[0, 6000]`` (never rejected — clamped, per B2).
@@ -18,8 +18,8 @@ from __future__ import annotations
 # Vapi node kinds the canvas can place (docs/config only).
 NODE_KINDS = ["agent", "handoff", "tool", "transfer", "end"]
 MAX_NODES, MAX_EDGES, MAX_COLLECT = 80, 160, 30
-# The role allowlist = exactly the 5 Squad members (fail-closed in clean_graph).
-_AGENT_ROLES = {"entry_router", "budtender", "faq", "vendor", "escalation"}
+# The role allowlist = exactly the Squad members, incl. the single-mode concierge (fail-closed in clean_graph).
+_AGENT_ROLES = {"concierge", "entry_router", "budtender", "faq", "vendor", "escalation"}
 
 # Replaces swedish-bot AGENT_FLOW — the staff-facing blurb + step per Squad member.
 VOICE_AGENT_FLOW = {

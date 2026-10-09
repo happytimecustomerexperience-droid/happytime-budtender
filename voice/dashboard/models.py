@@ -73,6 +73,46 @@ class BotCapability(models.Model):
         return f"BotCapability<{self.key}={'on' if self.enabled else 'off'}>"
 
 
+class VendorAllowlistEntry(models.Model):
+    """One vendor whose calls skip the AI and ring the owner's phone (``voice/vendor_allowlist.py``,
+    the /dashboard/vendor-allowlist/ page).
+
+    ``phone`` is the vendor's business number as the owner typed it, normalised to US E.164
+    (``+1XXXXXXXXXX``) and matched EXACTLY against the inbound caller-ID. It is a contact the owner
+    entered, not a caller's number captured from a call: calls themselves are still logged by the
+    peppered hash only (``VoiceCall.caller_phone_hash``), and this table lives here rather than in
+    ``crm`` so that app keeps its no-raw-number rule. ``store`` is a label (which store the vendor
+    serves); it does not limit which line they can call."""
+
+    STORE_CHOICES = [
+        ("", "Any store"),
+        ("yakima", "Yakima"),
+        ("mount-vernon", "Mount Vernon"),
+        ("pullman", "Pullman"),
+    ]
+
+    name = models.CharField(max_length=120)
+    phone = models.CharField(max_length=16, unique=True)  # +1XXXXXXXXXX, exact-match key
+    note = models.CharField(max_length=255, blank=True)
+    active = models.BooleanField(default=True)
+    store = models.CharField(max_length=32, blank=True, choices=STORE_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_matched_at = models.DateTimeField(null=True, blank=True)
+    match_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["name", "id"]
+
+    def __str__(self) -> str:
+        return f"VendorAllowlistEntry<{self.name} {'on' if self.active else 'off'}>"
+
+    @property
+    def phone_display(self) -> str:
+        """``(509) 555-1212`` for a normalised number; the stored value otherwise."""
+        d = self.phone[2:] if self.phone.startswith("+1") and len(self.phone) == 12 else ""
+        return f"({d[:3]}) {d[3:6]}-{d[6:]}" if d else self.phone
+
+
 class RankingWeights(models.Model):
     """Singleton (pk=1) — the owner's ranking-weight levers, pushed to budtender (§4.6)."""
 
@@ -178,3 +218,25 @@ class JobRun(models.Model):
             cls.objects.filter(name=name).order_by("-started_at", "-id").values_list("pk", flat=True)[: cls.KEEP]
         )
         cls.objects.filter(name=name).exclude(pk__in=keep).delete()
+
+
+class BulkBatchLog(models.Model):
+    """Audit trail for one bulk write (CSV upload, Edit all, a row action over a selection): which
+    dataset, who, and how many rows -- never the rows themselves."""
+
+    dataset = models.CharField(max_length=64)
+    action = models.CharField(max_length=32)  # upload | edit-all | bulk-action
+    username = models.CharField(max_length=150, blank=True)
+    rows = models.PositiveIntegerField(default=0)
+    created = models.PositiveIntegerField(default=0)
+    updated = models.PositiveIntegerField(default=0)
+    deleted = models.PositiveIntegerField(default=0)
+    unchanged = models.PositiveIntegerField(default=0)
+    errors = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"BulkBatchLog<{self.dataset} {self.action} by {self.username or '?'}>"

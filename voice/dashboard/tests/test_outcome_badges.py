@@ -31,6 +31,11 @@ def client_staff(client, staff):
     return client
 
 
+def test_every_call_outcome_has_a_badge():
+    """A new Outcome must not render as raw grey text (transfer_unavailable once did)."""
+    assert set(Outcome.values) <= set(monitor._OUTCOME_BADGE)
+
+
 # ── unit: the filter for every outcome monitor.call_outcome_badge knows about ──
 @pytest.mark.parametrize("outcome", list(monitor._OUTCOME_BADGE.keys()))
 def test_outcome_badge_filter_matches_monitor_for_every_known_outcome(outcome):

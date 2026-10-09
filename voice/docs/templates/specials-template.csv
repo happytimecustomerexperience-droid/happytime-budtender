@@ -1,0 +1,3 @@
+﻿store,label,value,source_url,confirmed,valid_from,valid_to,weight,is_active,delete
+yakima,Example: Monday flower deal,20% off all flower on Mondays.,,yes,2026-11-01,2026-11-30,110,no,
+,Example: loyalty double points,Double points every Tuesday.,,yes,,,110,no,

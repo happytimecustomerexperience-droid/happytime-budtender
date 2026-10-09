@@ -1,0 +1,18 @@
+{# Stacked-column chart from analytics_views.stacked_columns. Inputs: chart, aria, unit_word. #}
+{% if chart.series|length > 1 %}
+<div class="legend">{% for label, css in chart.series %}<span><i class="{{ css }}"></i>{{ label }}</span>{% endfor %}</div>
+{% endif %}
+<div class="chart-scroll">
+<svg class="chart" viewBox="0 0 {{ chart.w }} {{ chart.h }}" role="img" aria-label="{{ aria }}">
+  {% for t in chart.ticks %}<line class="grid-line" x1="{{ chart.left }}" x2="{{ chart.right }}" y1="{{ t.y }}" y2="{{ t.y }}"/><text x="{{ chart.tick_x }}" y="{{ t.ty }}" text-anchor="end">{{ t.label }}</text>{% endfor %}
+  <line class="axis-line" x1="{{ chart.left }}" x2="{{ chart.right }}" y1="{{ chart.baseline }}" y2="{{ chart.baseline }}"/>
+  {% for c in chart.cols %}<g class="col"><title>{{ c.title }}</title><rect class="hit" x="{{ c.hit_x }}" y="{{ chart.plot_top }}" width="{{ c.hit_w }}" height="{{ chart.plot_h }}"/>{% for s in c.segs %}<path class="{{ s.css }}" d="{{ s.d }}"/>{% endfor %}</g>{% endfor %}
+  {% for x in chart.xlabels %}<text x="{{ x.x }}" y="{{ chart.label_y }}" text-anchor="middle">{{ x.text }}</text>{% endfor %}
+</svg>
+</div>
+<details class="tv"><summary>Table view ({{ chart.cols|length }} {{ chart.unit }}{{ chart.cols|length|pluralize }})</summary>
+<div class="table-wrap"><table>
+  <tr><th>{% if chart.unit == "week" %}Week{% else %}Day{% endif %}</th>{% for label, css in chart.series %}<th class="num">{{ label }}</th>{% endfor %}{% if chart.series|length > 1 %}<th class="num">Total</th>{% endif %}</tr>
+  {% for c in chart.cols %}<tr><td>{{ c.label }}</td>{% for v in c.values %}<td class="num">{{ v }}</td>{% endfor %}{% if chart.series|length > 1 %}<td class="num">{{ c.total }}</td>{% endif %}</tr>{% endfor %}
+</table></div>
+</details>

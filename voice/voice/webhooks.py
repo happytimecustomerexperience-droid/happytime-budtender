@@ -146,19 +146,13 @@ def _extract_tool_calls(message: dict) -> list[dict]:
 # ── Per-event handlers ─────────────────────────────────────────────────────────
 
 
-def handle_assistant_request(message: dict) -> JsonResponse:
-    """Vapi asks which assistant/overrides to use for an inbound call. Return the Squad-fronting
-    assistant id + hydrated ``variableValues`` so no literal ``{{store_name}}`` ever ships (§4.2)."""
+def call_variables(store: str) -> dict:
+    """The per-call ``variableValues`` every prompt's ``{{store_name}}`` / ``{{store_hours}}`` /
+    ``{{transfer_number}}`` resolve to (the caller block is added separately). Shared with the voice
+    eval simulator so it hears exactly what Vapi is told."""
     from django.conf import settings
 
-    from kb.models import AgentPrompt, StoreFact
-
-    store = _resolve_store(message)
-
-    assistant_id = ""
-    prompt = AgentPrompt.objects.filter(role="faq", is_active=True).first()
-    if prompt and prompt.vapi_assistant_id:
-        assistant_id = prompt.vapi_assistant_id
+    from kb.models import StoreFact
 
     store_name = {
         "yakima": "Happy Time Yakima",
@@ -181,11 +175,36 @@ def handle_assistant_request(message: dict) -> JsonResponse:
         "pullman": getattr(settings, "HHT_TRANSFER_NUMBER_PULLMAN", ""),
     }.get(store, "")
 
-    variables = {
-        "store_name": store_name,
-        "store_hours": hours,
-        "transfer_number": transfer,
-    }
+    return {"store_name": store_name, "store_hours": hours, "transfer_number": transfer}
+
+
+def handle_assistant_request(message: dict) -> JsonResponse:
+    """Vapi asks which assistant/overrides to use for an inbound call. Return the Squad-fronting
+    assistant id + hydrated ``variableValues`` so no literal ``{{store_name}}`` ever ships (§4.2)."""
+    from kb.models import AgentPrompt
+
+    store = _resolve_store(message)
+
+    # An allowlisted vendor skips the AI and rings the owner (voice/vendor_allowlist.py). ``None``
+    # (no match, switch off, no owner number, junk caller-ID, any error) = answer exactly as before.
+    from voice import vendor_allowlist
+
+    direct = vendor_allowlist.direct_destination(message, store)
+    if direct is not None:
+        return JsonResponse(direct)
+
+    assistant_id = ""
+    from voice import constants as C
+
+    # Single mode answers with the concierge (it can do everything) once it has an assistant id.
+    roles = (C.CONCIERGE_ROLE, "faq") if C.squad_mode() == "single" else ("faq",)
+    for role in roles:
+        prompt = AgentPrompt.objects.filter(role=role, is_active=True).first()
+        if prompt and prompt.vapi_assistant_id and not prompt.vapi_assistant_id.startswith("dryrun-"):
+            assistant_id = prompt.vapi_assistant_id
+            break
+
+    variables = call_variables(store)
     from voice import caller
 
     if caller.dynamic_greeting():
@@ -387,6 +406,11 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
 
     # P2 deterministic classification (code owns the label; the model only fills slots).
     outcome, reason = outcomes.classify_outcome(message, transcript)
+    prior = VoiceCall.objects.filter(call_id=call_id).values_list("outcome", "reason").first()
+    # The allowlist sent it to the owner: keep that label, unless the owner was asked and did not take
+    # it (voice/consult.py): then the call is the callback / "person unavailable" it became.
+    if prior and prior[0] == "vendor_direct" and outcome not in ("transfer_unavailable", "vendor_callback"):
+        outcome, reason = prior
     human_count = outcomes.human_requested_count(message, transcript)
     transferred, disposition = outcomes.transfer_disposition(message, reason)
     # Which store's number was ACTUALLY dialled (not the caller's store): "" when the call had no
@@ -449,6 +473,17 @@ def handle_end_of_call_report(message: dict) -> JsonResponse:
                 budtender().phone_cart_release({"call_id": call_id, "store": store})
             except Exception:  # noqa: BLE001 - release is best-effort and must not break the webhook
                 logger.warning("phone-cart release failed for %s", call_id, exc_info=True)
+
+    # Customer memory: the CUSTOMER's own redacted turns go to budtender's shared memory. Only for a
+    # trusted (carrier-caller-ID) caller; best-effort and never in the way of the durable write above.
+    try:
+        from voice import caller, tasks
+
+        turns = caller.learnable_turns(message, store, _redact_phoneish)
+        if turns:
+            tasks.queue_memory_learn(call_id, turns)
+    except Exception:  # noqa: BLE001 - memory is an enhancement, never a reason to fail the report
+        logger.warning("customer-memory learn not queued for %s", call_id, exc_info=True)
 
     try:
         from voice import tasks

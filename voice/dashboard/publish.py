@@ -31,8 +31,11 @@ from core.services import vapi
 from voice import constants as C
 from voice import provision
 
-# The 5 Squad members, in dependency order (assistants before squad).
-MEMBER_ROLES = ["entry_router", "budtender", "faq", "vendor", "escalation"]
+# The phone members, in dependency order (assistants before squad). `concierge` is the single front
+# agent (HHT_SQUAD_MODE=single, the default); the five others are the multi-agent squad, kept so a
+# rollback to HHT_SQUAD_MODE=multi has current prompts. Without `concierge` here Publish and
+# publish-on-save silently skipped the live agent.
+MEMBER_ROLES = ["concierge", "entry_router", "budtender", "faq", "vendor", "escalation"]
 
 
 @dataclass

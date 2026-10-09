@@ -160,6 +160,11 @@ class CustomerProfile(models.Model):
     # Set when the weekly merge folded this row into another (the phone stays, as a pointer).
     merged_into = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL,
                                     related_name="merged_from")
+    # Customer memory v1 (docs/contracts/customer-memory-v1.md, budtender/memory.py): style, stated
+    # likes/dislikes/context, short notes, and `derived` (from purchases). Written ONLY through
+    # memory.py (allowlist + 4 KB cap) and only from a TRUSTED session (carrier caller-ID).
+    memory = models.JSONField(default=dict, blank=True)
+    memory_updated_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self) -> str:
         return f"CustomerProfile({self.phone})"
@@ -180,12 +185,22 @@ class ChatSession(models.Model):
     # visitor; owner-approved identity, HHT_WEB_PHONE_IDENTITY). A website request personalises
     # from `customer` only when this is set.
     identity_via = models.CharField(max_length=16, blank=True)
+    # What this conversation taught us while its identity is NOT trusted (typed website phone,
+    # anonymous): same schema as CustomerProfile.memory minus `derived`. Never merged into a profile;
+    # cleared by identity.unlink_session / forget and when the session changes hands.
+    learned = models.JSONField(default=dict, blank=True)
     is_active = models.BooleanField(default=True)
     started_at = models.DateTimeField(auto_now_add=True)
     last_active_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        indexes = [models.Index(fields=["phone", "-last_active_at"])]
+        # Conversations are kept forever (see docs/data-retention in budtender/CLAUDE.md): these
+        # indexes keep the owner dashboard and the per-store/day rollups fast as history grows.
+        indexes = [
+            models.Index(fields=["phone", "-last_active_at"]),
+            models.Index(fields=["-last_active_at"], name="chatsession_active_idx"),
+            models.Index(fields=["location_slug", "-started_at"], name="chatsession_store_idx"),
+        ]
 
 
 class ChatMessage(models.Model):
@@ -197,7 +212,8 @@ class ChatMessage(models.Model):
     ts = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["ts"]
+        ordering = ["ts", "id"]  # id breaks ties: a persisted snapshot inserts many rows in one instant
+        indexes = [models.Index(fields=["session", "ts"], name="chatmessage_session_ts_idx")]
 
 
 class Feedback(models.Model):
@@ -223,6 +239,9 @@ class AnalyticsEvent(models.Model):
     """Every chat/menu interaction. Phone is stored HASHED (never raw) so the
     analytics tables hold no PII. Visible only behind the Cloudflare-Access admin."""
     session_token = models.CharField(max_length=64, db_index=True, blank=True)
+    # The browser's anonymous visitor id (hht-visitor-id), lifted out of props so "distinct
+    # shoppers" is an indexed SQL count, not a scan of JSON. Empty for rows written before it existed.
+    visitor_id = models.CharField(max_length=64, blank=True, db_index=True)
     phone_hash = models.CharField(max_length=64, blank=True, db_index=True)
     location_slug = models.CharField(max_length=32, blank=True, db_index=True)
     channel = models.CharField(max_length=16, default="chat")  # chat|menu|questionnaire
@@ -231,7 +250,11 @@ class AnalyticsEvent(models.Model):
     ts = models.DateTimeField(auto_now_add=True, db_index=True)
 
     class Meta:
-        indexes = [models.Index(fields=["event_type", "-ts"]), models.Index(fields=["location_slug", "-ts"])]
+        indexes = [
+            models.Index(fields=["event_type", "-ts"]),
+            models.Index(fields=["location_slug", "-ts"]),
+            models.Index(fields=["session_token", "ts"], name="analyticsevent_session_ts_idx"),
+        ]
 
 
 class PhoneCartDraft(models.Model):
@@ -351,9 +374,54 @@ class SuggestedProduct(models.Model):
     reason_code = models.CharField(max_length=32, blank=True)
     shown_at = models.DateTimeField(auto_now_add=True)
     accepted = models.BooleanField(null=True, blank=True)
+    # docs/contracts/suggestion-analytics-v1.md — what the customer was shown, frozen at suggestion
+    # time (budtender.suggestions.snapshot: customer-facing fields only, never cost/margin), so the row
+    # still means something once the SKU leaves the menu.
+    snapshot = models.JSONField(default=dict, blank=True)
+    # brand | category-family | product-line (budtender.suggestions.sibling_key); "" = never a sibling.
+    sibling_key = models.CharField(max_length=255, blank=True, db_index=True)
+    # phone|chat|questionnaire|similar|pairing|menu|unknown (budtender.suggestions.CHANNELS)
+    channel = models.CharField(max_length=16, default="unknown", db_index=True)
+    # The session's identity_via at suggestion time; updated when the session later links.
+    identity_via = models.CharField(max_length=16, blank=True)
 
     class Meta:
         indexes = [
             models.Index(fields=["customer", "-shown_at"]),
             models.Index(fields=["session", "-shown_at"]),
+            models.Index(fields=["kind", "-shown_at"], name="suggested_kind_shown_idx"),
+            models.Index(fields=["-shown_at"], name="suggested_shown_idx"),
+            models.Index(fields=["channel", "-shown_at"], name="suggested_channel_shown_idx"),
+            models.Index(fields=["location_slug", "-shown_at"], name="suggested_store_shown_idx"),
         ]
+
+
+class SuggestionOutcome(models.Model):
+    """Did the customer buy what we suggested (or a sibling) within the window? One per
+    SuggestedProduct, created with it (budtender.suggestions). Attribution is event-driven from the
+    transaction ingest; the hourly close job decides the rest. Customer-facing amounts only."""
+
+    STATUS = (("pending", "pending"), ("bought_exact", "bought_exact"), ("bought_sibling", "bought_sibling"),
+              ("not_bought", "not_bought"), ("unattributable", "unattributable"))
+    MATCH = (("exact", "exact"), ("sibling_size", "sibling_size"), ("sibling_strain", "sibling_strain"),
+             ("sibling_both", "sibling_both"), ("", ""))
+
+    suggestion = models.OneToOneField(SuggestedProduct, on_delete=models.CASCADE, related_name="outcome")
+    status = models.CharField(max_length=16, choices=STATUS, default="pending", db_index=True)
+    match_kind = models.CharField(max_length=16, choices=MATCH, blank=True)
+    matched_sku = models.CharField(max_length=64, blank=True)
+    matched_product_id = models.CharField(max_length=64, blank=True)
+    matched_name = models.CharField(max_length=255, blank=True)
+    matched_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # line total
+    matched_at = models.DateTimeField(null=True, blank=True)
+    # The transaction line that decided it ("<tx id>:<product id>:<line #>", or "history:<key>" when it
+    # came from purchase_history): re-ingesting that line is a no-op.
+    matched_line = models.CharField(max_length=160, blank=True)
+    window_ends_at = models.DateTimeField(db_index=True)
+    evaluated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "window_ends_at"], name="outcome_status_window_idx")]
+
+    def __str__(self) -> str:
+        return f"SuggestionOutcome({self.suggestion_id} {self.status})"

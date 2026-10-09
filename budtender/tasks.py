@@ -318,7 +318,7 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
         # Always capture the latest Dutchie name for EVERY customer seen (even gated ones).
         if name_by_id.get(cid):
             name_by_phone[phone] = name_by_id[cid]
-        for it in (tx.get("items") or []):
+        for line_no, it in enumerate(tx.get("items") or []):
             if it.get("isReturned"):
                 continue
             pid = str(it.get("productId") or "")
@@ -361,6 +361,12 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
                     "first_bought_at": bought_at,
                     "last_bought_at": bought_at,
                     "times_bought": times_bought,
+                    # Suggestion attribution only (budtender.suggestions.attribute_lines); _fold_history
+                    # builds history entries from an explicit key list, so these never reach the profile.
+                    "tx_line": f"{tx_id or bought_at}:{pid}:{line_no}",
+                    "line_total": round(float(it.get("unitPrice") or 0) * qty, 2),
+                    "_line_name": str(it.get("productName") or "")[:255],
+                    "_line_brand": str(it.get("brandName") or "")[:128],
                 })
     for phone, lines in by_phone.items():
         _fold_history(phone, lines, name=name_by_phone.get(phone))
@@ -393,6 +399,15 @@ def sync_transactions(location_slug: str, days: int | None = None, full: bool = 
     cache.set(f"vel:{location_slug}", velocity, timeout=14 * 24 * 3600)
     classify_products(location_slug)   # propagate fresh velocity → Product.velocity + buckets
     return len(by_phone)
+
+
+@shared_task
+def close_suggestion_windows() -> dict:
+    """Hourly: decide suggestions whose 10-day window + 1 day of sync lag has passed — ``not_bought``
+    when the customer is known, else ``unattributable`` (budtender.suggestions.close_expired). Idempotent."""
+    from . import suggestions
+
+    return suggestions.close_expired()
 
 
 @shared_task
@@ -496,7 +511,125 @@ def recompute_affinity(phone: str) -> bool:
         "bucket_mix", "price_tier", "novelty_score", "total_orders",
         "thc_min", "thc_max", "last_purchase_at", "computed_at",
     ])
+    _store_derived(profile)
     return True
+
+
+def _store_derived(profile: CustomerProfile) -> None:
+    """``memory["derived"]`` from ``customer_model.compute_derived(profile)`` (purchases only, never
+    chat text). Guarded: a missing module or a failing compute leaves memory as it was."""
+    try:
+        from . import customer_model
+
+        compute = getattr(customer_model, "compute_derived", None)
+    except Exception:  # noqa: BLE001 - the module ships separately; affinity still stands without it
+        logger.info("customer_model.compute_derived unavailable; derived memory not refreshed")
+        return
+    if not callable(compute):
+        return
+    try:
+        derived = compute(profile)
+    except Exception:  # noqa: BLE001
+        logger.warning("compute_derived failed for profile %s", profile.pk, exc_info=True)
+        return
+    from . import memory
+
+    memory.set_derived(profile, derived)
+
+
+# ── customer memory: learn from finished website chats (docs/contracts/customer-memory-v1.md) ──
+LEARN_IDLE_MINUTES = 10           # a chat counts as finished after this much quiet
+LEARN_LOOKBACK = timedelta(days=2)
+LEARN_SWEEP_LIMIT = 300
+
+
+@shared_task(ignore_result=True)
+def learn_from_session(session_id: int) -> dict:
+    """Learn from one chat session's NEW customer turns (ids past ``learned["upto"]``). Writes per
+    tier (memory_learn.learn): trusted -> profile memory, otherwise the session's own ``learned``.
+    Idempotent (the watermark + digest) and never raises."""
+    from . import memory_learn
+    from .models import ChatMessage, ChatSession
+
+    try:
+        session = ChatSession.objects.filter(pk=session_id).first()
+        if session is None:
+            return {"ok": True, "stored": "none"}
+        upto = (session.learned or {}).get("upto") if isinstance(session.learned, dict) else None
+        rows = ChatMessage.objects.filter(session=session, role="user")
+        if isinstance(upto, int):
+            rows = rows.filter(pk__gt=upto)
+        rows = list(rows.order_by("-id").values_list("id", "content")[: memory_learn.MAX_TURNS])[::-1]
+        if not rows:
+            return {"ok": True, "stored": "none"}
+        out = memory_learn.learn(session, [c for _, c in rows], channel=session.channel,
+                                 use_llm=memory_learn.llm_enabled(), upto=rows[-1][0])
+        _queue_summary(session, out.get("tier"))
+        return out
+    except Exception:  # noqa: BLE001 - best-effort
+        logger.warning("learn_from_session failed for %s", session_id, exc_info=True)
+        return {"ok": False, "stored": "none"}
+
+
+def _queue_summary(session, tier: str | None, turns: list | None = None, channel: str = "") -> bool:
+    """Queue the AI conversation summary (HHT_MEMORY_SUMMARIES + a Gemini key) for a session that
+    names someone; the task itself is idempotent and re-checks the tier under a lock."""
+    from . import memory, memory_summary
+    from .fire import fire
+
+    if session is None or tier in (None, memory.ANONYMOUS) or not memory_summary.enabled():
+        return False
+    return fire(summarize_conversation, session.pk, turns, channel)
+
+
+@shared_task(ignore_result=True)
+def summarize_conversation(session_id: int, turns: list | None = None, channel: str = "") -> dict:
+    """One AI summary of what the customer said in a finished call/chat (budtender.memory_summary)."""
+    from . import memory_summary
+
+    return memory_summary.summarize_session(session_id, turns, channel)
+
+
+@shared_task(ignore_result=True)
+def consolidate_memory_summaries(profile_id: int) -> dict:
+    """Fold a customer's conversation summaries into ONE (budtender.memory_summary.consolidate)."""
+    from . import memory_summary
+
+    return memory_summary.consolidate(profile_id)
+
+
+@shared_task(ignore_result=True)
+def learn_llm_notes(session_id: int, turns: list, channel: str = "voice") -> dict:
+    """The optional model-phrased notes for turns a request already learned deterministically
+    (memory/learn queues this only while HHT_MEMORY_LLM is on)."""
+    from . import memory_learn
+    from .models import ChatSession
+
+    session = ChatSession.objects.filter(pk=session_id).first()
+    return memory_learn.learn_llm(session, turns, channel=channel)
+
+
+@shared_task(ignore_result=True)
+def learn_idle_sessions() -> dict:
+    """Every few minutes: learn from website chats quiet for >= LEARN_IDLE_MINUTES that have customer
+    turns past their watermark. Phone calls learn at call end through ``memory/learn``."""
+    from .models import ChatMessage, ChatSession
+
+    now = datetime.now(timezone.utc)
+    quiet = ChatSession.objects.filter(
+        last_active_at__lte=now - timedelta(minutes=LEARN_IDLE_MINUTES),
+        last_active_at__gte=now - LEARN_LOOKBACK,
+    ).exclude(channel="voice").exclude(session_token__startswith="vc-").order_by("-last_active_at")
+    done = 0
+    for sid, learned in quiet.values_list("id", "learned")[:LEARN_SWEEP_LIMIT]:
+        upto = learned.get("upto") if isinstance(learned, dict) else None
+        newer = ChatMessage.objects.filter(session_id=sid, role="user")
+        if isinstance(upto, int):
+            newer = newer.filter(pk__gt=upto)
+        if newer.exists():
+            learn_from_session(sid)
+            done += 1
+    return {"learned": done}
 
 
 @shared_task
@@ -713,6 +846,15 @@ def _fold_history(phone: str, lines: list[dict], name: str | None = None) -> Non
         SuggestedProduct.objects.filter(
             customer=profile, sku__in=bought_skus, accepted__isnull=True
         ).update(accepted=True)
+
+    # Suggestion analytics v1: these lines decide the customer's open suggestions (bought the product or
+    # a sibling within the window). Idempotent, so a rebuild re-folding the same lines changes nothing.
+    try:
+        from . import suggestions
+
+        suggestions.attribute_lines(profile, lines)
+    except Exception:  # noqa: BLE001 - attribution must never fail the history ingest
+        logger.warning("suggestion attribution failed for profile %s", profile.pk, exc_info=True)
 
     recompute_affinity(phone)
 

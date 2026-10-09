@@ -10,7 +10,8 @@ class ConversationBudtender:
         self.upserts = []
         self.releases = []
 
-    def search(self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None):
+    def search(self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None,
+               source=None, record=True):
         self.search_calls.append({"slots": slots, "location": location, "phone": phone})
         return {
             "results": [{
@@ -41,6 +42,9 @@ class ConversationBudtender:
                 "quote": {"subtotal": 70.0, "discounts": 10.0, "total": 60.0},
             },
         }
+
+    def suggestions_shown(self, store, picks, **kw):
+        return {"ok": True, "recorded": len(picks)}
 
     def phone_cart_release(self, payload):
         self.releases.append(payload)
@@ -103,7 +107,8 @@ def test_continuous_conversation_switches_product_specials_policy_cart_quote_rel
     assert specials["grounded"] is True and "special" in specials["answer"].lower()
     assert policy["grounded"] is True and "defective" in policy["answer"].lower()
     assert add["ok"] is True
-    assert "current staged estimate is $60.00" in quote["spoken_summary"]
+    assert "current staged estimate is 60 dollars" in quote["spoken_summary"]  # words, never "$60.00"
+    assert "$" not in quote["spoken_summary"] and "pc-real" not in release["spoken_summary"]
     assert release["draft"]["status"] == "released"
     assert fake.upserts[0]["call_id"] == "call-real-script"
     assert fake.upserts[0]["phone"] == "+15095551234"

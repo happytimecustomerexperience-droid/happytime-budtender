@@ -1,0 +1,7 @@
+{% load bulk_tags %}<tr id="row-{{ ds.key }}-{{ r.pk }}" data-testid="row-{{ r.pk }}">
+  <td><input type="checkbox" name="ids" value="{{ r.pk }}" form="bulk-form" aria-label="Select this row" style="width:auto"></td>
+  {% for text, badge in ds|cells:r %}
+    <td>{% if badge %}<span class="badge {{ badge }}">{{ text }}</span>{% else %}{{ text }}{% endif %}</td>
+  {% endfor %}
+  <td class="row" style="gap:8px">{% include "dashboard/_data_row_actions.html" %}{% include "dashboard/_data_row_delete_form.html" %}</td>
+</tr>

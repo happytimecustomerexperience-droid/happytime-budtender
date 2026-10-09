@@ -18,6 +18,7 @@ from voice import provision, vendor_flow
 @pytest.fixture
 def vendor_payload(db, settings):
     settings.HHT_TRANSFER_NUMBER_YAKIMA = ""  # unset → the documented placeholder (still non-empty)
+    settings.HHT_TRANSFER_CONSULT = False  # the legacy warm-summary transfer (consult-first is test_consult_transfer.py)
     from kb import seed
 
     seed.seed_agent_prompts()

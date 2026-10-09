@@ -1,0 +1,23 @@
+<form method="get" class="filters" id="an-filters" aria-label="Analytics filters">
+  <div>
+    <span class="lt muted" style="display:block;font-size:12px;margin-bottom:3px">Date range</span>
+    <div class="range" role="radiogroup" aria-label="Date range">
+      {% for p in presets %}<label><input type="radio" name="days" value="{{ p }}" {% if f.days == p %}checked{% endif %} onchange="this.form.requestSubmit()"><span>{{ p }} days</span></label>{% endfor %}
+      <label><input type="radio" name="days" value="custom" {% if f.preset == "custom" %}checked{% endif %}><span>Custom</span></label>
+    </div>
+  </div>
+  <label><span class="lt" style="display:block;font-size:12px;margin-bottom:3px;color:var(--muted)">Custom: last N days (1-365)</span>
+    <input type="number" name="custom_days" min="1" max="365" value="{{ f.days }}" oninput="this.form.elements.days.value='custom'"></label>
+  <label><span class="lt" style="display:block;font-size:12px;margin-bottom:3px;color:var(--muted)">Store</span>
+    <select name="store" onchange="this.form.requestSubmit()">
+      <option value="">All stores</option>
+      {% for key, name in stores %}<option value="{{ key }}" {% if f.store == key %}selected{% endif %}>{{ name }}</option>{% endfor %}
+    </select></label>
+  <label><span class="lt" style="display:block;font-size:12px;margin-bottom:3px;color:var(--muted)">Channel</span>
+    <select name="channel" onchange="this.form.requestSubmit()">
+      <option value="">All channels</option>
+      {% for key, name in channels %}<option value="{{ key }}" {% if f.channel == key %}selected{% endif %}>{{ name }}</option>{% endfor %}
+    </select></label>
+  <button class="btn btn-primary" type="submit">Apply</button>
+  <span class="muted sm">{{ since|date:"M j" }} to {{ until|date:"M j, Y" }}, store time. Calls run on the phone channel only.</span>
+</form>

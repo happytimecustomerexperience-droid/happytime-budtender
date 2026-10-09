@@ -45,6 +45,9 @@
   {% endif %}
 </div>
 
+{% include "dashboard/_bulk_toolbar.html" %}
+
+<div id="data-list">
 {% for c in categories %}
 <div class="card">
   <div class="row between">
@@ -56,9 +59,9 @@
       {% if c.description %}<p class="muted">{{ c.description }}</p>{% endif %}
     </div>
     <div class="row" style="gap:8px">
-      <a class="btn" href="{% url 'dash-policies-category-edit' c.pk %}">Edit</a>
+      <a class="btn" href="{% url 'dash-policies-category-edit' c.pk %}?next={{ next_url|urlencode }}">Edit</a>
       <a class="btn btn-primary" href="{% url 'dash-kb-row-new' 'policy' %}">+ New policy</a>
-      <form method="post" action="{% url 'dash-policies-category-delete' c.pk %}" onsubmit="return confirm('Delete this category?')">
+      <form method="post" action="{% url 'dash-policies-category-delete' c.pk %}?next={{ next_url|urlencode }}" onsubmit="return confirm('Delete this category?')">
         {% csrf_token %}<button class="btn" style="color:var(--action)">Delete</button>
       </form>
     </div>
@@ -71,9 +74,9 @@
         <td>{{ doc.weight }}</td>
         <td>{% if doc.is_active %}<span class="badge green">yes</span>{% else %}<span class="badge slate">no</span>{% endif %}</td>
         <td class="row" style="gap:8px">
-          <a href="{% url 'dash-kb-row-edit' doc.pk %}?kind=policy">Edit</a>
+          <a href="{% url 'dash-kb-row-edit' doc.pk %}?kind=policy&amp;next={{ next_url|urlencode }}">Edit</a>
           <button class="btn test-policy-btn" type="button" data-policy-id="{{ doc.pk }}" data-policy-title="{{ doc.title }}">Test this policy</button>
-          <form method="post" action="{% url 'dash-kb-row-delete' doc.pk %}?kind=policy" onsubmit="return confirm('Delete this policy?')">
+          <form method="post" action="{% url 'dash-kb-row-delete' doc.pk %}?kind=policy&amp;next={{ next_url|urlencode }}" onsubmit="return confirm('Delete this policy?')">
             {% csrf_token %}<button class="btn" style="color:var(--action)">Delete</button>
           </form>
         </td>
@@ -86,6 +89,7 @@
 {% empty %}
 <div class="card"><p class="muted">No categories yet — add one above, then add a policy under it.</p></div>
 {% endfor %}
+</div>
 
 <div class="card">
   <h2>Test box</h2>

@@ -1,0 +1,43 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Chat timeline — Happy Time Voice{% endblock %}
+{% block content %}
+<p class="muted"><a href="{% url 'dash-chat-funnel' %}">← Chat funnel</a> · <a href="{% url 'dash-chat-history' %}">Chatbot history</a></p>
+<h1>Chat timeline</h1>
+
+{% if not t.ok %}
+  <div class="card"><p class="muted">{{ t.reason|default:"Session not found." }}</p></div>
+{% else %}
+  <div class="card">
+    <div class="row between">
+      <h2>{{ t.store|default:"store" }} / {{ t.channel|default:"chat" }}</h2>
+      <span class="muted">{{ t.started_at }}</span>
+    </div>
+    <p class="muted">
+      Outcome: <strong>{{ t.outcome|default:"-" }}</strong> · last step: {{ t.last_step|default:"-" }} ·
+      {{ t.counts.events }} events · {{ t.counts.messages }} messages · {{ t.counts.suggestions }} picks shown ·
+      stage {{ t.stage|default:"-" }}{% if t.primary_intent %} · intent {{ t.primary_intent }}{% endif %}
+      · {% if t.identified %}identified shopper{% else %}anonymous{% endif %}
+    </p>
+    <div class="table-wrap"><table>
+      <tr><th>+sec</th><th>What</th><th>Detail</th></tr>
+      {% for i in t.timeline %}
+        <tr>
+          <td>{{ i.t }}</td>
+          {% if i.kind == "message" %}
+            <td><span class="badge {% if i.role == 'user' %}blue{% else %}slate{% endif %}">{{ i.role }}</span></td>
+            <td>{{ i.text }}{% if i.chips %} <span class="muted">[chips: {{ i.chips|join:", " }}]</span>{% endif %}{% if i.result_skus %} <span class="muted">[{{ i.result_skus|length }} picks]</span>{% endif %}</td>
+          {% elif i.kind == "suggestion" %}
+            <td><span class="badge green">pick shown</span></td>
+            <td>{{ i.sku }} ({{ i.suggestion }}{% if i.source %}, {{ i.source }}{% endif %}{% if i.paired_with %}, pairs with {{ i.paired_with }}{% endif %})</td>
+          {% else %}
+            <td><span class="badge amber">{{ i.name }}</span></td>
+            <td class="muted">{% for k, v in i.props.items %}{% if k != "ts" and k != "device_type" %}{{ k }}={{ v }} {% endif %}{% endfor %}</td>
+          {% endif %}
+        </tr>
+      {% empty %}
+        <tr><td colspan="3" class="muted">Nothing recorded for this session.</td></tr>
+      {% endfor %}
+    </table></div>
+  </div>
+{% endif %}
+{% endblock %}

@@ -21,16 +21,16 @@ def ask(entry: golden.Entry, channel: str) -> Answer:
     channel keeps history (text / playground)."""
     store = entry.store or "yakima"
     q = entry.question
-    if channel == "text":
-        session = f"eval-{uuid.uuid4().hex[:12]}"
+    if channel in ("text", "playground"):
+        # Like voice: a tool called anywhere in the flow counts (expect_tools / forbid_tools).
+        fn, prefix = (adapters.ask_text, "eval") if channel == "text" else (adapters.ask_playground, "pg")
+        session = f"{prefix}-{uuid.uuid4().hex[:12]}"
+        earlier: list[str] = []
         for prior in entry.setup_turns:
-            adapters.ask_text(prior, store=store, session=session, phone=entry.phone)
-        return adapters.ask_text(q, store=store, session=session, phone=entry.phone)
-    if channel == "playground":
-        session = f"pg-{uuid.uuid4().hex[:12]}"
-        for prior in entry.setup_turns:
-            adapters.ask_playground(prior, store=store, session=session, phone=entry.phone)
-        return adapters.ask_playground(q, store=store, session=session, phone=entry.phone)
+            earlier += fn(prior, store=store, session=session, phone=entry.phone).tool_calls
+        answer = fn(q, store=store, session=session, phone=entry.phone)
+        answer.tool_calls = earlier + list(answer.tool_calls)
+        return answer
     if channel == "storefront":
         return adapters.ask_storefront(q, store=store, category=entry.category)
     if channel == "pos":

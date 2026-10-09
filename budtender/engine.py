@@ -285,11 +285,14 @@ def score_one(feat: dict, pf: dict | None, ctx: dict) -> float:
     )
 
 
-def why(feat: dict, desired: str | None, pf: dict | None, aroma_hit: tuple | None = None) -> str:
+def why(feat: dict, desired: str | None, pf: dict | None, aroma_hit: tuple | None = None,
+        tailored: str | None = None) -> str:
     """A short, PERSUASIVE reason for THIS pick, from real signals only. Ordered
     strongest-converting first: personal hook, live deal, requested effect, requested
     aroma, real potency, genuine scarcity, then flavor/strain fallback. `aroma_hit` is
-    (aroma, terpene, leads) from a real batch lab (terpenes.aroma_hit), or None."""
+    (aroma, terpene, leads) from a real batch lab (terpenes.aroma_hit), or None. `tailored` is
+    customer_model.Tailor.why_bit (what they usually buy: ratio / extraction / strength / format), the
+    strongest personal hook when present; None (anonymous / new / low confidence) changes nothing."""
     bits: list[str] = []
     brand = feat.get("brand")
     st = feat.get("strain_type") or ""
@@ -301,6 +304,8 @@ def why(feat: dict, desired: str | None, pf: dict | None, aroma_hit: tuple | Non
     def fresh(word) -> bool:
         return bool(word) and str(word).lower() not in low_name
 
+    if tailored:
+        bits.append(tailored)
     if pf and brand and _aff(pf, "brand_affinity", brand) >= 0.25:
         bits.append(f"your go-to {brand}" if fresh(brand) else "your go-to brand")
     elif pf and fresh(st) and _aff(pf, "strain_type_affinity", st) >= 0.4:
@@ -476,14 +481,20 @@ def _reason_text(reason_code, anchor: dict | None, pair: dict | None, pf) -> str
         return f"It’s {pair.get('brand')} — right in your wheelhouse · {pname}."
     if reason_code == "your_lane":
         return f"Right with the {acat} you just picked · {pname}."
+    if reason_code == "your_pairing":
+        return f"Your usual add-on with {acat} · {pname}."
+    if reason_code == "your_usual":
+        return f"Matches what you usually pick · {pname}."
     return f"Round out your {acat} with this one · {pname}."
 
 
-def _pair_rank(anchor_feat, cand_feats, pf, *, location=None, n=1):
+def _pair_rank(anchor_feat, cand_feats, pf, *, location=None, n=1, tailor=None, fits=None):
     """The ONE pairing scorer over feat dicts (used by BOTH pair_for and
     pair_items). Ranks complementary, cheaper, in-stock add-ons by real
     co-purchase + taste + ladder + price-fit + margin. `location` set → also
-    consult the Redis co-purchase matrices. Returns up to `n` ranked dicts:
+    consult the Redis co-purchase matrices. `tailor` (customer_model.Tailor) + `fits` ({id: match}) add
+    the customer's own pairing habit and ratio/form/extraction fit as SOFT terms; every gate above
+    (complement ladder, stock, <= 50% of the anchor's price) is unchanged. Returns up to `n` ranked dicts:
     {id, feat, reason_code, reason_text, strength}."""
     complements = LADDER.get(_canon_cat(anchor_feat), DEFAULT_COMPLEMENT)
     apr = _f(anchor_feat.get("price")) or 1.0
@@ -514,10 +525,22 @@ def _pair_rank(anchor_feat, cand_feats, pf, *, location=None, n=1):
         cust = (0.6 * _affinity_score(f, pf) + 0.4 * _quality_fit(f, pf)) if pf else 0.0
         score = (W_BASKET * basket + W_CUSTOMER * cust + W_LADDER * ladder_rank
                  + W_MARGIN * margin_norm + W_PRICEFIT * price_fit)
+        habit = attr_fit = 0.0
+        if tailor is not None:
+            from .customer_model import PAIR_ACCEPTED_BOOST, PAIR_ATTR_BOOST, PAIR_DECLINED_PENALTY
+            key = f"{_canon_cat(anchor_feat)}|{ccat}"
+            habit = 1.0 if key in tailor.accepted else (-1.0 if key in tailor.declined else 0.0)
+            m = (fits or {}).get(str(f.get("id")))
+            attr_fit = tailor.pair_attr(m) if m else 0.0
+            score += (PAIR_ACCEPTED_BOOST if habit > 0 else PAIR_DECLINED_PENALTY * habit) + PAIR_ATTR_BOOST * attr_fit
         if co_reason:
             reason = co_reason
         elif sku_pop > 0 or attr_pop > 0:
             reason = "popular_pair"
+        elif attr_fit >= 0.5:
+            reason = "your_usual"
+        elif habit > 0:
+            reason = "your_pairing"
         elif pf and f.get("brand") and _aff(pf, "brand_affinity", f["brand"]) >= 0.25:
             reason = "your_brand"
         elif pf and _affinity_score(f, pf) >= 0.3:
@@ -557,7 +580,18 @@ def pair_for(location: str, anchor: Product | None, profile):
                                  quantity_on_hand__gte=MIN_STOCK, category__in=complements)
           .exclude(sku=anchor.sku))
     by_id = {p.sku: p for p in qs}
-    ranked = _pair_rank(anchor_feat, [from_product(p) for p in by_id.values()], pf, location=location, n=1)
+    # Tailoring (customer_model): None for anonymous / new / low-confidence shoppers -> unchanged pairing.
+    from . import customer_model, lab_enrich
+    tailor = customer_model.tailor_for(profile)
+    fits = None
+    if tailor is not None and by_id:
+        labs, details = lab_enrich.Memo(), lab_enrich.Memo()
+        lab_enrich.labs_for([p.batch_id for p in by_id.values()], memo=labs)
+        lab_enrich.details_for([p.product_id for p in by_id.values()], memo=details)
+        fits = {s: tailor.match(p, details.get(p.product_id) or None, labs.get(p.batch_id) or None,
+                                price=_f(p.price)) for s, p in by_id.items()}
+    ranked = _pair_rank(anchor_feat, [from_product(p) for p in by_id.values()], pf, location=location, n=1,
+                        tailor=tailor, fits=fits)
     if not ranked:
         return None, "none", "", 0.0
     r = ranked[0]

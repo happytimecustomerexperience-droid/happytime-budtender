@@ -11,6 +11,7 @@ to a markdown file so drift is visible over time.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 from pathlib import Path
 
 from django.core.management.base import BaseCommand
@@ -27,6 +28,9 @@ class Command(BaseCommand):
         parser.add_argument("--id", action="append", default=[], help="restrict to entry id(s)")
         parser.add_argument("--dump", action="store_true", help="print every answer verbatim")
         parser.add_argument("--out", default="", help="append the report to this markdown file")
+        parser.add_argument("--trace", default="",
+                            help="write every answer's turns + tool calls to this JSONL file (diagnose a "
+                                 "paid live run without re-running it)")
         parser.add_argument("--real-budtender", action="store_true",
                             help="use the real budtender service instead of the fake catalog")
         parser.add_argument("--seed", action="store_true", help="seed the KB first (kb.seed.seed_all)")
@@ -72,6 +76,18 @@ class Command(BaseCommand):
             with path.open("a", encoding="utf-8") as fh:
                 fh.write("\n" + report)
             self.stdout.write(f"appended to {path}")
+        if opts["trace"]:
+            path = Path(opts["trace"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as fh:
+                for r in results:
+                    meta = r.answer.meta or {}
+                    fh.write(json.dumps({
+                        "id": r.entry_id, "channel": r.channel, "passed": r.passed, "failures": r.failures,
+                        "text": r.answer.text, "tools": r.answer.tool_calls, "error": r.answer.error,
+                        "turns": meta.get("turns"), "tool_args": meta.get("tool_args") or meta.get("args"),
+                    }, default=str) + "\n")
+            self.stdout.write(f"trace written to {path}")
         failed = [r for r in results if not r.passed]
         if failed:
             self.stdout.write(self.style.WARNING(f"{len(failed)}/{len(results)} checks failed"))

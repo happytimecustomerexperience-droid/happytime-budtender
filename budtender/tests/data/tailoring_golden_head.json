@@ -1,0 +1,5539 @@
+{
+ "anonymous": {
+  "pair": {
+   "C1": [
+    "E5",
+    "pairs_well",
+    "Round out your concentrate with this one \u00b7 Midnight Gummies 5mg 20pk.",
+    0.16
+   ],
+   "C5": [
+    "E9",
+    "pairs_well",
+    "Round out your concentrate with this one \u00b7 Lemon Seltzer 10mg.",
+    0.109
+   ],
+   "E1": [
+    "B1",
+    "pairs_well",
+    "Round out your edible with this one \u00b7 Ginger Soda 10mg.",
+    0.12
+   ],
+   "E4": [
+    "B1",
+    "pairs_well",
+    "Round out your edible with this one \u00b7 Ginger Soda 10mg.",
+    0.089
+   ],
+   "F1": [
+    "B1",
+    "pairs_well",
+    "Round out your flower with this one \u00b7 Ginger Soda 10mg.",
+    0.027
+   ],
+   "F3": [
+    "PR1",
+    "pairs_well",
+    "Round out your flower with this one \u00b7 Classic Pre-Roll 1g.",
+    0.187
+   ],
+   "F5": [
+    "E5",
+    "pairs_well",
+    "Round out your flower with this one \u00b7 Midnight Gummies 5mg 20pk.",
+    0.182
+   ],
+   "PR2": [
+    "E9",
+    "pairs_well",
+    "Round out your pre roll with this one \u00b7 Lemon Seltzer 10mg.",
+    0.0
+   ],
+   "T1": [
+    "E9",
+    "pairs_well",
+    "Round out your tincture with this one \u00b7 Lemon Seltzer 10mg.",
+    0.16
+   ],
+   "TP1": [
+    "E9",
+    "pairs_well",
+    "Round out your topical with this one \u00b7 Lemon Seltzer 10mg.",
+    0.187
+   ],
+   "V3": [
+    "E5",
+    "pairs_well",
+    "Round out your vape cartridge with this one \u00b7 Midnight Gummies 5mg 20pk.",
+    0.133
+   ]
+  },
+  "rank": {
+   "{\"category\": \"concentrates\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "C2",
+     "Dialed in for relaxed \u00b7 hits hard at 75% THC"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ],
+    [
+     "C6",
+     "Hits hard at 74% THC"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ],
+    [
+     "C6",
+     "Hits hard at 74% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ],
+    [
+     "C6",
+     "Hits hard at 74% THC"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"concentrates\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ],
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "C6",
+     "Hits hard at 74% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C6",
+     "Hits hard at 74% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"concentrates\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"store\": \"yakima\"}": [
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ],
+    [
+     "C6",
+     "Hits hard at 74% THC"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "Dialed in for relaxed"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E9",
+     "A standout Fizz pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"edibles\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "E9",
+     "A standout Fizz pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"edibles\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F6",
+     "Dialed in for relaxed \u00b7 hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F2",
+     "Dialed in for relaxed"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ]
+   ],
+   "{\"category\": \"flower\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"flower\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"flower\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"pre-rolls\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"pre-rolls\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "Dialed in for relaxed"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"solid-edibles\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"solid-edibles\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "T2",
+     "A standout pick"
+    ],
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "T2",
+     "A standout pick"
+    ],
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"tinctures\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"tinctures\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "T2",
+     "A standout pick"
+    ],
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ],
+    [
+     "T2",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"tinctures\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"tinctures\", \"store\": \"yakima\"}": [
+    [
+     "T2",
+     "A standout pick"
+    ],
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Dialed in for relaxed \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"vape-cartridges\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"vape-cartridges\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"vape-cartridges\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Dialed in for relaxed \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"vape-carts\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"vape-carts\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"vape-carts\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "F6",
+     "Dialed in for relaxed \u00b7 hits hard at 31% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "C2",
+     "Dialed in for relaxed \u00b7 hits hard at 75% THC"
+    ],
+    [
+     "V2",
+     "Dialed in for relaxed \u00b7 hits hard at 80% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F2",
+     "Dialed in for relaxed"
+    ]
+   ],
+   "{\"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "TP1",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ]
+   ],
+   "{\"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "T2",
+     "A standout pick"
+    ],
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ]
+   ],
+   "{\"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ]
+   ],
+   "{\"size\": \"3.5g\", \"store\": \"yakima\"}": [
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "B1",
+     "A standout Fizz pick"
+    ],
+    [
+     "E9",
+     "A standout Fizz pick"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ]
+   ],
+   "{\"store\": \"yakima\", \"subcategory\": \"gummies\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"store\": \"yakima\", \"subcategory\": \"rosin\"}": [
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "T2",
+     "A standout pick"
+    ]
+   ]
+  }
+ },
+ "low": {
+  "pair": {
+   "C1": [
+    "E5",
+    "your_brand",
+    "It\u2019s Blast \u2014 right in your wheelhouse \u00b7 Midnight Gummies 5mg 20pk.",
+    0.51
+   ],
+   "C5": [
+    "E9",
+    "your_lane",
+    "Right with the concentrate you just picked \u00b7 Lemon Seltzer 10mg.",
+    0.312
+   ],
+   "E1": [
+    "B1",
+    "your_lane",
+    "Right with the edible you just picked \u00b7 Ginger Soda 10mg.",
+    0.47
+   ],
+   "E4": [
+    "B1",
+    "your_lane",
+    "Right with the edible you just picked \u00b7 Ginger Soda 10mg.",
+    0.439
+   ],
+   "F1": [
+    "B1",
+    "your_lane",
+    "Right with the flower you just picked \u00b7 Ginger Soda 10mg.",
+    0.377
+   ],
+   "F3": [
+    "PR1",
+    "your_lane",
+    "Right with the flower you just picked \u00b7 Classic Pre-Roll 1g.",
+    0.537
+   ],
+   "F5": [
+    "E5",
+    "your_brand",
+    "It\u2019s Blast \u2014 right in your wheelhouse \u00b7 Midnight Gummies 5mg 20pk.",
+    0.532
+   ],
+   "PR2": [
+    "E9",
+    "your_lane",
+    "Right with the pre roll you just picked \u00b7 Lemon Seltzer 10mg.",
+    0.203
+   ],
+   "T1": [
+    "E5",
+    "your_brand",
+    "It\u2019s Blast \u2014 right in your wheelhouse \u00b7 Midnight Gummies 5mg 20pk.",
+    0.45
+   ],
+   "TP1": [
+    "E5",
+    "your_brand",
+    "It\u2019s Blast \u2014 right in your wheelhouse \u00b7 Midnight Gummies 5mg 20pk.",
+    0.35
+   ],
+   "V3": [
+    "E5",
+    "your_brand",
+    "It\u2019s Blast \u2014 right in your wheelhouse \u00b7 Midnight Gummies 5mg 20pk.",
+    0.483
+   ]
+  },
+  "rank": {
+   "{\"category\": \"concentrates\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "C5",
+     "Right in your hybrid lane \u00b7 hits hard at 90% THC"
+    ],
+    [
+     "C1",
+     "Right in your hybrid lane \u00b7 hits hard at 72% THC"
+    ],
+    [
+     "C3",
+     "Right in your hybrid lane \u00b7 hits hard at 78% THC"
+    ],
+    [
+     "C2",
+     "Exactly your usual quality \u00b7 dialed in for relaxed"
+    ],
+    [
+     "C6",
+     "Exactly your usual quality \u00b7 hits hard at 74% THC"
+    ],
+    [
+     "C4",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "C5",
+     "Right in your hybrid lane \u00b7 hits hard at 90% THC"
+    ],
+    [
+     "C3",
+     "Right in your hybrid lane \u00b7 hits hard at 78% THC"
+    ],
+    [
+     "C6",
+     "Exactly your usual quality \u00b7 hits hard at 74% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "C2",
+     "Exactly your usual quality \u00b7 hits hard at 75% THC"
+    ],
+    [
+     "C1",
+     "Right in your hybrid lane \u00b7 hits hard at 72% THC"
+    ],
+    [
+     "C3",
+     "Right in your hybrid lane \u00b7 hits hard at 78% THC"
+    ],
+    [
+     "C6",
+     "Exactly your usual quality \u00b7 hits hard at 74% THC"
+    ],
+    [
+     "C5",
+     "Right in your hybrid lane \u00b7 hits hard at 90% THC"
+    ],
+    [
+     "C4",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "C4",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"concentrates\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "C5",
+     "Right in your hybrid lane \u00b7 hits hard at 90% THC"
+    ],
+    [
+     "C4",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ],
+    [
+     "C3",
+     "Right in your hybrid lane \u00b7 hits hard at 78% THC"
+    ],
+    [
+     "C2",
+     "Exactly your usual quality \u00b7 hits hard at 75% THC"
+    ],
+    [
+     "C6",
+     "Exactly your usual quality \u00b7 hits hard at 74% THC"
+    ],
+    [
+     "C1",
+     "Right in your hybrid lane \u00b7 hits hard at 72% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "C4",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ],
+    [
+     "C5",
+     "Right in your hybrid lane \u00b7 hits hard at 90% THC"
+    ],
+    [
+     "C6",
+     "Exactly your usual quality \u00b7 hits hard at 74% THC"
+    ],
+    [
+     "C3",
+     "Right in your hybrid lane \u00b7 hits hard at 78% THC"
+    ],
+    [
+     "C1",
+     "Right in your hybrid lane \u00b7 hits hard at 72% THC"
+    ],
+    [
+     "C2",
+     "Exactly your usual quality \u00b7 hits hard at 75% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"concentrates\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "C5",
+     "Right in your hybrid lane \u00b7 hits hard at 90% THC"
+    ],
+    [
+     "C1",
+     "Right in your hybrid lane \u00b7 hits hard at 72% THC"
+    ],
+    [
+     "C3",
+     "Right in your hybrid lane \u00b7 hits hard at 78% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [
+    [
+     "C1",
+     "Right in your hybrid lane \u00b7 hits hard at 72% THC"
+    ],
+    [
+     "C2",
+     "Exactly your usual quality \u00b7 hits hard at 75% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"store\": \"yakima\"}": [
+    [
+     "C5",
+     "Right in your hybrid lane \u00b7 hits hard at 90% THC"
+    ],
+    [
+     "C1",
+     "Right in your hybrid lane \u00b7 hits hard at 72% THC"
+    ],
+    [
+     "C3",
+     "Right in your hybrid lane \u00b7 hits hard at 78% THC"
+    ],
+    [
+     "C2",
+     "Exactly your usual quality \u00b7 hits hard at 75% THC"
+    ],
+    [
+     "C6",
+     "Exactly your usual quality \u00b7 hits hard at 74% THC"
+    ],
+    [
+     "C4",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E5",
+     "Your go-to Blast \u00b7 dialed in for relaxed"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E9",
+     "Exactly your usual quality"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ],
+    [
+     "E9",
+     "Exactly your usual quality"
+    ],
+    [
+     "E5",
+     "Your go-to Blast"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"edibles\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "E9",
+     "Exactly your usual quality"
+    ],
+    [
+     "E5",
+     "Your go-to Blast"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ],
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E5",
+     "Your go-to Blast"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"edibles\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E9",
+     "Exactly your usual quality"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"flower\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Right in your hybrid lane \u00b7 hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "F5",
+     "Right in your hybrid lane \u00b7 hits hard at 29% THC"
+    ],
+    [
+     "F3",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F6",
+     "Dialed in for relaxed \u00b7 hits hard at 31% THC"
+    ],
+    [
+     "F2",
+     "Dialed in for relaxed"
+    ],
+    [
+     "F9",
+     "Exactly your usual quality"
+    ],
+    [
+     "F4",
+     "Your go-to MidFarm"
+    ]
+   ],
+   "{\"category\": \"flower\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "F3",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F9",
+     "Exactly your usual quality"
+    ],
+    [
+     "F4",
+     "Your go-to MidFarm"
+    ]
+   ],
+   "{\"category\": \"flower\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Right in your hybrid lane \u00b7 hits hard at 26% THC"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Right in your hybrid lane \u00b7 hits hard at 29% THC"
+    ],
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "F4",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F3",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F9",
+     "Exactly your usual quality"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "F5",
+     "Right in your hybrid lane \u00b7 hits hard at 29% THC"
+    ],
+    [
+     "F3",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F9",
+     "Exactly your usual quality"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F4",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Right in your hybrid lane \u00b7 hits hard at 29% THC"
+    ],
+    [
+     "F8",
+     "Right in your hybrid lane \u00b7 hits hard at 26% THC"
+    ],
+    [
+     "F4",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F3",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F9",
+     "Exactly your usual quality"
+    ],
+    [
+     "F3",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F4",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "F5",
+     "Right in your hybrid lane \u00b7 hits hard at 29% THC"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ]
+   ],
+   "{\"category\": \"flower\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"flower\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "F8",
+     "Right in your hybrid lane \u00b7 hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "F5",
+     "Right in your hybrid lane \u00b7 hits hard at 29% THC"
+    ],
+    [
+     "F3",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F4",
+     "Your go-to MidFarm"
+    ]
+   ],
+   "{\"category\": \"flower\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"flower\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Right in your hybrid lane \u00b7 hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "F5",
+     "Right in your hybrid lane \u00b7 hits hard at 29% THC"
+    ],
+    [
+     "F3",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F9",
+     "Exactly your usual quality"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F4",
+     "Your go-to MidFarm"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "PR2",
+     "Right in your hybrid lane \u00b7 hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "PR3",
+     "Your go-to MidFarm"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "Your go-to MidFarm"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "Your go-to MidFarm"
+    ],
+    [
+     "PR2",
+     "Right in your hybrid lane \u00b7 hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "PR2",
+     "Right in your hybrid lane \u00b7 hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "PR3",
+     "Your go-to MidFarm"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "Your go-to MidFarm"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "PR2",
+     "Right in your hybrid lane \u00b7 hits hard at 38% THC"
+    ],
+    [
+     "PR3",
+     "Your go-to MidFarm"
+    ],
+    [
+     "PR1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "PR1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "PR2",
+     "Right in your hybrid lane \u00b7 hits hard at 38% THC"
+    ],
+    [
+     "PR3",
+     "Your go-to MidFarm"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"pre-rolls\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "PR2",
+     "Right in your hybrid lane \u00b7 hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"pre-rolls\", \"store\": \"yakima\"}": [
+    [
+     "PR2",
+     "Right in your hybrid lane \u00b7 hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "PR3",
+     "Your go-to MidFarm"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E5",
+     "Your go-to Blast \u00b7 dialed in for relaxed"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ],
+    [
+     "E5",
+     "Your go-to Blast"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"solid-edibles\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "E5",
+     "Your go-to Blast"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ],
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E5",
+     "Your go-to Blast"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"solid-edibles\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "T1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "T2",
+     "Exactly your usual quality"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "T1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "T2",
+     "Exactly your usual quality"
+    ],
+    [
+     "T1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"tinctures\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"tinctures\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "T2",
+     "Exactly your usual quality"
+    ],
+    [
+     "T1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "T1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "T2",
+     "Exactly your usual quality"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"tinctures\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "T1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"tinctures\", \"store\": \"yakima\"}": [
+    [
+     "T1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "T2",
+     "Exactly your usual quality"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 dialed in for relaxed"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ],
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"vape-cartridges\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"vape-cartridges\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ],
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ],
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"vape-cartridges\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 dialed in for relaxed"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ],
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"vape-carts\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"vape-carts\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ],
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ],
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"vape-carts\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Right in your hybrid lane \u00b7 hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "PR1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "F5",
+     "Right in your hybrid lane \u00b7 hits hard at 29% THC"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "C5",
+     "Right in your hybrid lane \u00b7 hits hard at 90% THC"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "C3",
+     "Right in your hybrid lane \u00b7 hits hard at 78% THC"
+    ],
+    [
+     "F3",
+     "Your go-to MidFarm"
+    ]
+   ],
+   "{\"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Right in your hybrid lane \u00b7 hits hard at 26% THC"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "C2",
+     "Exactly your usual quality \u00b7 hits hard at 75% THC"
+    ],
+    [
+     "F5",
+     "Right in your hybrid lane \u00b7 hits hard at 29% THC"
+    ],
+    [
+     "C1",
+     "Right in your hybrid lane \u00b7 hits hard at 72% THC"
+    ],
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ],
+    [
+     "T2",
+     "Exactly your usual quality"
+    ],
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "PR1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "PR2",
+     "Right in your hybrid lane \u00b7 hits hard at 38% THC"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ],
+    [
+     "B1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "PR3",
+     "Your go-to MidFarm"
+    ],
+    [
+     "C4",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"size\": \"3.5g\", \"store\": \"yakima\"}": [
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "F5",
+     "Right in your hybrid lane \u00b7 hits hard at 29% THC"
+    ],
+    [
+     "F3",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F9",
+     "Exactly your usual quality"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F4",
+     "Your go-to MidFarm"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "C5",
+     "Right in your hybrid lane \u00b7 hits hard at 90% THC"
+    ],
+    [
+     "V1",
+     "Right in your hybrid lane \u00b7 hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ],
+    [
+     "C4",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "B1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "PR1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E9",
+     "Exactly your usual quality"
+    ],
+    [
+     "E5",
+     "Your go-to Blast"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ],
+    [
+     "C4",
+     "Exactly your usual quality \u00b7 hits hard at 80% THC"
+    ],
+    [
+     "PR2",
+     "Right in your hybrid lane \u00b7 hits hard at 38% THC"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ]
+   ],
+   "{\"store\": \"yakima\", \"subcategory\": \"gummies\"}": [
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E4",
+     "Your go-to brand"
+    ],
+    [
+     "E3",
+     "Exactly your usual quality"
+    ],
+    [
+     "E2",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E5",
+     "Your go-to Blast"
+    ],
+    [
+     "E1",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "F8",
+     "Right in your hybrid lane \u00b7 hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "PR1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "F5",
+     "Right in your hybrid lane \u00b7 hits hard at 29% THC"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ]
+   ],
+   "{\"store\": \"yakima\", \"subcategory\": \"rosin\"}": [
+    [
+     "C1",
+     "Right in your hybrid lane \u00b7 hits hard at 72% THC"
+    ],
+    [
+     "C2",
+     "Exactly your usual quality \u00b7 hits hard at 75% THC"
+    ],
+    [
+     "V3",
+     "Right in your hybrid lane \u00b7 hits hard at 76% THC"
+    ]
+   ],
+   "{\"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Right in your hybrid lane \u00b7 hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E11",
+     "Right in your hybrid lane"
+    ],
+    [
+     "PR1",
+     "Right in your hybrid lane"
+    ],
+    [
+     "F5",
+     "Right in your hybrid lane \u00b7 hits hard at 29% THC"
+    ],
+    [
+     "E6",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E8",
+     "Right in your hybrid lane"
+    ],
+    [
+     "E10",
+     "Right in your hybrid lane"
+    ]
+   ]
+  }
+ },
+ "new": {
+  "pair": {
+   "C1": [
+    "E5",
+    "pairs_well",
+    "Round out your concentrate with this one \u00b7 Midnight Gummies 5mg 20pk.",
+    0.16
+   ],
+   "C5": [
+    "E9",
+    "pairs_well",
+    "Round out your concentrate with this one \u00b7 Lemon Seltzer 10mg.",
+    0.109
+   ],
+   "E1": [
+    "B1",
+    "pairs_well",
+    "Round out your edible with this one \u00b7 Ginger Soda 10mg.",
+    0.12
+   ],
+   "E4": [
+    "B1",
+    "pairs_well",
+    "Round out your edible with this one \u00b7 Ginger Soda 10mg.",
+    0.089
+   ],
+   "F1": [
+    "B1",
+    "pairs_well",
+    "Round out your flower with this one \u00b7 Ginger Soda 10mg.",
+    0.027
+   ],
+   "F3": [
+    "PR1",
+    "pairs_well",
+    "Round out your flower with this one \u00b7 Classic Pre-Roll 1g.",
+    0.187
+   ],
+   "F5": [
+    "E5",
+    "pairs_well",
+    "Round out your flower with this one \u00b7 Midnight Gummies 5mg 20pk.",
+    0.182
+   ],
+   "PR2": [
+    "E9",
+    "pairs_well",
+    "Round out your pre roll with this one \u00b7 Lemon Seltzer 10mg.",
+    0.0
+   ],
+   "T1": [
+    "E9",
+    "pairs_well",
+    "Round out your tincture with this one \u00b7 Lemon Seltzer 10mg.",
+    0.16
+   ],
+   "TP1": [
+    "E9",
+    "pairs_well",
+    "Round out your topical with this one \u00b7 Lemon Seltzer 10mg.",
+    0.187
+   ],
+   "V3": [
+    "E5",
+    "pairs_well",
+    "Round out your vape cartridge with this one \u00b7 Midnight Gummies 5mg 20pk.",
+    0.133
+   ]
+  },
+  "rank": {
+   "{\"category\": \"concentrates\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "C2",
+     "Dialed in for relaxed \u00b7 hits hard at 75% THC"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ],
+    [
+     "C6",
+     "Hits hard at 74% THC"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ],
+    [
+     "C6",
+     "Hits hard at 74% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ],
+    [
+     "C6",
+     "Hits hard at 74% THC"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"concentrates\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ],
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "C6",
+     "Hits hard at 74% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C6",
+     "Hits hard at 74% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"concentrates\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ]
+   ],
+   "{\"category\": \"concentrates\", \"store\": \"yakima\"}": [
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "C3",
+     "Hits hard at 78% THC"
+    ],
+    [
+     "C6",
+     "Hits hard at 74% THC"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "Dialed in for relaxed"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E9",
+     "A standout Fizz pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"edibles\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "E9",
+     "A standout Fizz pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"edibles\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"edibles\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "F6",
+     "Dialed in for relaxed \u00b7 hits hard at 31% THC"
+    ],
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F2",
+     "Dialed in for relaxed"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ]
+   ],
+   "{\"category\": \"flower\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"flower\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ]
+   ],
+   "{\"category\": \"flower\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"flower\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"pre-rolls\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"pre-rolls\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"pre-rolls\", \"store\": \"yakima\"}": [
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "Dialed in for relaxed"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"solid-edibles\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"solid-edibles\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"solid-edibles\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "T2",
+     "A standout pick"
+    ],
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "T2",
+     "A standout pick"
+    ],
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"tinctures\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"tinctures\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "T2",
+     "A standout pick"
+    ],
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ],
+    [
+     "T2",
+     "A standout pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"tinctures\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"category\": \"tinctures\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [],
+   "{\"category\": \"tinctures\", \"store\": \"yakima\"}": [
+    [
+     "T2",
+     "A standout pick"
+    ],
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Dialed in for relaxed \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"vape-cartridges\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"vape-cartridges\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"vape-cartridges\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-cartridges\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Dialed in for relaxed \u00b7 hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"price_tier\": \"value\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"vape-carts\", \"size\": \"3.5g\", \"store\": \"yakima\"}": [],
+   "{\"category\": \"vape-carts\", \"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"store\": \"yakima\", \"subcategory\": \"gummies\"}": [],
+   "{\"category\": \"vape-carts\", \"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"store\": \"yakima\", \"subcategory\": \"rosin\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"category\": \"vape-carts\", \"store\": \"yakima\"}": [
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"effect_desired\": \"relaxed\", \"store\": \"yakima\"}": [
+    [
+     "F6",
+     "Dialed in for relaxed \u00b7 hits hard at 31% THC"
+    ],
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "C2",
+     "Dialed in for relaxed \u00b7 hits hard at 75% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "V2",
+     "Dialed in for relaxed \u00b7 hits hard at 80% THC"
+    ],
+    [
+     "E5",
+     "Dialed in for relaxed"
+    ],
+    [
+     "F2",
+     "Dialed in for relaxed"
+    ]
+   ],
+   "{\"price_tier\": \"mid\", \"store\": \"yakima\"}": [
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "TP1",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "E6",
+     "A standout Cocoa Co pick"
+    ]
+   ],
+   "{\"price_tier\": \"top\", \"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "T2",
+     "A standout pick"
+    ],
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ]
+   ],
+   "{\"price_tier\": \"value\", \"store\": \"yakima\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "PR3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"size\": \"3.5g\", \"store\": \"yakima\"}": [
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F9",
+     "A standout Hemp Hollow pick"
+    ],
+    [
+     "F3",
+     "A standout MidFarm pick"
+    ],
+    [
+     "F2",
+     "A standout ValueCo pick"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ]
+   ],
+   "{\"sort_by\": \"potency\", \"store\": \"yakima\"}": [
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E7",
+     "A standout pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "V1",
+     "Hits hard at 88% THC"
+    ],
+    [
+     "V2",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ]
+   ],
+   "{\"sort_by\": \"price_asc\", \"store\": \"yakima\"}": [
+    [
+     "B1",
+     "A standout Fizz pick"
+    ],
+    [
+     "E9",
+     "A standout Fizz pick"
+    ],
+    [
+     "PR1",
+     "A standout ValueCo pick"
+    ],
+    [
+     "C4",
+     "Hits hard at 80% THC"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "F1",
+     "A standout ValueCo pick"
+    ],
+    [
+     "PR2",
+     "Hits hard at 38% THC"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ]
+   ],
+   "{\"store\": \"yakima\", \"subcategory\": \"gummies\"}": [
+    [
+     "E11",
+     "A standout pick"
+    ],
+    [
+     "E4",
+     "A standout pick"
+    ],
+    [
+     "E8",
+     "A standout Fresh Bros pick"
+    ],
+    [
+     "E10",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E3",
+     "A standout pick"
+    ],
+    [
+     "E5",
+     "A standout Blast pick"
+    ],
+    [
+     "E2",
+     "A standout pick"
+    ],
+    [
+     "E1",
+     "A standout pick"
+    ]
+   ],
+   "{\"store\": \"yakima\", \"subcategory\": \"hybrid\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ],
+    [
+     "C5",
+     "Hits hard at 90% THC"
+    ],
+    [
+     "T1",
+     "A standout Verdelux pick"
+    ],
+    [
+     "E11",
+     "A standout pick"
+    ]
+   ],
+   "{\"store\": \"yakima\", \"subcategory\": \"rosin\"}": [
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "V3",
+     "Hits hard at 76% THC"
+    ]
+   ],
+   "{\"store\": \"yakima\"}": [
+    [
+     "F8",
+     "Hits hard at 26% THC"
+    ],
+    [
+     "F7",
+     "A standout pick"
+    ],
+    [
+     "F6",
+     "Hits hard at 31% THC"
+    ],
+    [
+     "F5",
+     "Hits hard at 29% THC"
+    ],
+    [
+     "C2",
+     "Hits hard at 75% THC"
+    ],
+    [
+     "C1",
+     "Hits hard at 72% THC"
+    ],
+    [
+     "T2",
+     "A standout pick"
+    ],
+    [
+     "F4",
+     "A standout MidFarm pick"
+    ]
+   ]
+  }
+ },
+ "pos": {
+  "pair": [
+   [
+    "x5",
+    "It\u2019s Verdelux \u2014 right in your wheelhouse \u00b7 F Tincture.",
+    0.538
+   ],
+   [
+    "x3",
+    "It\u2019s Verdelux \u2014 right in your wheelhouse \u00b7 D Gummies 10mg.",
+    0.525
+   ],
+   [
+    "x2",
+    "Round out your flower with this one \u00b7 C Pre-Roll.",
+    0.256
+   ]
+  ],
+  "rank": [
+   [
+    "x5",
+    0.8680029776674938,
+    "Your go-to Verdelux"
+   ],
+   [
+    "x3",
+    0.8654838709677419,
+    "Your go-to Verdelux"
+   ],
+   [
+    "x1",
+    0.41703225806451616,
+    "Exactly your usual quality \u00b7 hits hard at 29% THC"
+   ],
+   [
+    "x0",
+    0.3705558312655087,
+    "Exactly your usual quality"
+   ],
+   [
+    "x2",
+    0.20678411910669975,
+    "Exactly your usual quality"
+   ],
+   [
+    "x4",
+    0.19703225806451613,
+    "Exactly your usual quality"
+   ]
+  ],
+  "rank_anon": [
+   [
+    "x1",
+    0.6205806451612904,
+    ""
+   ],
+   [
+    "x0",
+    0.5043895781637717,
+    ""
+   ],
+   [
+    "x5",
+    0.18200744416873454,
+    ""
+   ],
+   [
+    "x3",
+    0.14170967741935486,
+    ""
+   ],
+   [
+    "x2",
+    0.09496029776674937,
+    ""
+   ],
+   [
+    "x4",
+    0.07058064516129033,
+    ""
+   ]
+  ]
+ }
+}

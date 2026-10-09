@@ -74,6 +74,15 @@ def _querystring(request, *drop: str) -> str:
     return params.urlencode()
 
 
+def _back(request, default_url: str) -> str:
+    """Where a standalone (no-JS) editor sends the user after a save/delete: the ``next`` they
+    arrived with (the list page, filters and all) if it is a same-site /dashboard/ path, else the
+    list page. ``next=https://evil.example`` and ``next=//evil.example`` fall back to the default."""
+    from .bulk_views import same_site_path
+
+    return same_site_path(request, request.POST.get("next") or request.GET.get("next")) or default_url
+
+
 # ── Overview + Analytics ──────────────────────────────────────────────────────
 @staff_member_required
 def overview(request):
@@ -99,44 +108,8 @@ def overview(request):
     return render(request, "dashboard/overview.html", ctx)
 
 
-@staff_member_required
-def analytics_dashboard(request):
-    """Call-volume + outcome funnel + escalation/vendor rates over ``days∈{7,30,90}``."""
-    from datetime import timedelta
-
-    from django.db.models import Count
-    from django.utils import timezone
-
-    from voice.models import VoiceCall
-
-    days = _bounded_int(request.GET.get("days"), default=30, lo=1, hi=365)
-    days = days if days in (7, 30, 90) else 30
-    since = timezone.now() - timedelta(days=days)
-    qs = VoiceCall.objects.filter(created_at__gte=since)
-    total = qs.count()
-    funnel = list(qs.exclude(outcome="").values("outcome").annotate(n=Count("id")).order_by("-n"))
-    ctx = {
-        "days": days,
-        "total": total,
-        "funnel": funnel,
-        "by_store": list(
-            qs.exclude(store="").values("store").annotate(n=Count("id")).order_by("-n")
-        ),
-        "top_asks": _top_product_asks(qs),
-        "escalations": qs.filter(outcome="escalation").count(),
-        "vendor_callbacks": qs.filter(outcome="vendor_callback").count(),
-        "suggested": qs.filter(outcome="suggested").count(),
-        "chatbot": _chatbot_analytics(days),
-    }
-    return render(request, "dashboard/analytics.html", ctx)
-
-
-def _chatbot_analytics(days: int) -> dict:
-    """Fetch budtender's chatbot/menu analytics summary for this dashboard.
-
-    The service token stays server-side. Missing config or transport failures degrade
-    to a small status object instead of breaking the voice dashboard.
-    """
+def _budtender_post(path: str, payload: dict) -> dict:
+    """POST to budtender with the server-side service token; ``{"ok": False, "reason": …}`` on any trouble."""
     import logging
 
     import requests
@@ -149,20 +122,46 @@ def _chatbot_analytics(days: int) -> dict:
         return {"ok": False, "reason": "budtender analytics not configured"}
     try:
         resp = requests.post(
-            f"{base}/api/v1/analytics/summary",
-            json={"days": days},
+            f"{base}{path}",
+            json=payload,
             headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            timeout=(2.0, int(getattr(settings, "HHT_BUDTENDER_TIMEOUT", 8) or 8)),
+            timeout=(2.0, int(getattr(settings, "HHT_BUDTENDER_TIMEOUT", 8) or 8) * 3),
         )
+        if resp.status_code == 404:
+            return {"ok": False, "reason": "not found"}
         if resp.status_code >= 300:
             return {"ok": False, "reason": f"budtender HTTP {resp.status_code}"}
         data = resp.json() if resp.content else {}
-        return {"ok": True, "summary": data if isinstance(data, dict) else {}}
+        return data if isinstance(data, dict) else {"ok": False, "reason": "unexpected budtender answer"}
     except (requests.Timeout, requests.ConnectionError) as exc:
         return {"ok": False, "reason": f"budtender unreachable ({type(exc).__name__})"}
     except Exception:
-        logger.warning("budtender analytics fetch failed", exc_info=True)
+        logger.warning("budtender %s failed", path, exc_info=True)
         return {"ok": False, "reason": "budtender analytics fetch failed"}
+
+
+@staff_member_required
+def chat_funnel(request):
+    """Where chat visitors go and where they drop off: funnel, questionnaire steps, bounces, searches,
+    by store and by day (budtender ``/analytics/funnel``). Every conversation is kept, so any window works."""
+    days = _bounded_int(request.GET.get("days"), default=30, lo=1, hi=365)
+    store = str(request.GET.get("store") or "").strip()
+    store = store if store in ("yakima", "mount-vernon", "pullman") else ""
+    data = _budtender_post("/api/v1/analytics/funnel", {"days": days, "store": store, "recent": 50})
+    return render(request, "dashboard/chat_funnel.html", {"f": data, "days": days, "store": store})
+
+
+@staff_member_required
+def chat_timeline(request):
+    """One session replayed: events, messages and shown picks in the order they happened."""
+    ref = str(request.GET.get("ref") or "").strip()[:16]
+    payload = {"ref": ref}
+    chat_id = str(request.GET.get("id") or "").strip()[:12]
+    if chat_id.isdigit():
+        payload = {"id": int(chat_id)}
+    data = _budtender_post("/api/v1/analytics/session", payload) if (ref or chat_id) else {
+        "ok": False, "reason": "missing session reference"}
+    return render(request, "dashboard/chat_timeline.html", {"t": data})
 
 
 def _chatbot_history(limit: int = 25) -> dict:
@@ -212,22 +211,6 @@ def _chatbot_history_for_payload(payload: dict) -> dict:
     except Exception:
         logger.warning("budtender chat history fetch failed", exc_info=True)
         return {"ok": False, "reason": "budtender history fetch failed", "sessions": []}
-
-
-def _top_product_asks(qs, limit: int = 10) -> list[dict]:
-    """Top product asks = the most-suggested SKUs across the window's calls — a REAL count over the
-    durable ``VoiceCall.suggested_skus`` lists (Numbers-Guard: a count of real rows, no LLM math, no
-    fabrication). Leak-safe by construction (a SKU is an id, never cost/margin). Returns
-    ``[{sku, n}…]`` ranked desc. The "top categories" rollup at this scale (no per-call category
-    column on ``VoiceCall``) — extend with a category field if/when one is captured per call."""
-    from collections import Counter
-
-    counter: Counter = Counter()
-    for skus in qs.values_list("suggested_skus", flat=True):
-        for sku in skus or []:
-            if sku:
-                counter[str(sku)] += 1
-    return [{"sku": sku, "n": n} for sku, n in counter.most_common(limit)]
 
 
 # ── Agents editor (port agent_config/agent_save/agent_detail + voice fields) ───
@@ -492,22 +475,12 @@ def kb_source_list(request, kind: str):
 
     if kind not in KB_KINDS:
         return redirect("dash-kb")
-    model, label = KB_KINDS[kind]
-    qs = model.objects.all()
-    q = (request.GET.get("q") or "").strip()
-    if q:
-        from django.db.models import Q
+    from . import bulk, bulk_views
 
-        text_fields = [
-            f.name
-            for f in model._meta.fields
-            if f.get_internal_type() in ("TextField", "CharField", "SlugField")
-        ]
-        cond = Q()
-        for f in text_fields:
-            cond |= Q(**{f"{f}__icontains": q})
-        qs = qs.filter(cond)
-    page_obj = Paginator(qs, PER_PAGE).get_page(request.GET.get("page"))
+    _model, label = KB_KINDS[kind]
+    ds = bulk.get_dataset(bulk.KB_DATASET[kind])
+    q = (request.GET.get("q") or "").strip()
+    page_obj = Paginator(bulk_views.filtered_qs(ds, request.GET), PER_PAGE).get_page(request.GET.get("page"))
     return render(
         request,
         "dashboard/kb_source.html",
@@ -518,6 +491,7 @@ def kb_source_list(request, kind: str):
             "page_obj": page_obj,
             "q": q,
             "querystring": _querystring(request),
+            **bulk_views.list_context(request, ds),
         },
     )
 
@@ -530,11 +504,12 @@ def kb_row_new(request, kind: str):
         return redirect("dash-kb")
     form_cls = KB_FORMS[kind]
     _model, label = KB_KINDS[kind]
+    back = _back(request, reverse("dash-kb-source", kwargs={"kind": kind}))
     if request.method == "POST":
         form = form_cls(request.POST)
         if form.is_valid():
             form.save()
-            resp = redirect("dash-kb-source", kind=kind)
+            resp = redirect(back)
             resp["HX-Trigger"] = _toast("success", f"{label} row added — live on the next call.")
             return resp
     else:
@@ -542,7 +517,7 @@ def kb_row_new(request, kind: str):
     return render(
         request,
         "dashboard/kb_form.html",
-        {"form": form, "kind": kind, "label": label, "is_new": True},
+        {"form": form, "kind": kind, "label": label, "is_new": True, "next_url": back},
     )
 
 
@@ -557,11 +532,12 @@ def kb_row_edit(request, pk: int):
     model, label = KB_KINDS[kind]
     obj = get_object_or_404(model, pk=pk)
     form_cls = KB_FORMS[kind]
+    back = _back(request, reverse("dash-kb-source", kwargs={"kind": kind}))
     if request.method == "POST":
         form = form_cls(request.POST, instance=obj)
         if form.is_valid():
             form.save()
-            resp = redirect("dash-kb-source", kind=kind)
+            resp = redirect(back)
             resp["HX-Trigger"] = _toast("success", f"{label} row updated — live on the next call.")
             return resp
     else:
@@ -569,7 +545,7 @@ def kb_row_edit(request, pk: int):
     return render(
         request,
         "dashboard/kb_form.html",
-        {"form": form, "kind": kind, "label": label, "is_new": False, "obj": obj},
+        {"form": form, "kind": kind, "label": label, "is_new": False, "obj": obj, "next_url": back},
     )
 
 
@@ -583,7 +559,7 @@ def kb_row_delete(request, pk: int):
         return redirect("dash-kb")
     model, label = KB_KINDS[kind]
     get_object_or_404(model, pk=pk).delete()
-    resp = redirect("dash-kb-source", kind=kind)
+    resp = redirect(_back(request, reverse("dash-kb-source", kwargs={"kind": kind})))
     resp["HX-Trigger"] = _toast("info", f"{label} row deleted.")
     return resp
 
@@ -913,16 +889,6 @@ def _row_from_bt(c: dict) -> dict:
     }
 
 
-def _row_from_local(p) -> dict:
-    cats = p.top_categories or []
-    return {
-        "id": p.pk, "name": p.name or p.customer_key,
-        "orders": p.orders, "recency": p.last_order or "",
-        "price_tier": "", "segment": p.segment,
-        "top_category": (cats[0].get("category") if cats else "") or "",
-    }
-
-
 def _merge_detail(local, live: dict | None) -> dict:
     """Merge the analytics snapshot row (``local`` model, may be None) with budtender's live profile
     dict (``live``, may be None), field-by-field: analytics owns RFM/persona/cohort/LTV; budtender
@@ -961,38 +927,6 @@ def _merge_detail(local, live: dict | None) -> dict:
 
 
 @staff_member_required
-def customers_list(request):
-    """Searchable, paginated roster — the analytics snapshot (rich), budtender-live fallback."""
-    from crm.models import CustomerProfile
-    from voice.budtender_client import budtender
-
-    q = (request.GET.get("q") or "").strip()
-    page_no = _bounded_int(request.GET.get("page"), default=1, lo=1, hi=10_000_000)
-    offset = (page_no - 1) * PER_PAGE
-
-    qs = CustomerProfile.objects.all()
-    if q:
-        qs = qs.filter(name__icontains=q)
-    total = qs.count()
-    if total:
-        rows = [_row_from_local(p) for p in qs.order_by("-total_spend", "id")[offset:offset + PER_PAGE]]
-        source = "analytics"
-    else:
-        # No snapshot loaded → fall back to budtender's live roster.
-        bt = budtender().list_customers(q=q, limit=PER_PAGE, offset=offset)
-        rows = [_row_from_bt(c) for c in bt.get("customers", [])]
-        total = bt.get("total", len(rows))
-        source = "live" if bt.get("ok") else "empty"
-
-    num_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
-    return render(request, "dashboard/customers.html", {
-        "rows": rows, "q": q, "total": total, "source": source,
-        "page_no": page_no, "num_pages": num_pages,
-        "has_prev": page_no > 1, "has_next": page_no < num_pages,
-    })
-
-
-@staff_member_required
 def customer_detail(request, pk: int):
     """One customer: the analytics profile MERGED with budtender's live affinities (joined by name),
     plus the personalized feed. Falls back to budtender-only when there's no snapshot row."""
@@ -1024,8 +958,11 @@ def customer_detail(request, pk: int):
     )
     feed = suggestions.build_feed(feed_input, baskets_index=_baskets_index())
     pairs = [s for s in feed if s.get("kind") == "pair"]
+    from . import customer_conversations  # chats + calls + AI summaries + clear memory (staff only)
+
     return render(request, "dashboard/customer_detail.html",
-                  {"c": detail, "feed": feed, "pairs": pairs, "source": source})
+                  {"c": detail, "feed": feed, "pairs": pairs, "source": source,
+                   "conv": customer_conversations.build_panel(pk, local)})
 
 
 # Lazily-loaded frequently-bought-with index (optional; only if the owner dropped baskets.json in).
@@ -1189,6 +1126,11 @@ def specials_hours(request):
         qs = qs.filter(kind=kind)
     rows = qs.order_by("kind", "store", "label")
     unconfirmed = qs.filter(confirmed=False).count()
+
+    from . import bulk, bulk_views
+
+    # rows + inline editing use the dataset spanning both kinds; the CSV buttons follow the filter
+    csv_key = {"special": "specials", "hours": "hours"}.get(kind, "specials-hours")
     return render(
         request,
         "dashboard/specials_hours.html",
@@ -1197,6 +1139,8 @@ def specials_hours(request):
             "kind": kind,
             "kinds": SPECIALS_HOURS_KINDS,
             "unconfirmed": unconfirmed,
+            "csv_ds": bulk.get_dataset(csv_key),
+            **bulk_views.list_context(request, bulk.get_dataset("specials-hours")),
         },
     )
 
@@ -1212,6 +1156,7 @@ def policies_page(request):
     posts to a dedicated route below or to the existing kb-row editor."""
     from kb.models import PolicyCategory
 
+    from . import bulk, bulk_views
     from .forms import PolicyCategoryForm
 
     categories = PolicyCategory.objects.prefetch_related("documents").all()
@@ -1221,6 +1166,7 @@ def policies_page(request):
         {
             "categories": categories,
             "category_form": PolicyCategoryForm(),
+            **bulk_views.list_context(request, bulk.get_dataset("policy-categories")),
         },
     )
 
@@ -1256,11 +1202,12 @@ def policy_category_edit(request, pk: int):
     from .forms import PolicyCategoryForm
 
     category = get_object_or_404(PolicyCategory, pk=pk)
+    back = _back(request, reverse("dash-policies"))
     if request.method == "POST":
         form = PolicyCategoryForm(request.POST, instance=category)
         if form.is_valid():
             form.save()
-            resp = redirect("dash-policies")
+            resp = redirect(back)
             resp["HX-Trigger"] = _toast("success", f"{category.label} updated.")
             return resp
     else:
@@ -1268,7 +1215,7 @@ def policy_category_edit(request, pk: int):
     return render(
         request,
         "dashboard/policy_category_form.html",
-        {"form": form, "category": category},
+        {"form": form, "category": category, "next_url": back},
     )
 
 
@@ -1281,17 +1228,18 @@ def policy_category_delete(request, pk: int):
     from kb.models import PolicyCategory
 
     category = get_object_or_404(PolicyCategory, pk=pk)
+    back = _back(request, reverse("dash-policies"))
     try:
         category.delete()
     except ProtectedError:
-        resp = redirect("dash-policies")
+        resp = redirect(back)
         resp["HX-Trigger"] = _toast(
             "error",
             f'"{category.label}" still has policy documents under it — move or delete '
             "those first, then delete the category.",
         )
         return resp
-    resp = redirect("dash-policies")
+    resp = redirect(back)
     resp["HX-Trigger"] = _toast("info", f'"{category.label}" deleted.')
     return resp
 
@@ -1422,6 +1370,174 @@ def vendor_callback_update(request, pk: int):
     return redirect("dash-vendor-queue")
 
 
+# ── Vendor allowlist (voice/vendor_allowlist.py) ───────────────────────────────
+def _allowlist_page(request, *, form=None, bulk_text="", bulk_results=None, test=None, status=200):
+    from voice import vendor_allowlist as va
+
+    from . import bulk, bulk_views
+    from .forms import VendorAllowlistEntryForm
+    from .models import VendorAllowlistEntry
+
+    owner = va.owner_number()
+    return render(
+        request,
+        "dashboard/vendor_allowlist.html",
+        {
+            **bulk_views.list_context(request, bulk.get_dataset("vendor-allowlist")),
+            "entries": VendorAllowlistEntry.objects.all(),
+            "form": form or VendorAllowlistEntryForm(),
+            "bulk_text": bulk_text,
+            "bulk_results": bulk_results,
+            "test": test,
+            "routing": va.routing_status(),
+            # superusers edit the full number (it is a Credential); staff see the last 4 digits only
+            "owner_full": owner if request.user.is_superuser else "",
+            "owner_last4": owner[-4:] if owner else "",
+        },
+        status=status,
+    )
+
+
+@staff_member_required
+def vendor_allowlist(request):
+    return _allowlist_page(request)
+
+
+@staff_member_required
+@require_POST
+def vendor_allowlist_add(request):
+    from django.contrib import messages
+
+    from .forms import VendorAllowlistEntryForm
+
+    form = VendorAllowlistEntryForm(request.POST)
+    if not form.is_valid():
+        return _allowlist_page(request, form=form)
+    entry = form.save()
+    messages.success(request, f"Added {entry.name}.")
+    return redirect("dash-vendor-allowlist")
+
+
+@staff_member_required
+@require_POST
+def vendor_allowlist_bulk(request):
+    """One ``Name, number`` per line. Good lines are added; every bad line is reported with its
+    line number and nothing on it is saved."""
+    from django.contrib import messages
+    from django.db import IntegrityError, transaction
+
+    from .forms import parse_bulk_lines
+    from .models import VendorAllowlistEntry
+
+    text = request.POST.get("lines", "")[:20000]
+    results = parse_bulk_lines(text)
+    added = 0
+    for i, (n, name, phone, error) in enumerate(results):
+        if error:
+            continue
+        try:
+            with transaction.atomic():
+                VendorAllowlistEntry.objects.create(name=name, phone=phone)
+            added += 1
+        except IntegrityError:  # added elsewhere between the parse and this write
+            results[i] = (n, name, phone, "Already on the list")
+    bad = [r for r in results if r[3]]
+    if not bad:
+        messages.success(request, f"Added {added} vendor{'s' if added != 1 else ''}.")
+        return redirect("dash-vendor-allowlist")
+    return _allowlist_page(request, bulk_text=text, bulk_results={"added": added, "errors": bad})
+
+
+@staff_member_required
+def vendor_allowlist_edit(request, pk: int):
+    from django.contrib import messages
+
+    from .forms import VendorAllowlistEntryForm
+    from .models import VendorAllowlistEntry
+
+    entry = get_object_or_404(VendorAllowlistEntry, pk=pk)
+    back = _back(request, reverse("dash-vendor-allowlist"))
+    form = VendorAllowlistEntryForm(request.POST or None, instance=entry)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, f"Saved {entry.name}.")
+        return redirect(back)
+    return render(
+        request, "dashboard/vendor_allowlist_edit.html", {"form": form, "entry": entry, "next_url": back}
+    )
+
+
+@staff_member_required
+@require_POST
+def vendor_allowlist_toggle(request, pk: int):
+    from django.contrib import messages
+
+    from .models import VendorAllowlistEntry
+
+    entry = get_object_or_404(VendorAllowlistEntry, pk=pk)
+    entry.active = not entry.active
+    entry.save(update_fields=["active"])
+    messages.success(request, f"{entry.name} {'reactivated' if entry.active else 'deactivated'}.")
+    return redirect(_back(request, reverse("dash-vendor-allowlist")))
+
+
+@staff_member_required
+@require_POST
+def vendor_allowlist_delete(request, pk: int):
+    from django.contrib import messages
+
+    from .models import VendorAllowlistEntry
+
+    entry = get_object_or_404(VendorAllowlistEntry, pk=pk)
+    name = entry.name
+    entry.delete()
+    messages.success(request, f"Deleted {name}.")
+    return redirect(_back(request, reverse("dash-vendor-allowlist")))
+
+
+@superuser_required
+@require_POST
+def vendor_allowlist_owner(request):
+    """Set or clear the owner's destination phone (the ``HHT_OWNER_PHONE`` Credential). Owner only,
+    like the Credentials page: it decides where calls are sent. The number is never logged."""
+    from django.contrib import messages
+
+    from voice.vendor_allowlist import normalize_us_e164, owner_number
+
+    from . import credentials as cred
+
+    raw = (request.POST.get("owner_phone") or "").strip()
+    if request.POST.get("action") == "clear":
+        cred.clear_credential("HHT_OWNER_PHONE")
+        fallback = owner_number()  # the server's env default, if it has one
+        messages.success(
+            request,
+            f"Saved owner phone cleared — using the server default (ending {fallback[-4:]})."
+            if fallback
+            else "Owner phone cleared — every vendor now talks to the AI.",
+        )
+        return redirect("dash-vendor-allowlist")
+    phone = normalize_us_e164(raw)
+    if not phone:
+        messages.error(request, "Not saved: the owner phone must be a full US number, e.g. (509) 555-1212.")
+        return redirect("dash-vendor-allowlist")
+    cred.set_credential("HHT_OWNER_PHONE", phone)
+    messages.success(request, f"Owner phone saved (ending {phone[-4:]}) — live now.")
+    return redirect("dash-vendor-allowlist")
+
+
+@staff_member_required
+@require_POST
+def vendor_allowlist_test(request):
+    """'Would this number be routed?' — the same matcher the webhook runs; nothing is placed or
+    recorded."""
+    from voice import vendor_allowlist as va
+
+    raw = (request.POST.get("number") or "")[:40]
+    decision = va.evaluate(raw)
+    return _allowlist_page(request, test={"input": raw, "decision": decision})
+
+
 # ── Publish to Vapi ────────────────────────────────────────────────────────────
 @staff_member_required
 @ensure_csrf_cookie
@@ -1473,6 +1589,7 @@ def capabilities_page(request):
     """Every declared switch, grouped, plus who can use which tool right now."""
     from kb.models import AgentPrompt
     from voice import capabilities as caps
+    from voice import constants as C
     from voice.provision import _tool_names_for_role
 
     from .models import BotCapability
@@ -1489,7 +1606,7 @@ def capabilities_page(request):
     for role in MEMBER_ROLES:  # the phone members and the tools provision attaches to each
         p = prompts.get(role)
         tools = [{"name": n, "on": caps.tool_allowed(n)} for n in _tool_names_for_role(role, p)]
-        if role in ("vendor", "escalation"):
+        if role in C.TRANSFER_ROLES:
             tools.append({"name": "transfer call", "on": on["call.transfer"]})
         members.append(
             {"name": f"Phone · {p.get_role_display() if p else role}", "on": bool(p and p.is_active), "tools": tools}

@@ -132,3 +132,47 @@ def snapshot() -> dict:
             cache.set(f"deals:v1:{slug}", deals, CACHE_SECONDS)
         stores[slug] = deals
     return {"ok": not errors, "stores": stores, "errors": errors, "fetched_at": datetime.now(timezone.utc).isoformat()}
+
+
+# ── tailoring: the same deals, the ones that speak to what this customer buys first ──
+# Pure re-ordering of an already-fetched list (no deal is added, dropped or changed): a deal whose
+# title/description names a ratio, format, extraction or category the customer buys (customer_model's
+# `derived`) moves up. Low confidence / no derived -> the list as given.
+_CAT_WORDS = {
+    "flower": ("flower", "eighth", "eighths", "ounce", "oz"),
+    "pre-rolls": ("pre-roll", "pre-rolls", "preroll", "prerolls", "joint", "joints", "blunt"),
+    "vape-cartridges": ("vape", "vapes", "cart", "carts", "cartridge", "cartridges", "disposable"),
+    "concentrates": ("concentrate", "concentrates", "dab", "dabs", "wax", "shatter", "rosin", "resin"),
+    "edibles": ("edible", "edibles", "gummy", "gummies", "chocolate", "chocolates"),
+    "beverages": ("drink", "drinks", "beverage", "beverages", "soda", "seltzer"),
+    "tinctures": ("tincture", "tinctures"),
+    "topicals": ("topical", "topicals", "balm", "lotion"),
+}
+_FORM_WORDS = {"gummy": ("gummy", "gummies"), "chocolate": ("chocolate", "chocolates"), "drink": ("drink", "drinks"),
+               "tincture": ("tincture", "tinctures"), "capsule": ("capsule", "capsules"), "topical": ("topical",)}
+
+
+def for_customer(deals: list[dict], derived: dict | None) -> list[dict]:
+    """`deals` (current_deals / snapshot rows) re-ordered for one customer, stable within equal relevance."""
+    if not isinstance(derived, dict) or derived.get("confidence") not in ("med", "high") or not deals:
+        return list(deals or [])
+
+    def words(text: str) -> set[str]:
+        return set(re.findall(r"[a-z0-9:]+(?:-[a-z]+)?", text.lower()))
+
+    cats = list(dict.fromkeys([*(derived.get("next_likely") or []), *(derived.get("price_by_cat") or {})]))
+    ratios = {str(r) for r in derived.get("ratio_pref") or []}
+    if (derived.get("cbd_lean") or 0) >= 0.5:
+        ratios.add("cbd")
+    forms = [set(_FORM_WORDS.get(f, (f,))) for f, share in (derived.get("forms") or {}).items() if share >= 0.3]
+    phrases = [m.replace("-", " ") for m, share in (derived.get("extraction") or {}).items() if share >= 0.3]
+
+    def score(d: dict) -> int:
+        text = f"{d.get('title') or ''} {d.get('description') or ''}".lower()
+        w = words(text)
+        s = 3 * len(ratios & w) + 2 * sum(1 for f in forms if f & w) + 2 * sum(1 for ph in phrases if ph in text)
+        s += sum(1 for c in cats if w & set(_CAT_WORDS.get(c, (c,))))
+        return s
+
+    ranked = sorted(enumerate(deals), key=lambda t: (-score(t[1]), t[0]))
+    return [d for _, d in ranked]

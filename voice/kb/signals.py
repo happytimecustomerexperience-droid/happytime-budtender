@@ -30,10 +30,13 @@ _suppress_depth = 0
 
 
 @contextlib.contextmanager
-def bulk():
+def bulk(*, publish: bool = True, nudges: tuple[str, ...] = ("store-facts", "persona")):
     """Hold the per-row nudges during a bulk write (the boot-time ``seed_all``, an import) and
     send ONE store-facts nudge, ONE persona nudge, and one hash-gated publish per active prompt
-    when the block ends — instead of ~80 POSTs and six Vapi PATCHes per deploy."""
+    when the block ends — instead of ~80 POSTs and six Vapi PATCHes per deploy.
+
+    ``publish=False, nudges=()`` only SUPPRESSES: the caller (``dashboard.bulk.run_side_effects``)
+    then sends exactly the effects its dataset needs, once."""
     global _suppress_depth
     _suppress_depth += 1
     try:
@@ -41,13 +44,15 @@ def bulk():
     finally:
         _suppress_depth -= 1
         if _suppress_depth == 0:
-            from dashboard.publish import auto_publish_on_save
             from voice import tasks
 
-            for prompt in AgentPrompt.objects.filter(is_active=True):
-                auto_publish_on_save(prompt)  # no-op when the row's publish hash is unchanged
-            tasks.dispatch_budtender_notify("store-facts")
-            tasks.dispatch_budtender_notify("persona")
+            if publish:
+                from dashboard.publish import auto_publish_on_save
+
+                for prompt in AgentPrompt.objects.filter(is_active=True):
+                    auto_publish_on_save(prompt)  # no-op when the row's publish hash is unchanged
+            for kind in nudges:
+                tasks.dispatch_budtender_notify(kind)
 
 
 @receiver(post_save, sender=StoreFact)

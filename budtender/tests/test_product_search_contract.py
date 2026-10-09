@@ -51,7 +51,7 @@ class ProductSearchContractTests(SimpleTestCase):
             views._profile_for_phone = lambda phone: profile if phone == "+1 (509) 555-1234" else None
             views.inventory_is_stale = lambda location: False
             views.rank_products = fake_rank
-            views.public_product = lambda product, rank, why_this, lab=None, info=None: {
+            views.public_product = lambda product, rank, why_this, lab=None, info=None, live=None: {
                 "sku": product.sku,
                 "rank": rank,
                 "why_this": why_this,

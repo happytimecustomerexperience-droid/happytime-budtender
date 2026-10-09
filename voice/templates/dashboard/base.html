@@ -101,7 +101,7 @@
     }
   </style>
 </head>
-<body>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
   <header class="topnav">
     <div class="topnav-inner">
       <span class="brand">
@@ -123,6 +123,7 @@
       <a class="nav" href="{% url 'dash-chat-history' %}">Chat</a>
       <a class="nav" href="{% url 'dash-escalations' %}">Escalations</a>
       <a class="nav" href="{% url 'dash-vendor-queue' %}">Vendor</a>
+      <a class="nav" href="{% url 'dash-vendor-allowlist' %}">Vendor allowlist</a>
       <a class="nav" href="{% url 'dash-analytics' %}">Analytics</a>
       <a class="nav" href="{% url 'dash-playground' %}">Console</a>
       <a class="nav" href="{% url 'dash-capabilities' %}">Capabilities</a>

@@ -2165,7 +2165,7 @@ def _size_question_reply(suggest: dict, history, store: str, phone: str) -> tupl
     asked = _size_asks_in_a_row(history)
     options = suggest.get("size_options") or []
     if asked == 0:
-        return str(suggest.get("spoken_summary") or suggest_tool.size_question(options)), False
+        return str(suggest.get("size_question") or suggest_tool.size_question(options)), False
     if asked == 1:
         return suggest_tool.size_question(options, again=True), False
     # NEW COPY — REQUIRES OWNER APPROVAL.

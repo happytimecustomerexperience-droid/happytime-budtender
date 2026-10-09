@@ -216,15 +216,21 @@ def generate(
 
 
 def generate_stream(contents, *, model: str, system_instruction=None, cached_content=None,
-                    max_output_tokens: int = 1024, temperature: float = 0.4, api_key=None):
+                    max_output_tokens: int = 1024, temperature: float = 0.4,
+                    thinking_budget: int | None = 0, api_key=None):
     """Yield text chunks as they arrive. Final chunk carries usage on `.usage_metadata`.
-    Callers compute cost from the last chunk's usage via core.constants."""
+    Callers compute cost from the last chunk's usage via core.constants.
+
+    thinking_budget defaults to 0 exactly like `generate` (owner rule: no AI step thinks); pass a
+    budget to re-enable, or None to send no thinking config at all."""
     client, _ = make_client(api_key)
     cfg: dict[str, Any] = {"max_output_tokens": max_output_tokens, "temperature": temperature}
     if system_instruction:
         cfg["system_instruction"] = system_instruction
     if cached_content:
         cfg["cached_content"] = cached_content
+    if thinking_budget is not None:
+        cfg["thinking_config"] = {"thinking_budget": thinking_budget}
     yield from client.models.generate_content_stream(model=model, contents=contents, config=cfg)
 
 

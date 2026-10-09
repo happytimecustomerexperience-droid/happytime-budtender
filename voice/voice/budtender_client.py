@@ -151,9 +151,13 @@ class BudtenderClient:
         session_token: str | None = None,
         exclude_skus: list[str] | None = None,
         location: str | None = None,
+        source: str | None = None,
+        record: bool = True,
     ) -> dict:
         """``POST /products/search/`` (trailing slash). Returns ``{"results":[…≤limit leak-safe…]}``
-        verbatim; graceful-empty = ``{"results": []}``.
+        verbatim; graceful-empty = ``{"results": []}``. ``source`` labels the suggestion channel;
+        ``record=False`` asks budtender not to log these results as suggested (the caller reports what
+        it actually said through :meth:`suggestions_shown`).
 
         The margin-vs-taste switch is the PRESENCE of ``phone`` (21-SPEC §6): a KNOWN caller's
         normalized number is sent → budtender resolves a profile → ``W_KNOWN`` (taste-first); an
@@ -172,6 +176,10 @@ class BudtenderClient:
             payload["session_token"] = session_token
         if exclude_skus:
             payload["exclude_skus"] = list(exclude_skus)
+        if source:
+            payload["source"] = source
+        if not record:
+            payload["record"] = False
         ranking = _ranking_config()
         if ranking:
             payload["ranking_weights"] = ranking
@@ -179,6 +187,29 @@ class BudtenderClient:
         if not isinstance(out, dict) or "results" not in out:
             return {"results": []}
         return out
+
+    def suggestions_shown(
+        self,
+        store: str,
+        picks: list[dict],
+        *,
+        phone: str | None = None,
+        session_token: str | None = None,
+        source: str = "phone",
+    ) -> dict:
+        """``POST /suggestions/shown`` — record the picks the agent actually spoke (``[{sku, rank,
+        why_this}]``); budtender rebuilds each card from its own Product row. Graceful-empty =
+        ``{"ok": False, "recorded": 0}``."""
+        payload: dict = {"location": store, "source": source, "picks": [
+            {"sku": p.get("sku"), "rank": p.get("rank"), "why_this": p.get("why_this")} for p in picks
+        ]}
+        if phone:
+            payload["phone"] = phone
+        if session_token:
+            payload["session_token"] = session_token
+        # Analytics only, inside a live turn: a slow budtender costs the record, never the caller's wait.
+        out = self._post("/suggestions/shown", payload, empty={"ok": False, "recorded": 0}, budget=1.0)
+        return out if isinstance(out, dict) else {"ok": False, "recorded": 0}
 
     def check_sku(self, store: str, sku: str, *, category: str | None = None) -> dict:
         """SKU-scoped purchasability + OTD price (21-SPEC §5.3) via the single-SKU budtender
@@ -304,6 +335,77 @@ class BudtenderClient:
             return out["customer"]
         return None
 
+    # ── staff conversations panel (customer page): every method answers a typed empty ──
+    def customer_name_match(self, name: str) -> dict | None:
+        """``POST /customer/name-match``: ``{count, id}`` = how many live customers carry exactly this
+        name (case/whitespace-insensitive); ``id`` only when ``count == 1``. ``None`` when budtender
+        could not answer (unreachable / refused): UNKNOWN, never "no match"."""
+        if not str(name or "").strip():
+            return None
+        out = self._post("/customer/name-match", {"name": str(name)}, empty={})
+        if isinstance(out, dict) and out.get("ok") and isinstance(out.get("count"), int):
+            return {"count": out["count"], "id": out.get("id")}
+        return None
+
+    def customer_chat_sessions(self, customer_id, *, limit: int = 100) -> dict:
+        """``POST /chat/history {customer_id}``: that customer's sessions as metadata (no bodies, no
+        tokens). ``{ok, sessions: [...], total}``; graceful-empty ``{ok: False, sessions: [], total: 0}``."""
+        empty = {"ok": False, "sessions": [], "total": 0}
+        out = self._post("/chat/history", {"customer_id": customer_id, "limit": limit}, empty={})
+        if not isinstance(out, dict) or not out.get("ok") or not isinstance(out.get("sessions"), list):
+            return dict(empty)
+        return {"ok": True, "sessions": out["sessions"], "total": out.get("total", len(out["sessions"]))}
+
+    def customer_chat_session(self, customer_id, session_id, *, message_limit: int = 500) -> dict | None:
+        """``POST /chat/history {id, customer_id}``: one transcript, returned only if the session
+        belongs to that customer. ``None`` when missing / not theirs / unreachable."""
+        out = self._post(
+            "/chat/history",
+            {"id": session_id, "customer_id": customer_id, "message_limit": message_limit, "limit": 1},
+            empty={},
+        )
+        sessions = out.get("sessions") if isinstance(out, dict) else None
+        return sessions[0] if isinstance(sessions, list) and sessions and isinstance(sessions[0], dict) else None
+
+    def customer_call_ids(self, customer_id) -> dict:
+        """``POST /customer/call-ids``: the Vapi call ids of that customer's phone calls.
+        ``{ok, call_ids: [...]}``; graceful-empty ``{ok: False, call_ids: []}`` (unknown, not "none")."""
+        empty = {"ok": False, "call_ids": []}
+        out = self._post("/customer/call-ids", {"customer_id": customer_id}, empty={})
+        if not isinstance(out, dict) or not out.get("ok") or not isinstance(out.get("call_ids"), list):
+            return dict(empty)
+        return {"ok": True, "call_ids": [str(c) for c in out["call_ids"]]}
+
+    def memory_clear(self, customer_id, actor: str) -> dict:
+        """``POST /customer/memory/clear {id, actor}`` (staff). ``{status, sessions_cleared}`` with
+        status ``cleared`` | ``not_found`` | ``error`` (budtender refused) | ``unreachable``, so the
+        dashboard can say which. Never raises."""
+        if not self._token or not self.base_url:
+            return {"status": "unreachable", "sessions_cleared": 0}
+        try:
+            resp = self._session.post(
+                self._url("/customer/memory/clear"),
+                json={"id": customer_id, "actor": str(actor or "dashboard")[:128]},
+                headers=self._headers(),
+                timeout=(self._connect_timeout, self.timeout),
+            )
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            logger.warning("budtender memory/clear unreachable: %s", type(exc).__name__)
+            return {"status": "unreachable", "sessions_cleared": 0}
+        except Exception:  # noqa: BLE001
+            logger.warning("budtender memory/clear failed", exc_info=True)
+            return {"status": "unreachable", "sessions_cleared": 0}
+        if resp.status_code == 404:
+            return {"status": "not_found", "sessions_cleared": 0}
+        try:
+            body = resp.json() if resp.status_code < 300 else {}
+        except ValueError:
+            body = {}
+        if resp.status_code >= 300 or not (isinstance(body, dict) and body.get("cleared")):
+            logger.warning("budtender memory/clear -> HTTP %s", resp.status_code)
+            return {"status": "error", "sessions_cleared": 0}
+        return {"status": "cleared", "sessions_cleared": int(body.get("sessions_cleared") or 0)}
+
     # ── returning-caller handshake (§7) ───────────────────────────────────────
     def resume_by_phone(
         self,
@@ -348,7 +450,10 @@ class BudtenderClient:
         """``POST /customer/caller-context`` (NO trailing slash): who is calling, DB-only. Creates a
         "voice" profile for a number budtender has never seen. Returns ``{ok, created, known,
         first_name, has_history, orders, days_since_last, top_categories, price_tier, brands,
-        flavors, terpenes}`` (no phone, no cost/margin). ``timeout`` caps connect + read together
+        flavors, terpenes}`` (no phone, no cost/margin) plus, once the memory contract ships,
+        ``brief`` (<= 600 chars of plain text), ``style`` (small enum dict) and ``tier`` (``"trusted"``
+        for a carrier-caller-ID caller); older budtenders omit them and ``voice.caller`` reads that as
+        "no memory". ``timeout`` caps connect + read together
         (the assistant-request path answers inside Vapi's fixed 7.5 s, so it is not the client's
         8 s default); it is a request budget, not a wall-clock kill. ``{}`` on ANY failure —
         unknown, never "a new caller"."""
@@ -361,6 +466,20 @@ class BudtenderClient:
             payload["session_token"] = session_token
         out = self._post("/customer/caller-context", payload, empty={}, budget=timeout)
         return out if isinstance(out, dict) and out.get("ok") else {}
+
+    def memory_learn(self, call_id: str, user_turns: list, *, channel: str = "voice", timeout: float = 6.0) -> dict:
+        """``POST /customer/memory/learn`` (NO trailing slash, backend token): hand budtender the
+        customer's OWN turns of a finished call so it can fold them into the shared customer memory
+        (contract customer-memory-v1). Body is exactly ``{call_id, transcript_user_turns, channel}``:
+        at most 40 turns of 500 characters, no phone number (budtender resolves the caller from the
+        call id it linked at caller-context time). Nothing is sent without a call id or a turn.
+        ``{}`` on ANY failure; never raises (best-effort, post-call)."""
+        turns = [t[:500] for t in (str(x).strip() for x in (user_turns or [])) if t][-40:]
+        if not call_id or not turns:
+            return {}
+        payload = {"call_id": str(call_id), "transcript_user_turns": turns, "channel": channel or "voice"}
+        out = self._post("/customer/memory/learn", payload, empty={}, budget=timeout)
+        return out if isinstance(out, dict) else {}
 
     def profile_upsert(self, phone_e164: str, *, name: str = "", source: str = "voice") -> dict:
         """``POST /customer/profile-upsert``: create the profile for a phone budtender has not seen

@@ -128,6 +128,16 @@ class _FakeBT:
              "price_tier": "top", "top_categories": [{"category": "flower", "share": 0.6}]},
         ]}
 
+    # The customer page's conversations panel (dashboard/customer_conversations.py): nothing linked / listed.
+    def customer_name_match(self, name):
+        return None
+
+    def customer_chat_sessions(self, customer_id, *, limit=100):
+        return {"ok": False, "sessions": [], "total": 0}
+
+    def customer_call_ids(self, customer_id):
+        return {"ok": False, "call_ids": []}
+
     def get_customer(self, *, customer_id=None, phone=None, name=None):
         if not self.ok:
             return None

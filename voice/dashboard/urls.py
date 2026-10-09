@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from . import health, views
+from . import analytics_views, bulk_views, customer_conversations, customers_views, health, views
 from .playground import playground, playground_send
 
 urlpatterns = [
@@ -16,7 +16,9 @@ urlpatterns = [
     # agent test console — text / browser mic / real Vapi web call
     path("playground/", playground, name="dash-playground"),
     path("playground/send", playground_send, name="dash-playground-send"),
-    path("analytics/", views.analytics_dashboard, name="dash-analytics"),
+    path("analytics/", analytics_views.analytics_dashboard, name="dash-analytics"),
+    path("analytics/chat/", views.chat_funnel, name="dash-chat-funnel"),
+    path("analytics/chat/session/", views.chat_timeline, name="dash-chat-timeline"),
     # agents
     path("agents/", views.agent_config, name="dash-agents"),
     path("agents/<int:pk>/save", views.agent_save, name="dash-agent-save"),
@@ -61,8 +63,24 @@ urlpatterns = [
     path("credentials/save", views.credentials_save, name="dash-credentials-save"),
     path("credentials/clear", views.credentials_clear, name="dash-credentials-clear"),
     # customer intelligence browse
-    path("customers/", views.customers_list, name="dash-customers"),
+    path("customers/", customers_views.customers, name="dash-customers"),
+    path("customers/export.csv", customers_views.customers_export, name="dash-customers-export"),
     path("customers/<int:pk>/", views.customer_detail, name="dash-customer-detail"),
+    path(
+        "customers/<int:pk>/conversations/summarize-all",
+        customer_conversations.summarize_all,
+        name="dash-customer-summarize-all",
+    ),
+    path(
+        "customers/<int:pk>/conversations/<slug:kind>/<slug:ref>/summary",
+        customer_conversations.conversation_summary,
+        name="dash-customer-conv-summary",
+    ),
+    path(
+        "customers/<int:pk>/memory/clear",
+        customer_conversations.memory_clear,
+        name="dash-customer-memory-clear",
+    ),
     # calls
     path("calls/", views.call_monitor, name="dash-calls"),
     path("calls/history/", views.conversation_history, name="dash-conversation-history"),
@@ -78,6 +96,19 @@ urlpatterns = [
     path(
         "vendor-callbacks/<int:pk>/update", views.vendor_callback_update, name="dash-vendor-update"
     ),
+    # vendor allowlist: allowlisted vendor numbers ring the owner with no AI
+    path("vendor-allowlist/", views.vendor_allowlist, name="dash-vendor-allowlist"),
+    path("vendor-allowlist/add", views.vendor_allowlist_add, name="dash-vendor-allowlist-add"),
+    path("vendor-allowlist/bulk", views.vendor_allowlist_bulk, name="dash-vendor-allowlist-bulk"),
+    path("vendor-allowlist/owner", views.vendor_allowlist_owner, name="dash-vendor-allowlist-owner"),
+    path("vendor-allowlist/test", views.vendor_allowlist_test, name="dash-vendor-allowlist-test"),
+    path("vendor-allowlist/<int:pk>/edit", views.vendor_allowlist_edit, name="dash-vendor-allowlist-edit"),
+    path(
+        "vendor-allowlist/<int:pk>/toggle", views.vendor_allowlist_toggle, name="dash-vendor-allowlist-toggle"
+    ),
+    path(
+        "vendor-allowlist/<int:pk>/delete", views.vendor_allowlist_delete, name="dash-vendor-allowlist-delete"
+    ),
     # what the bots may do (voice/voice/capabilities.py)
     path("capabilities/", views.capabilities_page, name="dash-capabilities"),
     path("capabilities/toggle", views.capability_toggle, name="dash-capability-toggle"),
@@ -85,4 +116,14 @@ urlpatterns = [
     path("health/", health.health, name="dash-health"),
     path("publish/", views.publish_page, name="dash-publish"),
     path("publish/run", views.publish_vapi, name="dash-publish-run"),
+    # bulk tools: CSV template/export/upload round trip, in-place row editing, Edit all, row actions
+    path("data/<slug:key>/template.csv", bulk_views.data_template, name="dash-data-template"),
+    path("data/<slug:key>/export.csv", bulk_views.data_export, name="dash-data-export"),
+    path("data/<slug:key>/upload", bulk_views.data_upload, name="dash-data-upload"),
+    path("data/<slug:key>/row/new", bulk_views.data_row_new, name="dash-data-row-new"),
+    path("data/<slug:key>/row/<int:pk>/", bulk_views.data_row, name="dash-data-row"),
+    path("data/<slug:key>/row/<int:pk>/edit", bulk_views.data_row_edit, name="dash-data-row-edit"),
+    path("data/<slug:key>/row/<int:pk>/delete", bulk_views.data_row_delete, name="dash-data-row-delete"),
+    path("data/<slug:key>/edit-all", bulk_views.data_edit_all, name="dash-data-edit-all"),
+    path("data/<slug:key>/bulk-action", bulk_views.data_bulk_action, name="dash-data-bulk-action"),
 ]

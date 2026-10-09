@@ -1,0 +1,16 @@
+<tr id="row-{{ ds.key }}-{{ r.pk }}" data-testid="allowlist-row-{{ r.pk }}">
+  <td><input type="checkbox" name="ids" value="{{ r.pk }}" form="bulk-form" aria-label="Select this row" style="width:auto"></td>
+  <td>{{ r.name }}</td>
+  <td>{{ r.phone_display }}</td>
+  <td>{{ r.get_store_display }}</td>
+  <td>{{ r.note|default:'—' }}</td>
+  <td><span class="badge {% if r.active %}green{% else %}slate{% endif %}">{{ r.active|yesno:"active,off" }}</span></td>
+  <td>{{ r.last_matched_at|default:'never' }}</td>
+  <td>{{ r.match_count }}</td>
+  <td class="row" style="gap:6px">
+    <a class="btn" href="{% url 'dash-vendor-allowlist-edit' r.pk %}?next={{ next_url|urlencode }}"
+       hx-get="{% url 'dash-data-row-edit' ds.key r.pk %}" hx-target="closest tr" hx-swap="outerHTML">Edit</a>
+    <form method="post" action="{% url 'dash-vendor-allowlist-toggle' r.pk %}?next={{ next_url|urlencode }}">{% csrf_token %}<button class="btn">{% if r.active %}Deactivate{% else %}Reactivate{% endif %}</button></form>
+    {% include "dashboard/_data_row_delete_form.html" %}
+  </td>
+</tr>

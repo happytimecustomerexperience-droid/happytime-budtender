@@ -68,4 +68,16 @@ app.conf.beat_schedule = {
         "task": "budtender.tasks.merge_duplicate_profiles",
         "schedule": 7 * 24 * 60 * 60.0,  # weekly
     },
+    # Customer memory v1: learn from website chats once they have been quiet >= 10 min (per trust
+    # tier: only a carrier-caller-ID/verified session writes the profile) — budtender.memory_learn.
+    # Suggestion analytics v1: close every suggestion whose 10-day purchase window + 1 day of sync lag
+    # has passed (not_bought when the customer is known, else unattributable). Idempotent.
+    "close-suggestion-windows-hourly": {
+        "task": "budtender.tasks.close_suggestion_windows",
+        "schedule": 60 * 60.0,
+    },
+    "learn-idle-chat-sessions": {
+        "task": "budtender.tasks.learn_idle_sessions",
+        "schedule": 5 * 60.0,
+    },
 }

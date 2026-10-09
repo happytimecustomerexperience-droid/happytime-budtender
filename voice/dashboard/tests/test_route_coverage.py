@@ -102,8 +102,11 @@ def one_faq_row(db):
         "dash-conversation-history",
         "dash-escalations",
         "dash-vendor-queue",
+        "dash-vendor-allowlist",
         "dash-publish",
         "dash-analytics",
+        "dash-chat-funnel",
+        "dash-chat-timeline",
         "dash-specials-hours",
         "dash-capabilities",
         "dash-health",
@@ -163,6 +166,27 @@ def test_customer_detail_renders_for_local_profile(client_staff, one_customer):
 
 
 @pytest.mark.django_db
+def test_customer_detail_shows_the_unlinked_conversations_panel(client_staff, one_customer):
+    # Budtender unconfigured in the test env -> the row cannot be linked: the page says so, and the
+    # summary / clear-memory controls are not offered.
+    resp = client_staff.get(reverse("dash-customer-detail", args=[one_customer.pk]))
+    html = resp.content.decode()
+    assert "Not linked to a live customer record — conversations unavailable." in html
+    assert "conv-summarize-all" not in html and "conv-clear-memory" not in html
+
+
+@pytest.mark.django_db
+def test_customer_conversation_actions_degrade_to_a_toast_when_unlinked(client_staff, one_customer):
+    for name, args in (
+        ("dash-customer-summarize-all", [one_customer.pk]),
+        ("dash-customer-conv-summary", [one_customer.pk, "chat", "5"]),
+        ("dash-customer-memory-clear", [one_customer.pk]),
+    ):
+        resp = client_staff.post(reverse(name, args=args))
+        assert resp.status_code == 204 and '"error"' in resp["HX-Trigger"]
+
+
+@pytest.mark.django_db
 def test_customer_detail_no_mojibake_in_favorite_brands_and_purchase_history(
     client_staff, one_customer, monkeypatch
 ):
@@ -177,7 +201,10 @@ def test_customer_detail_no_mojibake_in_favorite_brands_and_purchase_history(
         "purchase_history": [{"product": "Blue Dream", "brand": None, "last_price": None}],
     }
     monkeypatch.setattr(
-        budtender_client, "budtender", lambda: type("B", (), {"get_customer": lambda *a, **k: live_profile})()
+        budtender_client,
+        "budtender",
+        lambda: type("B", (), {"get_customer": lambda *a, **k: live_profile,
+                               "customer_name_match": lambda *a, **k: None})(),
     )
     resp = client_staff.get(reverse("dash-customer-detail", args=[one_customer.pk]))
     content = resp.content.decode("utf-8")
@@ -291,3 +318,32 @@ def test_call_fetch_full_degrades_when_vapi_unconfigured(client_staff, one_call,
     resp = client_staff.post(reverse("dash-call-fetch-full", args=[one_call.pk]))
     assert resp.status_code == 200
     assert "not configured" in resp["HX-Trigger"]
+
+
+# ── bulk tools (dashboard/bulk_views.py): every route renders / acts as staff ────
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "name,kwargs",
+    [
+        ("dash-data-template", {"key": "specials"}),
+        ("dash-data-template", {"key": "vendor-allowlist"}),
+        ("dash-data-export", {"key": "faq"}),
+        ("dash-data-upload", {"key": "hours"}),
+        ("dash-data-edit-all", {"key": "faq"}),
+        ("dash-data-edit-all", {"key": "policy-docs"}),
+        ("dash-data-row-new", {"key": "store-facts"}),
+    ],
+)
+def test_bulk_get_routes_render_200(client_staff, name, kwargs):
+    resp = client_staff.get(reverse(name, kwargs=kwargs), HTTP_HX_REQUEST="true")
+    assert resp.status_code == 200 and resp.content
+
+
+@pytest.mark.django_db
+def test_bulk_row_routes_act_on_a_real_row(client_staff, one_faq_row):
+    pk = one_faq_row.pk
+    assert client_staff.get(reverse("dash-data-row", args=["faq", pk]), HTTP_HX_REQUEST="true").status_code == 200
+    assert client_staff.get(reverse("dash-data-row-edit", args=["faq", pk]), HTTP_HX_REQUEST="true").status_code == 200
+    resp = client_staff.post(reverse("dash-data-row-delete", args=["faq", pk]), HTTP_HX_REQUEST="true")
+    assert resp.status_code == 200 and not type(one_faq_row).objects.filter(pk=pk).exists()
+    assert client_staff.post(reverse("dash-data-bulk-action", args=["faq"]), {"action": "delete"}).status_code == 302

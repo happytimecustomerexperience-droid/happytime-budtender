@@ -78,6 +78,8 @@ class Entry:
     source_of_truth: str = ""
     expect_intent: str = ""
     expect_tools: list[str] = field(default_factory=list)
+    # Tools that must NOT run anywhere in the flow (e.g. no product search for an under-21 caller).
+    forbid_tools: list[str] = field(default_factory=list)
     expect_grounded: bool | None = None
     expect_escalated: bool | None = None
     setup_turns: list[str] = field(default_factory=list)  # prior messages in the same session

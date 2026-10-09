@@ -114,8 +114,12 @@ def test_order_ahead_for_pickup_now_reaches_the_phone_cart(convo, fake_bt):
     assert "phone_cart_claim" not in fake_bt.calls
     # check_sku shows up now too — the honest "which item did I just stage" name lookup.
     # No resume_by_phone: a typed number is the pickup contact, never an identity lookup (W5b).
-    assert sorted(fake_bt.calls) == ["check_sku", "phone_cart_upsert", "search"]
+    # suggestions_shown: the analytics record of what was spoken (search itself records nothing).
+    assert sorted(fake_bt.calls) == ["check_sku", "phone_cart_upsert", "search", "suggestions_shown"]
     assert [call["slots"]["category"] for call in fake_bt.calls["search"]] == ["cartridge", "edible"]
+    assert {(call["source"], call["record"]) for call in fake_bt.calls["search"]} == {("phone", False)}
+    assert [s for call in fake_bt.calls["suggestions_shown"] for s in call["skus"]] == [
+        "CT-JETTY-1G", "ED-CQ-5", "ED-WYLD-10"]
     assert [t.tools for t in c.turns] == [
         ["faq_lookup"],
         ["faq_lookup", "suggest_products"],

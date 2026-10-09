@@ -569,7 +569,7 @@ def test_only_the_greeter_and_the_budtender_get_the_name_tool(db, settings):
 
     with_tool = {r for r in ("entry_router", "budtender", "faq", "vendor", "escalation")
                  if "remember_caller" in provision._tool_names_for_role(r, AgentPrompt.objects.get(role=r))}
-    assert with_tool == set(caller.NAME_ROLES) == {"entry_router", "budtender"}
+    assert with_tool | {"concierge"} == set(caller.NAME_ROLES) == {"entry_router", "budtender", "concierge"}
     assert "remember_caller" in provision._tools_for_roles(["entry_router", "budtender"])  # provisioned too
     settings.HHT_DYNAMIC_GREETING = False
     assert "remember_caller" not in provision._tools_for_roles(["entry_router", "budtender"])

@@ -1,0 +1,64 @@
+<section class="card" id="suggestions">
+  <h2>Do suggestions turn into purchases?</h2>
+  <p class="sub">Every product the AI suggested (phone, chat, questionnaire, find-similar, pairing), matched to what the customer bought within 10 days: the same product (exact) or the same product in another strain or size (sibling).</p>
+  {% if sug.state == "unreachable" %}
+    {% include "dashboard/_analytics_unreachable.html" with what="Suggestion and purchase figures are" reason=sug.reason %}
+  {% elif sug.state == "empty" %}
+    <p class="empty">No suggestions were recorded in this window for these filters. That is a real zero, not a missing connection.</p>
+  {% else %}
+    <h3>Outcome of each suggestion</h3>
+    <div class="stack" role="img" aria-label="Outcome split of {{ sug.totals.suggested }} suggestions">
+      {% for s in sug.split %}{% if s.n %}<span class="{{ s.css }}" style="width:{{ s.width }}%" title="{{ s.label }}: {{ s.n }} ({{ s.share }})"></span>{% endif %}{% endfor %}
+    </div>
+    <div class="legend">{% for s in sug.split %}<span><i class="{{ s.css }}"></i>{{ s.label }} <b>{{ s.n }}</b> ({{ s.share }})</span>{% endfor %}</div>
+    <p class="sub">Conversion = bought / (bought + not bought). Pending suggestions are not decided yet and unattributable ones (no known customer) cannot be judged, so neither counts as not bought.</p>
+
+    <h3>Suggestions per {{ sug.trend.unit|default:"day" }}, by outcome</h3>
+    {% if sug.trend %}{% include "dashboard/_analytics_columns.html" with chart=sug.trend aria="Suggestions per day stacked by outcome" %}{% endif %}
+
+    <div class="two">
+      <div>{% include "dashboard/_analytics_group_table.html" with title="By channel" first="Channel" rows=sug.by_channel %}</div>
+      <div>{% include "dashboard/_analytics_group_table.html" with title="By store" first="Store" rows=sug.by_store %}</div>
+    </div>
+    <div class="two">
+      <div>{% include "dashboard/_analytics_group_table.html" with title="By category" first="Category" rows=sug.by_category %}</div>
+      <div>{% include "dashboard/_analytics_group_table.html" with title="By kind" first="Kind" rows=sug.by_kind %}</div>
+    </div>
+    {% include "dashboard/_analytics_group_table.html" with title="By rank position (1 = first pick shown)" first="Rank" rows=sug.by_rank subtotal=sug.top3 %}
+
+    <h3>Top suggested products (top 25 by times suggested, sorted by {{ sug.sort_label }})</h3>
+    <div class="table-wrap"><table>
+      <tr>{% for h in sug.product_headers %}<th class="{% if h.active %}active{% endif %}{% if forloop.counter > 3 %} num{% endif %}"{% if h.active %} aria-sort="{% if h.dir == 'asc' %}ascending{% else %}descending{% endif %}"{% endif %}>{% if h.href %}<a href="{{ h.href }}">{{ h.label }}{% if h.active %} {% if h.dir == "asc" %}&#9650;{% else %}&#9660;{% endif %}{% endif %}</a>{% else %}{{ h.label }}{% endif %}</th>{% endfor %}</tr>
+      {% for p in sug.products %}<tr>
+        <td class="prod"><b>{{ p.name }}</b><div class="sm">{% if p.strain %}{{ p.strain }}{% if p.strain_type %} ({{ p.strain_type }}){% endif %}{% endif %}{% if p.size_label %}{% if p.strain %} &middot; {% endif %}{{ p.size_label }}{% endif %}{% if p.store %}{% if p.strain or p.size_label %} &middot; {% endif %}{{ p.store }}{% endif %}{% if p.partial %} &middot; <span class="lowtrust">partial details</span>{% endif %}</div></td>
+        <td>{{ p.brand }}</td><td>{{ p.category }}</td><td class="num">{{ p.price_text }}</td><td class="num">{{ p.thc_text }}</td>
+        <td class="num">{{ p.times_suggested }}</td><td class="num">{{ p.customers }}</td><td class="num">{{ p.bought_exact }}</td><td class="num">{{ p.bought_sibling }}</td><td class="num">{{ p.not_bought }}</td><td class="num">{{ p.pending }}</td><td class="num">{{ p.unattributable }}</td>
+        <td class="num">{{ p.rate }}</td><td class="num sm">{{ p.last }}</td></tr>
+      {% empty %}<tr><td colspan="14" class="muted">No products.</td></tr>{% endfor %}
+    </table></div>
+
+    <div class="two">
+      <div>
+        <h3>Suggested, never bought</h3>
+        <p class="sub">Products with decided suggestions where nobody bought them or a sibling.</p>
+        {% if sug.never_bought %}<div class="table-wrap"><table>
+          <tr><th>Product</th><th>Brand</th><th>Category</th><th class="num">Price</th><th class="num">Not bought</th><th class="num">Suggested</th></tr>
+          {% for p in sug.never_bought %}<tr><td><b>{{ p.name }}</b><div class="sm">{% if p.strain %}{{ p.strain }}{% endif %}{% if p.size_label %}{% if p.strain %} &middot; {% endif %}{{ p.size_label }}{% endif %}</div></td><td>{{ p.brand }}</td><td>{{ p.category }}</td><td class="num">{{ p.price_text }}</td><td class="num">{{ p.not_bought }}</td><td class="num">{{ p.times_suggested }}</td></tr>{% endfor %}
+        </table></div>{% else %}<p class="muted">None: every decided product was bought at least once, or nothing is decided yet.</p>{% endif %}
+      </div>
+      <div>
+        <h3>Recent buyers</h3>
+        <p class="sub">Customers who bought a suggested product or a sibling.</p>
+        {% if sug.buyers %}<div class="table-wrap"><table>
+          <tr><th>Customer</th><th>Suggested</th><th>Bought</th><th class="num">Days</th><th>Channel</th><th>Identified by</th></tr>
+          {% for b in sug.buyers %}<tr>
+            <td>{% if b.voice_id %}<a href="{% url 'dash-customer-detail' b.voice_id %}">{{ b.name }}</a>{% else %}{{ b.name }}{% endif %}<div class="sm">{{ b.when }}{% if b.store %} &middot; {{ b.store }}{% endif %}</div></td>
+            <td>{{ b.suggested }}<div class="sm">{{ b.brand }}{% if b.size_label %} &middot; {{ b.size_label }}{% endif %}{% if b.rank %} &middot; rank {{ b.rank }}{% endif %}</div></td>
+            <td><span class="badge {% if b.match == 'Exact' %}blue{% else %}green{% endif %}">{{ b.match }}{% if b.match_kind and b.match_kind != "exact" %} ({{ b.match_kind }}){% endif %}</span>{% if b.bought %}<div class="sm">{{ b.bought }}{% if b.amount %} &middot; {{ b.amount }}{% endif %}</div>{% endif %}</td>
+            <td class="num">{{ b.days }}</td><td>{{ b.channel }}</td>
+            <td>{{ b.via }}{% if b.via_trusted == False %} <span class="lowtrust sm">(lower trust)</span>{% endif %}</td></tr>{% endfor %}
+        </table></div>{% else %}<p class="muted">No purchases matched yet in this window.</p>{% endif %}
+      </div>
+    </div>
+  {% endif %}
+</section>

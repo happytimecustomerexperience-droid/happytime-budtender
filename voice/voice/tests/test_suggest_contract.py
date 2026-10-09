@@ -79,10 +79,14 @@ class RecordingBudtender:
         }
 
     def search(
-        self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None
+        self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None,
+        source=None, record=True,
     ):
         self.search_calls.append({"phone": phone, "limit": limit, "session_token": session_token})
         return {"results": _RECORDED_RESULTS[:limit]}
+
+    def suggestions_shown(self, store, picks, **kw):
+        return {"ok": True, "recorded": len(picks)}
 
     def pair_for_sku(self, *a, **kw):
         return {"pairing": None, "strength": 0.0}

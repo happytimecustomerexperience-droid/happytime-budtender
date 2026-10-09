@@ -334,31 +334,7 @@ def test_specials_hours_edits_route_through_kb_crud(client_staff):
     assert row.value == "online 30% — Tuesday"
 
 
-# ── Analytics top product asks (item 7) ────────────────────────────────────────
-@pytest.mark.django_db
-def test_analytics_top_product_asks(client_staff):
-    """Top asks = a real count over VoiceCall.suggested_skus (no fabrication, leak-safe)."""
-    from voice.models import Outcome, VoiceCall
-
-    VoiceCall.objects.create(
-        call_id="c1", store="yakima", outcome=Outcome.SUGGESTED, suggested_skus=["SKU-A", "SKU-B"]
-    )
-    VoiceCall.objects.create(
-        call_id="c2", store="yakima", outcome=Outcome.SUGGESTED, suggested_skus=["SKU-A"]
-    )
-    resp = client_staff.get(reverse("dash-analytics") + "?days=30")
-    assert resp.status_code == 200
-    content = resp.content.decode()
-    assert "Top product asks" in content
-    assert "SKU-A" in content  # the most-suggested SKU appears
-    # SKU-A appeared in 2 calls; the count is real
-    from dashboard.views import _top_product_asks
-
-    rows = _top_product_asks(VoiceCall.objects.all())
-    assert rows[0] == {"sku": "SKU-A", "n": 2}
-    assert {"sku": "SKU-B", "n": 1} in rows
-
-
+# ── Analytics (the full page is covered in test_analytics_page.py) ───────────
 @pytest.mark.django_db
 def test_analytics_by_store_breakdown(client_staff):
     from voice.models import Outcome, VoiceCall
@@ -369,46 +345,6 @@ def test_analytics_by_store_breakdown(client_staff):
     content = resp.content.decode()
     assert "By store" in content
     assert "yakima" in content and "pullman" in content
-
-
-@pytest.mark.django_db
-def test_analytics_combines_chatbot_summary_server_side(client_staff, settings, monkeypatch):
-    """The voice dashboard pulls chatbot analytics through the server-side Bearer seam."""
-
-    import requests
-
-    settings.HHT_BUDTENDER_BASE_URL = "https://budtender.internal"
-    settings.HHT_BACKEND_TOKEN = "secret-token"
-
-    calls = []
-
-    class Resp:
-        status_code = 200
-        content = b"{}"
-
-        def json(self):
-            return {
-                "unique_visitors": 7,
-                "chat": {"opens": 5, "user_messages_sent": 12, "recommendation_views": 3},
-                "conversions": {"shop_now_clicks": 2},
-                "menu_embed": {"product_views": 9},
-            }
-
-    def fake_post(url, **kwargs):
-        calls.append({"url": url, **kwargs})
-        return Resp()
-
-    monkeypatch.setattr(requests, "post", fake_post)
-
-    resp = client_staff.get(reverse("dash-analytics") + "?days=7")
-    assert resp.status_code == 200
-    assert calls[0]["url"] == "https://budtender.internal/api/v1/analytics/summary"
-    assert calls[0]["json"] == {"days": 7}
-    assert calls[0]["headers"]["Authorization"] == "Bearer secret-token"
-    content = resp.content.decode()
-    assert "Chatbot funnel" in content
-    assert "Unique visitors" in content
-    assert ">7<" in content
 
 
 @pytest.mark.django_db
@@ -699,6 +635,18 @@ def test_capabilities_page_renders_every_switch_and_who_can_do_what(client_staff
 
 
 @pytest.mark.django_db
+def test_capabilities_page_gives_every_transfer_role_the_transfer_tool(client_staff):
+    from dashboard.publish import MEMBER_ROLES
+    from voice import constants as C
+
+    members = client_staff.get(reverse("dash-capabilities")).context["members"]
+    for role, m in zip(MEMBER_ROLES, members[:len(MEMBER_ROLES)], strict=True):  # one per role, in order
+        has_transfer = any(t["name"] == "transfer call" for t in m["tools"])
+        assert has_transfer == (role in C.TRANSFER_ROLES), role
+    assert "concierge" in MEMBER_ROLES and "concierge" in C.TRANSFER_ROLES
+
+
+@pytest.mark.django_db
 def test_capability_toggle_flips_the_switch_and_records_who(client_staff):
     from dashboard.models import BotCapability
     from voice import capabilities as caps
@@ -776,3 +724,80 @@ def test_vendor_realert_reports_what_dispatch_returned(client_staff, monkeypatch
     )
     assert b"email: already sent" in resp.content and b"n8n: failed" in resp.content
     assert b"re-sent" not in resp.content
+
+
+@pytest.mark.django_db
+def test_chat_funnel_and_timeline_fetch_budtender_server_side(client_staff, settings, monkeypatch):
+    """The funnel + per-session timeline pages go through the same server-side Bearer seam."""
+    import requests
+
+    settings.HHT_BUDTENDER_BASE_URL = "https://budtender.internal"
+    settings.HHT_BACKEND_TOKEN = "secret-token"
+    calls = []
+
+    class Resp:
+        status_code = 200
+        content = b"{}"
+
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            return self.body
+
+    funnel = {
+        "ok": True, "sessions": 4, "unique_visitors": 3, "opens": 4, "resumes": 1,
+        "funnel": [{"stage": "opened_chat", "sessions": 4}],
+        "actions": {"searches": 2, "product_card_clicks": 1, "order_ahead_clicks": 1, "picks_views": 2,
+                    "show_more_clicks": 0, "product_expands": 0, "find_similar_opens": 0,
+                    "find_similar_results": 0, "similar_picks": 0, "pair_upsell_views": 0,
+                    "pair_upsell_accepts": 0, "phone_capture_submits": 0, "phone_capture_skips": 0},
+        "bounces": {"total": 2, "rate": 0.5, "no_interaction": 1, "left_after_picks": 1,
+                    "left_before_search": 0, "zero_results": 0, "last_step": [{"step": "budget", "sessions": 1}]},
+        "questionnaire_steps": [{"step": "budget", "viewed": 2, "answered": 1, "skipped": 0, "dropped": 1,
+                                 "drop_rate": 0.5}],
+        "top_categories": [{"category": "flower", "searches": 2}], "top_slots": [],
+        "zero_result_searches": [{"slots": "category=edible", "searches": 1}],
+        "by_store": {"pullman": {"sessions": 2, "searches": 1, "picks_viewed": 1, "product_clicks": 1,
+                                 "order_ahead_clicks": 0, "bounces": 1, "bounce_rate": 0.5}},
+        "by_day": [{"date": "2026-10-07", "sessions": 4, "searches": 2, "picks_viewed": 2, "product_clicks": 1,
+                    "order_ahead_clicks": 1, "bounces": 2}],
+        "recent_sessions": [{"ref": "abcdef0123456789", "id": 7, "store": "pullman", "started_at": "2026-10-07T10:00",
+                             "events": 5, "searches": 1, "seconds": 40, "outcome": "left_after_picks",
+                             "last_step": "budget"}],
+    }
+    timeline = {
+        "ok": True, "store": "pullman", "channel": "chat", "stage": "RESULTS", "started_at": "2026-10-07T10:00",
+        "outcome": "left_after_picks", "last_step": "budget", "identified": False,
+        "counts": {"events": 1, "messages": 1, "suggestions": 0},
+        "timeline": [{"t": 0, "kind": "event", "name": "chat_open", "props": {"step": "x"}},
+                     {"t": 5, "kind": "message", "role": "user", "text": "something for sleep", "chips": [],
+                      "result_skus": []}],
+    }
+
+    def fake_post(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return Resp(funnel if url.endswith("/funnel") else timeline)
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    resp = client_staff.get(reverse("dash-chat-funnel") + "?days=7&store=pullman")
+    assert resp.status_code == 200
+    assert calls[0]["url"] == "https://budtender.internal/api/v1/analytics/funnel"
+    assert calls[0]["json"]["days"] == 7 and calls[0]["json"]["store"] == "pullman"
+    assert calls[0]["headers"]["Authorization"] == "Bearer secret-token"
+    body = resp.content.decode()
+    assert "Questionnaire step drop-off" in body and "abcdef0123456789" in body
+
+    resp = client_staff.get(reverse("dash-chat-timeline") + "?ref=abcdef0123456789")
+    assert resp.status_code == 200
+    assert calls[1]["json"] == {"ref": "abcdef0123456789"}
+    assert "something for sleep" in resp.content.decode()
+
+
+@pytest.mark.django_db
+def test_chat_funnel_degrades_when_budtender_is_not_configured(client_staff, settings):
+    settings.HHT_BUDTENDER_BASE_URL = ""
+    resp = client_staff.get(reverse("dash-chat-funnel"))
+    assert resp.status_code == 200 and b"not configured" in resp.content
+    assert client_staff.get(reverse("dash-chat-timeline")).status_code == 200
