@@ -14,6 +14,8 @@ P1 wires returning-caller personalization, P3 adds ``VendorCallback``.
 
 from __future__ import annotations
 
+from datetime import date
+
 from django.db import models
 
 
@@ -127,6 +129,41 @@ class VendorCallback(models.Model):
         self.save(update_fields=["status", "updated_at"])
 
 
+DENORMALISED_FIELDS = ("top_category", "brands_text", "first_order_date", "last_order_date")
+
+
+def parse_order_date(value) -> date | None:
+    """'2026-04-01' or '2026-04-01T12:00:00' / '2026-04-01 12:00' -> date; anything else -> None."""
+    try:
+        return date.fromisoformat(str(value or "").strip()[:10])
+    except ValueError:
+        return None
+
+
+def _name_of(entry, *keys: str) -> str:
+    """A label from a bare string or a dict under any of ``keys``; explicit nulls read as ''."""
+    if isinstance(entry, dict):
+        entry = next((entry[k] for k in keys if entry.get(k)), "")
+    return str(entry).strip() if entry else ""
+
+
+def _first_category(top_categories) -> str:
+    return next(
+        (n for e in top_categories or [] if (n := _name_of(e, "category", "Category"))), ""
+    )
+
+
+def brands_text(brands) -> str:
+    """'|brand a|brand b|': lower-case, de-duplicated, delimiter-wrapped so a SQL ``icontains``
+    of '|brand a|' is an exact-brand match and of 'brand' a substring match. '' when no brands."""
+    seen: dict[str, None] = {}
+    for b in brands:
+        n = _name_of(b, "brand", "Brand", "name").lower().replace("|", " ")
+        if n:
+            seen[n] = None
+    return f"|{'|'.join(seen)}|" if seen else ""
+
+
 class CustomerProfile(models.Model):
     """Staff-facing customer intelligence imported from the POS analytics export (P6).
 
@@ -158,6 +195,14 @@ class CustomerProfile(models.Model):
     top_vendor = models.CharField(max_length=120, blank=True)
     first_order = models.CharField(max_length=32, blank=True)
     last_order = models.CharField(max_length=32, blank=True)
+    # Denormalised list-table columns (Customers page sorts/filters/exports on these; JSON and ISO-ish
+    # strings are unreliable to order by). ``sync_denormalised`` (run by ``save``) derives all but
+    # ``items``, which the importer fills from the export's TotalUnits (None = unknown, never 0).
+    items = models.IntegerField(null=True, blank=True)  # total units bought
+    top_category = models.CharField(max_length=80, blank=True, db_index=True)
+    brands_text = models.TextField(blank=True)  # '|top brand|fav brand|…' lower-case, delimiter-wrapped
+    first_order_date = models.DateField(null=True, blank=True, db_index=True)
+    last_order_date = models.DateField(null=True, blank=True, db_index=True)
     # JSON detail (present for all on the basic import; richer for the top-spend cohort).
     top_categories = models.JSONField(default=list, blank=True)  # [{category,revenue,share}]
     tier_by_category = models.JSONField(default=dict, blank=True)  # {cat: Bottom|Middle|Top}
@@ -174,6 +219,20 @@ class CustomerProfile(models.Model):
 
     def __str__(self) -> str:
         return f"CustomerProfile<{self.name or self.customer_key}>"
+
+    def sync_denormalised(self) -> None:
+        """Re-derive the list-table columns from their JSON / string sources (pure function of them)."""
+        self.top_category = _first_category(self.top_categories)[:80]
+        self.brands_text = brands_text([self.top_brand, *(self.favorite_brands or [])])
+        self.first_order_date = parse_order_date(self.first_order)
+        self.last_order_date = parse_order_date(self.last_order)
+
+    def save(self, *args, **kwargs):
+        self.sync_denormalised()
+        fields = kwargs.get("update_fields")
+        if fields:  # a partial save must still persist what it re-derived
+            kwargs["update_fields"] = {*fields, *DENORMALISED_FIELDS}
+        super().save(*args, **kwargs)
 
     def intent(self) -> str:
         """A coarse call-intent hint from recency vs cadence: due-to-replenish / lapsing / browsing."""

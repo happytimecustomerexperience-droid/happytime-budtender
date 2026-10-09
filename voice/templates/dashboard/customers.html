@@ -1,54 +1,96 @@
 {% extends "dashboard/base.html" %}
 {% block title %}Customers — Happy Time Voice{% endblock %}
 {% block content %}
+<style>
+  .cust-filters { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); align-items: end; }
+  .cust-filters label { margin-bottom: 0; }
+  .cust-filters .pair { display: flex; gap: 6px; }
+  .cust-filters .span2 { grid-column: span 2; }
+  .cust-presets { font-size: 12px; margin-top: 3px; }
+  .cust-presets a { margin-right: 8px; }
+  .cust-note { background: var(--amber-bg); border: 1px solid #fde68a; color: #92400e;
+               padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; }
+  .cust-table th a { color: inherit; white-space: nowrap; }
+  .cust-table th.num, .cust-table td.num { text-align: right; }
+</style>
+
 <div class="row between">
   <div>
     <h1>Customers</h1>
-    <p class="muted">{{ total }} profiles ·
+    <p class="muted">
       {% if source == 'analytics' %}<span class="badge blue">analytics</span> — RFM/persona/cohort/LTV (auto-refreshed); open a customer to merge in budtender's live affinities
-      {% elif source == 'live' %}<span class="badge green">live</span> from budtender — no analytics snapshot loaded yet
+      {% elif source == 'live' %}<span class="badge green">live</span> from budtender — no analytics snapshot loaded yet. Spend, avg cart and item counts need the analytics import.
       {% else %}<span class="badge amber">empty</span> — no snapshot and budtender unreachable
       {% endif %}
     </p>
   </div>
 </div>
 
-<form method="get" class="row" style="gap:8px;margin-bottom:12px">
-  <input type="search" name="q" value="{{ q }}" placeholder="Search by name or phone…" style="flex:1">
-  <button class="btn btn-primary" type="submit">Search</button>
+<form id="customers-filter" method="get" class="card" action="{% url 'dash-customers' %}"
+      hx-get="{% url 'dash-customers' %}" hx-target="#customers-results" hx-push-url="true"
+      hx-trigger="submit, change, keyup changed delay:500ms">
+  {% if sort_param %}<input type="hidden" name="sort" value="{{ sort_param }}">{% endif %}
+  <div class="cust-filters">
+    <label class="{% if source == 'analytics' %}span2{% endif %}"><span class="lt">Name</span>
+      <input type="search" name="q" value="{{ f.q }}" placeholder="Search by name…"></label>
+    {% if source == 'analytics' %}
+    <label><span class="lt">Favorite brand</span>
+      <input type="text" name="brand" value="{{ f.brand }}" list="brand-options" placeholder="Any brand" autocomplete="off">
+      <datalist id="brand-options">{% for b in brand_options %}<option value="{{ b }}">{% endfor %}</datalist></label>
+    <label><span class="lt">Favorite category</span>
+      <select name="category"><option value="">Any</option>
+        {% for c in category_options %}<option value="{{ c }}"{% if c == f.category %} selected{% endif %}>{{ c }}</option>{% endfor %}
+      </select></label>
+    <label><span class="lt">Frequency</span>
+      <select name="freq"><option value="">Any</option>
+        {% for key, label in band_options %}<option value="{{ key }}"{% if key == f.freq %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select></label>
+    <label><span class="lt">Segment</span>
+      <select name="segment"><option value="">Any</option>
+        {% for s in segment_options %}<option value="{{ s }}"{% if s == f.segment %} selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select></label>
+    {% for n in number_filters %}
+    <label><span class="lt">{{ n.label }} (min &ndash; max)</span>
+      <span class="pair">
+        <input type="text" inputmode="decimal" name="{{ n.lo }}" placeholder="min" value="{{ n.lo_val }}">
+        <input type="text" inputmode="decimal" name="{{ n.hi }}" placeholder="max" value="{{ n.hi_val }}">
+      </span></label>
+    {% endfor %}
+    {% for d in date_filters %}
+    <div class="span2"><span class="lt muted" style="font-size:12px">{{ d.label }} between</span>
+      <span class="pair">
+        <input type="date" name="{{ d.lo }}" value="{{ d.lo_val }}" aria-label="{{ d.label }} from">
+        <input type="date" name="{{ d.hi }}" value="{{ d.hi_val }}" aria-label="{{ d.label }} to">
+      </span>
+      <div class="cust-presets">{% for p in d.presets %}<a href="{{ p.href }}" data-range="{{ d.prefix }}" data-from="{{ p.from }}">{{ p.label }}</a>{% endfor %}</div>
+    </div>
+    {% endfor %}
+    {% endif %}
+    <label><span class="lt">Per page</span>
+      <select name="per">{% for n in page_sizes %}<option value="{{ n }}"{% if n == per %} selected{% endif %}>{{ n }}</option>{% endfor %}</select></label>
+    <div><button class="btn btn-primary" type="submit">Apply</button></div>
+  </div>
+  {% if source == 'analytics' %}<p class="muted" style="margin:8px 0 0;font-size:12px">Date filters cover first and last order dates only &mdash; spend within a date range isn't available in the analytics export.</p>{% endif %}
 </form>
 
-{% if rows %}
-<div class="card">
-  <table style="width:100%">
-    <thead><tr><th>Customer</th><th>Orders</th><th>Last purchase</th><th>Price tier</th><th>Top category</th></tr></thead>
-    <tbody>
-      {% for r in rows %}
-      <tr>
-        <td><a href="{% url 'dash-customer-detail' r.id %}"><strong>{{ r.name }}</strong></a>
-          {% if r.segment %}<br><span class="muted" style="font-size:12px">{{ r.segment }}</span>{% endif %}</td>
-        <td>{{ r.orders }}</td>
-        <td>{{ r.recency|slice:":10"|default:"—" }}</td>
-        <td>{% if r.price_tier %}<span class="badge slate">{{ r.price_tier }}</span>{% else %}—{% endif %}</td>
-        <td>{{ r.top_category|default:"—" }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div id="customers-results" hx-history="false">
+  {% include "dashboard/_customers_table.html" %}
 </div>
+{% endblock %}
 
-<div class="row between" style="margin-top:10px">
-  <span class="muted">Page {{ page_no }} of {{ num_pages }}</span>
-  <span>
-    {% if has_prev %}<a class="btn" href="?q={{ q }}&page={{ page_no|add:'-1' }}">← Prev</a>{% endif %}
-    {% if has_next %}<a class="btn" href="?q={{ q }}&page={{ page_no|add:'1' }}">Next →</a>{% endif %}
-  </span>
-</div>
-{% else %}
-<div class="card muted">
-  No customers yet. Either import the analytics snapshot (RFM/persona/cohort), or build budtender's live profiles from Dutchie:
-  <pre style="white-space:pre-wrap">docker compose exec voice-web python manage.py import_customer_profiles --customers /tmp/customers.json
-docker compose exec web python manage.py rebuild_customer_history</pre>
-</div>
-{% endif %}
+{% block scripts %}
+<script>
+  // Date presets: fill the "last order" / "first order" inputs and let the form refresh the table.
+  // Without JS each preset is a plain link that reloads the page with the same range.
+  document.querySelectorAll("[data-range]").forEach(function (a) {
+    a.addEventListener("click", function (e) {
+      e.preventDefault();
+      var form = document.getElementById("customers-filter");
+      form.elements[a.dataset.range + "_from"].value = a.dataset.from || "";
+      var to = form.elements[a.dataset.range + "_to"];
+      to.value = "";
+      to.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  });
+</script>
 {% endblock %}

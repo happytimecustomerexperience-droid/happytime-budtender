@@ -1,0 +1,79 @@
+{# The htmx-swappable part of the Customers page: notes, summary line, table, pager. #}
+{# Inside it hx-target / hx-push-url are inherited, so each link only needs hx-get. #}
+<div hx-target="#customers-results" hx-push-url="true">
+  {% for n in notes %}<div class="cust-note" data-testid="customers-note">{{ n }}</div>{% endfor %}
+
+  <div class="row between" style="margin-bottom:8px">
+    <span data-testid="customers-summary"><strong>{{ summary }}</strong>
+      {% if filters_active %}<a href="{{ clear_href }}" style="margin-left:8px">Clear filters</a>{% endif %}
+    </span>
+    {% if source == 'analytics' %}
+    <a class="btn" href="{{ export_href }}" data-testid="customers-export"
+       title="Downloads the current filtered and sorted list">Export CSV{% if export_capped %} (first {{ export_cap }}){% endif %}</a>
+    {% endif %}
+  </div>
+
+  {% if rows %}
+  <div class="card table-wrap" style="padding:0">
+    {% if source == 'analytics' %}
+    <table class="cust-table">
+      <thead><tr>
+        {% for c in columns %}
+        <th class="{% if c.num %}num{% endif %}" aria-sort="{{ c.aria }}">
+          <a href="{{ c.href }}" hx-get="{{ c.href }}">{{ c.label }}{% if c.arrow %} {{ c.arrow }}{% endif %}</a>
+        </th>
+        {% endfor %}
+      </tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><a href="{% url 'dash-customer-detail' r.id %}"><strong>{{ r.name }}</strong></a>
+            {% if r.segment %}<br><span class="muted" style="font-size:12px">{{ r.segment }}</span>{% endif %}</td>
+          <td class="num">{{ r.orders }}</td>
+          <td class="num">{{ r.spend_txt }}</td>
+          <td class="num">{{ r.aov_txt }}</td>
+          <td class="num">{{ r.items_txt }}{% if r.per_order_txt %}<br><span class="muted" style="font-size:12px">{{ r.per_order_txt }}</span>{% endif %}</td>
+          <td style="white-space:nowrap">{{ r.freq_txt }}{% if r.cadence is not None %}<br><span class="muted" style="font-size:12px">{{ r.band }}</span>{% endif %}</td>
+          <td style="white-space:nowrap">{{ r.last_txt }}</td>
+          <td style="white-space:nowrap">{{ r.since_txt }}</td>
+          <td>{{ r.brand_txt }}</td>
+          <td>{{ r.category_txt }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <table class="cust-table">
+      <thead><tr><th>Customer</th><th class="num">Orders</th><th>Last order</th><th>Price tier</th><th>Favorite category</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><a href="{% url 'dash-customer-detail' r.id %}"><strong>{{ r.name }}</strong></a></td>
+          <td class="num">{{ r.orders }}</td>
+          <td>{{ r.recency|slice:":10"|default:"—" }}</td>
+          <td>{% if r.price_tier %}<span class="badge slate">{{ r.price_tier }}</span>{% else %}—{% endif %}</td>
+          <td>{{ r.top_category|default:"—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="row between" style="margin-top:10px">
+    <span class="muted">Page {{ page_no }} of {{ num_pages }}</span>
+    <span>
+      {% if prev_href %}<a class="btn" href="{{ prev_href }}" hx-get="{{ prev_href }}">&larr; Prev</a>{% endif %}
+      {% if next_href %}<a class="btn" href="{{ next_href }}" hx-get="{{ next_href }}">Next &rarr;</a>{% endif %}
+    </span>
+  </div>
+  {% elif source == 'empty' %}
+  <div class="card muted">
+    No customers yet. Either import the analytics snapshot (RFM/persona/cohort), or build budtender's live profiles from Dutchie:
+    <pre style="white-space:pre-wrap">docker compose exec voice-web python manage.py import_customer_profiles --customers /tmp/customers.json
+docker compose exec web python manage.py rebuild_customer_history</pre>
+  </div>
+  {% else %}
+  <div class="card muted">No customers match{% if filters_active %} these filters{% endif %}.</div>
+  {% endif %}
+</div>

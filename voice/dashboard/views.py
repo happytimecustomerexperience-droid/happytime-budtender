@@ -969,16 +969,6 @@ def _row_from_bt(c: dict) -> dict:
     }
 
 
-def _row_from_local(p) -> dict:
-    cats = p.top_categories or []
-    return {
-        "id": p.pk, "name": p.name or p.customer_key,
-        "orders": p.orders, "recency": p.last_order or "",
-        "price_tier": "", "segment": p.segment,
-        "top_category": (cats[0].get("category") if cats else "") or "",
-    }
-
-
 def _merge_detail(local, live: dict | None) -> dict:
     """Merge the analytics snapshot row (``local`` model, may be None) with budtender's live profile
     dict (``live``, may be None), field-by-field: analytics owns RFM/persona/cohort/LTV; budtender
@@ -1014,38 +1004,6 @@ def _merge_detail(local, live: dict | None) -> dict:
         "purchase_count": live.get("purchase_count") or (len(local.favorites or []) if local else 0) or 0,
         "has_analytics": bool(local), "has_live": bool(live),
     }
-
-
-@staff_member_required
-def customers_list(request):
-    """Searchable, paginated roster — the analytics snapshot (rich), budtender-live fallback."""
-    from crm.models import CustomerProfile
-    from voice.budtender_client import budtender
-
-    q = (request.GET.get("q") or "").strip()
-    page_no = _bounded_int(request.GET.get("page"), default=1, lo=1, hi=10_000_000)
-    offset = (page_no - 1) * PER_PAGE
-
-    qs = CustomerProfile.objects.all()
-    if q:
-        qs = qs.filter(name__icontains=q)
-    total = qs.count()
-    if total:
-        rows = [_row_from_local(p) for p in qs.order_by("-total_spend", "id")[offset:offset + PER_PAGE]]
-        source = "analytics"
-    else:
-        # No snapshot loaded → fall back to budtender's live roster.
-        bt = budtender().list_customers(q=q, limit=PER_PAGE, offset=offset)
-        rows = [_row_from_bt(c) for c in bt.get("customers", [])]
-        total = bt.get("total", len(rows))
-        source = "live" if bt.get("ok") else "empty"
-
-    num_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
-    return render(request, "dashboard/customers.html", {
-        "rows": rows, "q": q, "total": total, "source": source,
-        "page_no": page_no, "num_pages": num_pages,
-        "has_prev": page_no > 1, "has_next": page_no < num_pages,
-    })
 
 
 @staff_member_required

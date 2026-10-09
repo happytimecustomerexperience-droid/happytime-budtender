@@ -43,6 +43,7 @@ DASH_ROUTES = [
     ("dash-credentials-save", {}),
     ("dash-credentials-clear", {}),
     ("dash-customers", {}),
+    ("dash-customers-export", {}),
     ("dash-customer-detail", {"pk": 1}),
     ("dash-calls", {}),
     ("dash-conversation-history", {}),

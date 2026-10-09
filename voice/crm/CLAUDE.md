@@ -36,6 +36,14 @@ Run from `voice/` with `HHT_TEST_SQLITE=1 DJANGO_DEBUG=1 ALLOW_NON_EU_RESIDENCY=
 - Visitor text reaches staff through `sinks.defang` (email, Slack, the transfer note). The n8n webhook
   goes through `sinks.post_webhook` only: public addresses, https, no redirects.
 
+- **`CustomerProfile` list columns** (`items`, `top_category`, `brands_text`, `first_order_date`,
+  `last_order_date`) back the Customers table's sort/filter/CSV (`dashboard/customers_views.py`).
+  `save()` re-derives all but `items` from the JSON/string fields (also on `update_fields` saves);
+  `items` comes only from the import's `TotalUnits` and stays NULL (shown as a dash) when unknown.
+  `queryset.update()` / `bulk_update()` skip `save()`, so they must set these columns themselves
+  (migration 0006's backfill does). The export has no per-order history: spend in a date range
+  needs a per-customer `[{date,total,units}]` (or monthly buckets) added to `customers.json`.
+
 ## Gotchas
 - `AlertDelivery.sink` is `max_length=24`: `xfer:` + a count, or + the timestamp digits (<= 19).
 - The `forwarding` payload shape (`destination.number`, `customer.number`, `summary`, `messages`) is

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from . import health, views
+from . import customers_views, health, views
 from .playground import playground, playground_send
 
 urlpatterns = [
@@ -63,7 +63,8 @@ urlpatterns = [
     path("credentials/save", views.credentials_save, name="dash-credentials-save"),
     path("credentials/clear", views.credentials_clear, name="dash-credentials-clear"),
     # customer intelligence browse
-    path("customers/", views.customers_list, name="dash-customers"),
+    path("customers/", customers_views.customers, name="dash-customers"),
+    path("customers/export.csv", customers_views.customers_export, name="dash-customers-export"),
     path("customers/<int:pk>/", views.customer_detail, name="dash-customer-detail"),
     # calls
     path("calls/", views.call_monitor, name="dash-calls"),
