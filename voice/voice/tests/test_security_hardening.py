@@ -37,6 +37,9 @@ class _HostileBudtender:
     def check_sku(self, store, sku, **kw):
         return {"in_stock": True, "name": HOSTILE_NAMES[0]}
 
+    def suggestions_shown(self, store, picks, **kw):  # analytics the suggest tool always sends, not an action
+        return {"ok": True, "recorded": len(picks)}
+
     def pair_for_sku(self, store, anchor_sku, **kw):
         return {"pairing": None, "strength": 0.0}
 

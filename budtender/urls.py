@@ -41,6 +41,7 @@ urlpatterns = [
     path("analytics/suggestions", views.AnalyticsSuggestionsView.as_view()),           # suggestion-analytics-v1
     path("analytics/suggestions/list", views.AnalyticsSuggestionsListView.as_view()),
     path("customer/suggestions", views.CustomerSuggestionsView.as_view()),
+    path("suggestions/shown", views.SuggestionsShownView.as_view()),   # voice: the picks a call spoke
     path("admin/ranking-weights", views.AdminRankingWeightsView.as_view()),
     path("feedback/", views.FeedbackView.as_view()),
     path("persona/refresh", views.PersonaRefreshView.as_view()),

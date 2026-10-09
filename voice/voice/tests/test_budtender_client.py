@@ -215,6 +215,31 @@ def test_search_forwards_exclude_skus():
     assert fs.calls[0]["body"]["exclude_skus"] == ["A", "B"]
 
 
+def test_search_sends_source_and_record_only_when_asked():
+    fs = FakeSession(default={"results": []})
+    _client(fs).search({"store": "yakima"})
+    _client(fs).search({"store": "yakima"}, source="phone", record=False)
+    assert "source" not in fs.calls[0]["body"] and "record" not in fs.calls[0]["body"]
+    assert (fs.calls[1]["body"]["source"], fs.calls[1]["body"]["record"]) == ("phone", False)
+
+
+def test_suggestions_shown_posts_only_sku_rank_why():
+    fs = FakeSession(default={"ok": True, "recorded": 1})
+    out = _client(fs).suggestions_shown(
+        "yakima", [{"sku": "A1", "rank": 4, "why_this": "fits", "price": 9.99, "name": "x"}],
+        session_token="vc-call-1")
+    call = fs.calls[0]
+    assert call["url"] == f"{BASE}/api/v1/suggestions/shown"
+    assert call["body"] == {"location": "yakima", "source": "phone", "session_token": "vc-call-1",
+                            "picks": [{"sku": "A1", "rank": 4, "why_this": "fits"}]}
+    assert out == {"ok": True, "recorded": 1}
+
+
+def test_suggestions_shown_unreachable_is_graceful_empty():
+    fs = FakeSession(raise_exc=requests.Timeout())
+    assert _client(fs).suggestions_shown("yakima", [{"sku": "A1"}]) == {"ok": False, "recorded": 0}
+
+
 # ── check_sku: exact single-SKU lookup (/products/by-sku/), OTD price, never raw price ──
 def test_check_sku_uses_by_sku_endpoint_and_computes_otd():
     fs = FakeSession()

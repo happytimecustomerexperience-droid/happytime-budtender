@@ -522,6 +522,44 @@ def _session_customer(request, session: ChatSession | None) -> CustomerProfile |
     return identity.trusted(identity.follow(session.customer))
 
 
+def _search_identity(request, location: str):
+    """``(session, profile, caller)`` for a search-shaped request: the one identity rule that search and
+    ``suggestions/shown`` share."""
+    # Get-or-create the session so EVERY session (incl. anonymous questionnaire
+    # guests) has its suggested products recorded. A token that is neither known nor
+    # minted-shaped gets its results but no session (and never creates one).
+    session = _session_for_token(
+        request.data.get("session_token"), location_slug=location, channel="questionnaire"
+    )
+    # Profile drives personalization: prefer the session's linked customer,
+    # else resolve by a phone passed with the request (logged-in chat). A website request is
+    # anonymous — its phone was typed — EXCEPT a session the visitor identified through
+    # SessionContextView (identity_via set; owner-approved, HHT_WEB_PHONE_IDENTITY). A phone in
+    # THIS request body never counts (budtender/auth.py).
+    trusted = not is_website(request) or bool(
+        session and session.identity_via == "web_phone" and settings.HHT_WEB_PHONE_IDENTITY
+    )
+    # A shared row (one phone folded from many Dutchie customers) never personalises search.
+    profile = (identity.trusted(identity.follow(session.customer))
+               if session and session.customer and trusted else None)
+    caller = None
+    if not is_website(request):
+        # The voice service's caller-ID is the identity on this request. It wins over whoever a
+        # (stale, resumed or handed-on) session token was tied to, and that other person's
+        # session gets none of this caller's picks.
+        caller = _profile_for_phone(request.data.get("phone") or "")
+        if caller is not None:
+            session = _own_session(session, caller)
+            profile = caller
+            if session and not session.customer:
+                session.customer = profile
+                session.phone = profile.phone
+                session.save(update_fields=["customer", "phone"])
+                # The session's earlier anonymous suggestions are this caller's too.
+                suggestions.attach_sessions_safely([session], profile, "caller_id")
+    return session, profile, caller
+
+
 def _suggestion_via(session: ChatSession | None, caller: CustomerProfile | None) -> str:
     """identity_via stamped on a suggestion: the carrier caller-ID on this request, else the session's."""
     if caller is not None:
@@ -800,38 +838,7 @@ class ProductSearchView(APIView):
         raw_exclude = request.data.get("exclude_skus")
         exclude = ({str(s)[:64] for s in raw_exclude[:_EXCLUDE_SKUS_MAX] if isinstance(s, (str, int))}
                    if isinstance(raw_exclude, list) else set())
-        # Get-or-create the session so EVERY session (incl. anonymous questionnaire
-        # guests) has its suggested products recorded. A token that is neither known nor
-        # minted-shaped gets its results but no session (and never creates one).
-        session = _session_for_token(
-            request.data.get("session_token"), location_slug=location, channel="questionnaire"
-        )
-        # Profile drives personalization: prefer the session's linked customer,
-        # else resolve by a phone passed with the request (logged-in chat). A website request is
-        # anonymous — its phone was typed — EXCEPT a session the visitor identified through
-        # SessionContextView (identity_via set; owner-approved, HHT_WEB_PHONE_IDENTITY). A phone in
-        # THIS request body never counts (budtender/auth.py).
-        trusted = not is_website(request) or bool(
-            session and session.identity_via == "web_phone" and settings.HHT_WEB_PHONE_IDENTITY
-        )
-        # A shared row (one phone folded from many Dutchie customers) never personalises search.
-        profile = (identity.trusted(identity.follow(session.customer))
-                   if session and session.customer and trusted else None)
-        caller = None
-        if not is_website(request):
-            # The voice service's caller-ID is the identity on this request. It wins over whoever a
-            # (stale, resumed or handed-on) session token was tied to, and that other person's
-            # session gets none of this caller's picks.
-            caller = _profile_for_phone(request.data.get("phone") or "")
-            if caller is not None:
-                session = _own_session(session, caller)
-                profile = caller
-                if session and not session.customer:
-                    session.customer = profile
-                    session.phone = profile.phone
-                    session.save(update_fields=["customer", "phone"])
-                    # The session's earlier anonymous suggestions are this caller's too.
-                    suggestions.attach_sessions_safely([session], profile, "caller_id")
+        session, profile, caller = _search_identity(request, location)
 
         # Freshness guard: if this store's inventory is ≥24h stale, kick off an
         # async refresh so suggestions self-heal to live stock. Never blocks the
@@ -877,9 +884,12 @@ class ProductSearchView(APIView):
                    for i, (p, why) in enumerate(ranked)]
 
         # Every suggestion is kept with its full card (docs/contracts/suggestion-analytics-v1.md): a
-        # session's, a known caller's, or one the client labelled with an allowlisted `source`.
+        # session's, a known caller's, or one the client labelled with an allowlisted `source`. The voice
+        # service fetches wide and speaks a few, so it sends `record: false` and reports what it said
+        # through `suggestions/shown`; only the backend token may switch recording off.
         source = request.data.get("source")
-        if results and (session or profile is not None or suggestions.clean_source(source)):
+        record = is_website(request) or request.data.get("record") is not False
+        if record and results and (session or profile is not None or suggestions.clean_source(source)):
             suggestions.record_safely(
                 session=session, customer=profile, location=location,
                 picks=list(zip([p for p, _ in ranked], results)), kind="primary",
@@ -890,6 +900,44 @@ class ProductSearchView(APIView):
         total = min(total, SEARCH_CAP)
         return Response({"results": results, "source": "vps", "total_matching": total,
                          "has_more": offset + len(results) < total, "offset": offset, "limit": limit})
+
+
+_SHOWN_MAX = 5
+
+
+class SuggestionsShownView(APIView):
+    """``POST /suggestions/shown`` — the picks a phone call actually SPOKE, recorded like a search's
+    (backend token only). ``{location, session_token?, phone?, source?, picks: [{sku, rank, why_this}]}``.
+    The card is rebuilt from our own Product row, never from the body; an unknown SKU is skipped.
+    Not ``website_ok``: the website token gets 403 from ServiceTokenPermission."""
+
+    def post(self, request):
+        raw = request.data.get("picks")
+        picks = [p for p in raw[:_SHOWN_MAX] if isinstance(p, dict)] if isinstance(raw, list) else []
+        skus = [str(p.get("sku") or "")[:64] for p in picks]
+        if not any(skus):
+            return Response({"ok": False, "reason": "no picks"}, status=400)
+        location = _safe_location(request.data.get("location"))
+        session, profile, caller = _search_identity(request, location)
+        by_sku = {p.sku: p for p in Product.objects.filter(location_slug=location, sku__in=[s for s in skus if s])}
+        shown = []
+        for i, (pick, sku) in enumerate(zip(picks, skus)):
+            product = by_sku.get(sku)
+            if product is None:
+                continue
+            rank = _bounded_int(pick.get("rank"), default=i + 1, lo=1, hi=SEARCH_CAP)
+            why = pick.get("why_this") if isinstance(pick.get("why_this"), str) else None
+            shown.append((product, public_product(product, rank=rank, why_this=why)))
+        source = request.data.get("source")
+        created = []
+        if shown and (session or profile is not None or suggestions.clean_source(source)):
+            created = suggestions.record_safely(
+                session=session, customer=profile, location=location, picks=shown, kind="primary",
+                channel=suggestions.resolve_channel(source, session, website=is_website(request),
+                                                    caller_id=caller is not None),
+                identity_via=_suggestion_via(session, caller), legacy_source=session.channel if session else "chat",
+            )
+        return Response({"ok": True, "recorded": len(created)})
 
 
 class AdminRankingWeightsView(APIView):

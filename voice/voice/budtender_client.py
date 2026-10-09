@@ -151,9 +151,13 @@ class BudtenderClient:
         session_token: str | None = None,
         exclude_skus: list[str] | None = None,
         location: str | None = None,
+        source: str | None = None,
+        record: bool = True,
     ) -> dict:
         """``POST /products/search/`` (trailing slash). Returns ``{"results":[…≤limit leak-safe…]}``
-        verbatim; graceful-empty = ``{"results": []}``.
+        verbatim; graceful-empty = ``{"results": []}``. ``source`` labels the suggestion channel;
+        ``record=False`` asks budtender not to log these results as suggested (the caller reports what
+        it actually said through :meth:`suggestions_shown`).
 
         The margin-vs-taste switch is the PRESENCE of ``phone`` (21-SPEC §6): a KNOWN caller's
         normalized number is sent → budtender resolves a profile → ``W_KNOWN`` (taste-first); an
@@ -172,6 +176,10 @@ class BudtenderClient:
             payload["session_token"] = session_token
         if exclude_skus:
             payload["exclude_skus"] = list(exclude_skus)
+        if source:
+            payload["source"] = source
+        if not record:
+            payload["record"] = False
         ranking = _ranking_config()
         if ranking:
             payload["ranking_weights"] = ranking
@@ -179,6 +187,29 @@ class BudtenderClient:
         if not isinstance(out, dict) or "results" not in out:
             return {"results": []}
         return out
+
+    def suggestions_shown(
+        self,
+        store: str,
+        picks: list[dict],
+        *,
+        phone: str | None = None,
+        session_token: str | None = None,
+        source: str = "phone",
+    ) -> dict:
+        """``POST /suggestions/shown`` — record the picks the agent actually spoke (``[{sku, rank,
+        why_this}]``); budtender rebuilds each card from its own Product row. Graceful-empty =
+        ``{"ok": False, "recorded": 0}``."""
+        payload: dict = {"location": store, "source": source, "picks": [
+            {"sku": p.get("sku"), "rank": p.get("rank"), "why_this": p.get("why_this")} for p in picks
+        ]}
+        if phone:
+            payload["phone"] = phone
+        if session_token:
+            payload["session_token"] = session_token
+        # Analytics only, inside a live turn: a slow budtender costs the record, never the caller's wait.
+        out = self._post("/suggestions/shown", payload, empty={"ok": False, "recorded": 0}, budget=1.0)
+        return out if isinstance(out, dict) else {"ok": False, "recorded": 0}
 
     def check_sku(self, store: str, sku: str, *, category: str | None = None) -> dict:
         """SKU-scoped purchasability + OTD price (21-SPEC §5.3) via the single-SKU budtender

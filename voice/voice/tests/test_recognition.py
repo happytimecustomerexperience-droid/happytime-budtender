@@ -122,6 +122,9 @@ def test_voicecall_persists_only_hash_never_raw_number(client_settings=None):
                 ]
             }
 
+        def suggestions_shown(self, store, picks, **kw):
+            return {"ok": True, "recorded": len(picks)}
+
     import voice.recognition as recog
 
     bt = _BT()

@@ -23,7 +23,8 @@ class FakeBudtender:
         self.pair_calls: list[dict] = []
 
     def search(
-        self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None
+        self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None,
+        source=None, record=True,
     ):
         self.search_calls.append(
             {
@@ -36,6 +37,9 @@ class FakeBudtender:
             }
         )
         return {"results": self.search_results[:limit]}
+
+    def suggestions_shown(self, store, picks, **kw):
+        return {"ok": True, "recorded": len(picks)}
 
     def pair_for_sku(self, store, anchor_sku, *, phone=None, session_token=None):
         self.pair_calls.append({"store": store, "anchor": anchor_sku, "phone": phone})

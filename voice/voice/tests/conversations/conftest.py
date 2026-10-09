@@ -106,10 +106,11 @@ class FakeBudtender:
         self.calls.setdefault(name, []).append(payload)
 
     # -- product search ---------------------------------------------------
-    def search(self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None):
+    def search(self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None,
+               source=None, record=True):
         self._record("search", {"slots": dict(slots or {}), "limit": limit, "phone": phone,
                                 "session_token": session_token, "exclude_skus": exclude_skus,
-                                "location": location})
+                                "location": location, "source": source, "record": record})
         if self.fail_search:
             return {"results": []}
         slots = slots or {}
@@ -157,6 +158,11 @@ class FakeBudtender:
         if aroma in ("citrus", "earthy", "pine", "floral", "spicy"):
             rows = sorted(rows, key=lambda r: aroma not in (((r.get("lab") or {}).get("profile") or {}).get("aroma") or []))
         return {"results": [dict(r, rank=i + 1) for i, r in enumerate(rows[:limit])]}
+
+    def suggestions_shown(self, store, picks, *, phone=None, session_token=None, source="phone"):
+        self._record("suggestions_shown", {"store": store, "skus": [p.get("sku") for p in picks],
+                                           "phone": phone, "session_token": session_token, "source": source})
+        return {"ok": True, "recorded": len(picks)}
 
     def check_sku(self, store, sku, *, category=None):
         self._record("check_sku", {"store": store, "sku": sku})

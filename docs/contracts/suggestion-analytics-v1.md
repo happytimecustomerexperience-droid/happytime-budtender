@@ -45,3 +45,8 @@ setting `HHT_SUGGESTION_WINDOW_DAYS` default 10), `evaluated_at`.
 - `POST /api/v1/chat/history` (exists) additionally accepts `customer_id` (budtender CustomerProfile id) to list that customer's sessions
   (metadata + message_count + channel + identity_via; bodies only via `{id}` as today).
 - The search body gains optional `source` (allowlist `chat|questionnaire|similar|pairing|menu|phone`).
+- The search body also accepts `record: false` (backend token only; ignored for the website token): the results are returned but
+  NOT recorded. The phone agent fetches 12 so its dedupe can pick 3 different options, sends `record:false, source:"phone"`, then
+  reports only what it spoke: `POST /api/v1/suggestions/shown` `{location, session_token?, phone?, source?, picks:[{sku, rank,
+  why_this}] (<=5)}` -> `{ok, recorded}`. Backend token only; identity resolved exactly as search does; each card is rebuilt from
+  our own Product row (never the body); unknown SKUs are skipped. So phone counts are what was spoken, not what was fetched.

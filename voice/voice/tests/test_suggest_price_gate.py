@@ -46,9 +46,13 @@ class FakeBudtender:
         self.check = None
         self.search_calls: list[dict] = []
 
-    def search(self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None):
+    def search(self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None,
+               source=None, record=True):
         self.search_calls.append({"slots": dict(slots)})
         return {"results": self.results[:limit]}
+
+    def suggestions_shown(self, store, picks, **kw):
+        return {"ok": True, "recorded": len(picks)}
 
     def check_sku(self, store, sku, *, category=None):
         return self.check or {"in_stock": False}

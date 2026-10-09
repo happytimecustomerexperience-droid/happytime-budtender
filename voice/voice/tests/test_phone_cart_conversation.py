@@ -10,7 +10,8 @@ class ConversationBudtender:
         self.upserts = []
         self.releases = []
 
-    def search(self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None):
+    def search(self, slots, *, limit=3, phone=None, session_token=None, exclude_skus=None, location=None,
+               source=None, record=True):
         self.search_calls.append({"slots": slots, "location": location, "phone": phone})
         return {
             "results": [{
@@ -41,6 +42,9 @@ class ConversationBudtender:
                 "quote": {"subtotal": 70.0, "discounts": 10.0, "total": 60.0},
             },
         }
+
+    def suggestions_shown(self, store, picks, **kw):
+        return {"ok": True, "recorded": len(picks)}
 
     def phone_cart_release(self, payload):
         self.releases.append(payload)

@@ -239,6 +239,36 @@ class RecordingTests(TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual({(x.channel, x.session_id, x.customer_id) for x in rows}, {("phone", None, None)})
 
+    def test_record_false_skips_recording_only_for_the_backend_token(self):
+        self._search({"source": "phone", "record": False}, token=BACKEND)
+        self.assertEqual(SuggestedProduct.objects.count(), 0)
+        self._search({"session_token": TOKEN, "source": "chat", "record": False})  # the site cannot opt out
+        self.assertEqual(SuggestedProduct.objects.count(), 2)
+
+    def test_shown_records_only_the_spoken_picks_with_our_own_card(self):
+        caller = CustomerProfile.objects.create(phone=PHONE, name="Jane Doe", total_orders=2)
+        body = {"location": "yakima", "phone": PHONE, "source": "phone", "picks": [
+            {"sku": "BON10", "rank": 4, "why_this": "on deal", "price": 0.01, "name": "forged"},
+            {"sku": "NOPE"}, {"sku": "BD35", "rank": "x"}]}
+        r = _post("/api/v1/suggestions/shown", body)
+        self.assertEqual(r.json(), {"ok": True, "recorded": 2})
+        bon, bd = SuggestedProduct.objects.order_by("id")
+        self._assert_snapshot(bon, self.c["bon10"], 18.0)  # price/name from the Product row, not the body
+        self.assertEqual((bon.snapshot["rank"], bon.snapshot["why"], bd.snapshot["rank"]), (4, "on deal", 3))
+        self.assertEqual({(x.channel, x.customer_id, x.identity_via) for x in (bon, bd)},
+                         {("phone", caller.pk, "caller_id")})
+
+    def test_shown_anonymous_call_is_phone_without_a_customer(self):
+        _post("/api/v1/suggestions/shown", {"location": "yakima", "source": "phone", "picks": [{"sku": "BD35"}]})
+        self.assertEqual(list(SuggestedProduct.objects.values_list("channel", "customer_id", "session_id")),
+                         [("phone", None, None)])
+
+    def test_shown_refuses_the_website_token_and_empty_picks(self):
+        body = {"location": "yakima", "source": "phone", "picks": [{"sku": "BD35"}]}
+        self.assertEqual(_post("/api/v1/suggestions/shown", body, WEBSITE).status_code, 403)
+        self.assertEqual(_post("/api/v1/suggestions/shown", {**body, "picks": "BD35"}).status_code, 400)
+        self.assertEqual(SuggestedProduct.objects.count(), 0)
+
     def test_pairing_records_a_pairing_with_its_card_and_reason(self):
         pair = self.c["bon20"]
         with patch("budtender.views.pair_for", return_value=(pair, "copurchase", "People pair these", 0.8)):
