@@ -1,0 +1,32 @@
+<form method="post" hx-post="{% url 'dash-data-edit-all' ds.key %}" hx-target="#data-list" hx-swap="innerHTML" data-testid="edit-all-form">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next_url }}">
+  <div class="row between" style="margin-bottom:10px">
+    <h2>Edit all ({{ items|length }} row{{ items|length|pluralize }})</h2>
+    <div class="row" style="gap:8px">
+      <button class="btn btn-primary" type="submit" data-testid="save-all">Save all</button>
+      <a class="btn" href="{{ next_url }}">Cancel</a>
+    </div>
+  </div>
+  <p class="muted" style="font-size:12px">Nothing is saved until every row is valid. A row with a problem is highlighted; fix it and press Save all again.</p>
+  {% if error %}<div class="note-red" data-testid="edit-all-error">{{ error }}</div>{% endif %}
+  {% for o, form in items %}
+    <input type="hidden" name="ids" value="{{ o.pk }}">
+    <div class="card" data-testid="edit-all-row-{{ o.pk }}"{% if form.errors %} style="border-color:var(--red);background:var(--red-bg)"{% endif %}>
+      <strong>{{ o }}</strong>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:8px">
+        {% for field in form %}
+          <label>
+            <span class="lt">{{ field.label }}</span>
+            {{ field }}
+            {% for e in field.errors %}<span style="color:var(--action);font-size:12px;display:block">{{ e }}</span>{% endfor %}
+          </label>
+        {% endfor %}
+      </div>
+      {% for e in form.non_field_errors %}<p style="color:var(--action);font-size:12px">{{ e }}</p>{% endfor %}
+    </div>
+  {% empty %}
+    <p class="muted">No rows to edit.</p>
+  {% endfor %}
+  <button class="btn btn-primary" type="submit">Save all</button>
+</form>

@@ -1,0 +1,2 @@
+# CSV templates are served byte-for-byte (BOM + CRLF); never let a checkout rewrite their line endings.
+docs/templates/*.csv -text

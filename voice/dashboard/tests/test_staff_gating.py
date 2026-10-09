@@ -69,6 +69,15 @@ DASH_ROUTES = [
     ("dash-health", {}),
     ("dash-publish", {}),
     ("dash-publish-run", {}),
+    ("dash-data-template", {"key": "specials"}),
+    ("dash-data-export", {"key": "specials"}),
+    ("dash-data-upload", {"key": "specials"}),
+    ("dash-data-row-new", {"key": "faq"}),
+    ("dash-data-row", {"key": "faq", "pk": 1}),
+    ("dash-data-row-edit", {"key": "faq", "pk": 1}),
+    ("dash-data-row-delete", {"key": "faq", "pk": 1}),
+    ("dash-data-edit-all", {"key": "faq"}),
+    ("dash-data-bulk-action", {"key": "faq"}),
 ]
 
 

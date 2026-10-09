@@ -74,6 +74,15 @@ def _querystring(request, *drop: str) -> str:
     return params.urlencode()
 
 
+def _back(request, default_url: str) -> str:
+    """Where a standalone (no-JS) editor sends the user after a save/delete: the ``next`` they
+    arrived with (the list page, filters and all) if it is a same-site /dashboard/ path, else the
+    list page. ``next=https://evil.example`` and ``next=//evil.example`` fall back to the default."""
+    from .bulk_views import same_site_path
+
+    return same_site_path(request, request.POST.get("next") or request.GET.get("next")) or default_url
+
+
 # ── Overview + Analytics ──────────────────────────────────────────────────────
 @staff_member_required
 def overview(request):
@@ -548,22 +557,12 @@ def kb_source_list(request, kind: str):
 
     if kind not in KB_KINDS:
         return redirect("dash-kb")
-    model, label = KB_KINDS[kind]
-    qs = model.objects.all()
-    q = (request.GET.get("q") or "").strip()
-    if q:
-        from django.db.models import Q
+    from . import bulk, bulk_views
 
-        text_fields = [
-            f.name
-            for f in model._meta.fields
-            if f.get_internal_type() in ("TextField", "CharField", "SlugField")
-        ]
-        cond = Q()
-        for f in text_fields:
-            cond |= Q(**{f"{f}__icontains": q})
-        qs = qs.filter(cond)
-    page_obj = Paginator(qs, PER_PAGE).get_page(request.GET.get("page"))
+    _model, label = KB_KINDS[kind]
+    ds = bulk.get_dataset(bulk.KB_DATASET[kind])
+    q = (request.GET.get("q") or "").strip()
+    page_obj = Paginator(bulk_views.filtered_qs(ds, request.GET), PER_PAGE).get_page(request.GET.get("page"))
     return render(
         request,
         "dashboard/kb_source.html",
@@ -574,6 +573,7 @@ def kb_source_list(request, kind: str):
             "page_obj": page_obj,
             "q": q,
             "querystring": _querystring(request),
+            **bulk_views.list_context(request, ds),
         },
     )
 
@@ -586,11 +586,12 @@ def kb_row_new(request, kind: str):
         return redirect("dash-kb")
     form_cls = KB_FORMS[kind]
     _model, label = KB_KINDS[kind]
+    back = _back(request, reverse("dash-kb-source", kwargs={"kind": kind}))
     if request.method == "POST":
         form = form_cls(request.POST)
         if form.is_valid():
             form.save()
-            resp = redirect("dash-kb-source", kind=kind)
+            resp = redirect(back)
             resp["HX-Trigger"] = _toast("success", f"{label} row added — live on the next call.")
             return resp
     else:
@@ -598,7 +599,7 @@ def kb_row_new(request, kind: str):
     return render(
         request,
         "dashboard/kb_form.html",
-        {"form": form, "kind": kind, "label": label, "is_new": True},
+        {"form": form, "kind": kind, "label": label, "is_new": True, "next_url": back},
     )
 
 
@@ -613,11 +614,12 @@ def kb_row_edit(request, pk: int):
     model, label = KB_KINDS[kind]
     obj = get_object_or_404(model, pk=pk)
     form_cls = KB_FORMS[kind]
+    back = _back(request, reverse("dash-kb-source", kwargs={"kind": kind}))
     if request.method == "POST":
         form = form_cls(request.POST, instance=obj)
         if form.is_valid():
             form.save()
-            resp = redirect("dash-kb-source", kind=kind)
+            resp = redirect(back)
             resp["HX-Trigger"] = _toast("success", f"{label} row updated — live on the next call.")
             return resp
     else:
@@ -625,7 +627,7 @@ def kb_row_edit(request, pk: int):
     return render(
         request,
         "dashboard/kb_form.html",
-        {"form": form, "kind": kind, "label": label, "is_new": False, "obj": obj},
+        {"form": form, "kind": kind, "label": label, "is_new": False, "obj": obj, "next_url": back},
     )
 
 
@@ -639,7 +641,7 @@ def kb_row_delete(request, pk: int):
         return redirect("dash-kb")
     model, label = KB_KINDS[kind]
     get_object_or_404(model, pk=pk).delete()
-    resp = redirect("dash-kb-source", kind=kind)
+    resp = redirect(_back(request, reverse("dash-kb-source", kwargs={"kind": kind})))
     resp["HX-Trigger"] = _toast("info", f"{label} row deleted.")
     return resp
 
@@ -1203,6 +1205,11 @@ def specials_hours(request):
         qs = qs.filter(kind=kind)
     rows = qs.order_by("kind", "store", "label")
     unconfirmed = qs.filter(confirmed=False).count()
+
+    from . import bulk, bulk_views
+
+    # rows + inline editing use the dataset spanning both kinds; the CSV buttons follow the filter
+    csv_key = {"special": "specials", "hours": "hours"}.get(kind, "specials-hours")
     return render(
         request,
         "dashboard/specials_hours.html",
@@ -1211,6 +1218,8 @@ def specials_hours(request):
             "kind": kind,
             "kinds": SPECIALS_HOURS_KINDS,
             "unconfirmed": unconfirmed,
+            "csv_ds": bulk.get_dataset(csv_key),
+            **bulk_views.list_context(request, bulk.get_dataset("specials-hours")),
         },
     )
 
@@ -1226,6 +1235,7 @@ def policies_page(request):
     posts to a dedicated route below or to the existing kb-row editor."""
     from kb.models import PolicyCategory
 
+    from . import bulk, bulk_views
     from .forms import PolicyCategoryForm
 
     categories = PolicyCategory.objects.prefetch_related("documents").all()
@@ -1235,6 +1245,7 @@ def policies_page(request):
         {
             "categories": categories,
             "category_form": PolicyCategoryForm(),
+            **bulk_views.list_context(request, bulk.get_dataset("policy-categories")),
         },
     )
 
@@ -1270,11 +1281,12 @@ def policy_category_edit(request, pk: int):
     from .forms import PolicyCategoryForm
 
     category = get_object_or_404(PolicyCategory, pk=pk)
+    back = _back(request, reverse("dash-policies"))
     if request.method == "POST":
         form = PolicyCategoryForm(request.POST, instance=category)
         if form.is_valid():
             form.save()
-            resp = redirect("dash-policies")
+            resp = redirect(back)
             resp["HX-Trigger"] = _toast("success", f"{category.label} updated.")
             return resp
     else:
@@ -1282,7 +1294,7 @@ def policy_category_edit(request, pk: int):
     return render(
         request,
         "dashboard/policy_category_form.html",
-        {"form": form, "category": category},
+        {"form": form, "category": category, "next_url": back},
     )
 
 
@@ -1295,17 +1307,18 @@ def policy_category_delete(request, pk: int):
     from kb.models import PolicyCategory
 
     category = get_object_or_404(PolicyCategory, pk=pk)
+    back = _back(request, reverse("dash-policies"))
     try:
         category.delete()
     except ProtectedError:
-        resp = redirect("dash-policies")
+        resp = redirect(back)
         resp["HX-Trigger"] = _toast(
             "error",
             f'"{category.label}" still has policy documents under it — move or delete '
             "those first, then delete the category.",
         )
         return resp
-    resp = redirect("dash-policies")
+    resp = redirect(back)
     resp["HX-Trigger"] = _toast("info", f'"{category.label}" deleted.')
     return resp
 
@@ -1440,6 +1453,7 @@ def vendor_callback_update(request, pk: int):
 def _allowlist_page(request, *, form=None, bulk_text="", bulk_results=None, test=None, status=200):
     from voice import vendor_allowlist as va
 
+    from . import bulk, bulk_views
     from .forms import VendorAllowlistEntryForm
     from .models import VendorAllowlistEntry
 
@@ -1448,6 +1462,7 @@ def _allowlist_page(request, *, form=None, bulk_text="", bulk_results=None, test
         request,
         "dashboard/vendor_allowlist.html",
         {
+            **bulk_views.list_context(request, bulk.get_dataset("vendor-allowlist")),
             "entries": VendorAllowlistEntry.objects.all(),
             "form": form or VendorAllowlistEntryForm(),
             "bulk_text": bulk_text,
@@ -1520,12 +1535,15 @@ def vendor_allowlist_edit(request, pk: int):
     from .models import VendorAllowlistEntry
 
     entry = get_object_or_404(VendorAllowlistEntry, pk=pk)
+    back = _back(request, reverse("dash-vendor-allowlist"))
     form = VendorAllowlistEntryForm(request.POST or None, instance=entry)
     if request.method == "POST" and form.is_valid():
         form.save()
         messages.success(request, f"Saved {entry.name}.")
-        return redirect("dash-vendor-allowlist")
-    return render(request, "dashboard/vendor_allowlist_edit.html", {"form": form, "entry": entry})
+        return redirect(back)
+    return render(
+        request, "dashboard/vendor_allowlist_edit.html", {"form": form, "entry": entry, "next_url": back}
+    )
 
 
 @staff_member_required
@@ -1539,7 +1557,7 @@ def vendor_allowlist_toggle(request, pk: int):
     entry.active = not entry.active
     entry.save(update_fields=["active"])
     messages.success(request, f"{entry.name} {'reactivated' if entry.active else 'deactivated'}.")
-    return redirect("dash-vendor-allowlist")
+    return redirect(_back(request, reverse("dash-vendor-allowlist")))
 
 
 @staff_member_required
@@ -1553,7 +1571,7 @@ def vendor_allowlist_delete(request, pk: int):
     name = entry.name
     entry.delete()
     messages.success(request, f"Deleted {name}.")
-    return redirect("dash-vendor-allowlist")
+    return redirect(_back(request, reverse("dash-vendor-allowlist")))
 
 
 @superuser_required

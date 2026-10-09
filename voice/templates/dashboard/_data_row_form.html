@@ -1,0 +1,28 @@
+<tr id="row-{{ ds.key }}-{{ obj.pk|default:'new' }}" class="inline-edit" data-testid="inline-form">
+  <td colspan="{{ ds.colspan }}" style="background:var(--primary-l)">
+    <form method="post" hx-target="closest tr" hx-swap="outerHTML"
+          hx-post="{% if obj %}{% url 'dash-data-row-edit' ds.key obj.pk %}{% else %}{% url 'dash-data-row-new' ds.key %}{% endif %}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next_url }}">
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
+        {% for field in form %}
+          <label>
+            <span class="lt">{{ field.label }}</span>
+            {{ field }}
+            {% if field.help_text %}<span class="muted" style="font-size:11px">{{ field.help_text }}</span>{% endif %}
+            {% for e in field.errors %}<span style="color:var(--action);font-size:12px;display:block">{{ e }}</span>{% endfor %}
+          </label>
+        {% endfor %}
+      </div>
+      {% for e in form.non_field_errors %}<p style="color:var(--action);font-size:12px">{{ e }}</p>{% endfor %}
+      <div class="row" style="gap:8px">
+        <button class="btn btn-primary" type="submit">Save</button>
+        {% if obj %}
+          <button class="btn" type="button" hx-get="{% url 'dash-data-row' ds.key obj.pk %}" hx-target="closest tr" hx-swap="outerHTML">Cancel</button>
+        {% else %}
+          <button class="btn" type="button" onclick="this.closest('tr').remove()">Cancel</button>
+        {% endif %}
+      </div>
+    </form>
+  </td>
+</tr>

@@ -1,0 +1,6 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Edit all — {{ ds.label }} — Happy Time Voice{% endblock %}
+{% block content %}
+<p class="muted"><a href="{{ next_url }}">← {{ ds.label }}</a></p>
+<div id="data-list">{% include "dashboard/_data_edit_all.html" %}</div>
+{% endblock %}

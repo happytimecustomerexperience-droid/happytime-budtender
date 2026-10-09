@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from . import customers_views, health, views
+from . import bulk_views, customers_views, health, views
 from .playground import playground, playground_send
 
 urlpatterns = [
@@ -101,4 +101,14 @@ urlpatterns = [
     path("health/", health.health, name="dash-health"),
     path("publish/", views.publish_page, name="dash-publish"),
     path("publish/run", views.publish_vapi, name="dash-publish-run"),
+    # bulk tools: CSV template/export/upload round trip, in-place row editing, Edit all, row actions
+    path("data/<slug:key>/template.csv", bulk_views.data_template, name="dash-data-template"),
+    path("data/<slug:key>/export.csv", bulk_views.data_export, name="dash-data-export"),
+    path("data/<slug:key>/upload", bulk_views.data_upload, name="dash-data-upload"),
+    path("data/<slug:key>/row/new", bulk_views.data_row_new, name="dash-data-row-new"),
+    path("data/<slug:key>/row/<int:pk>/", bulk_views.data_row, name="dash-data-row"),
+    path("data/<slug:key>/row/<int:pk>/edit", bulk_views.data_row_edit, name="dash-data-row-edit"),
+    path("data/<slug:key>/row/<int:pk>/delete", bulk_views.data_row_delete, name="dash-data-row-delete"),
+    path("data/<slug:key>/edit-all", bulk_views.data_edit_all, name="dash-data-edit-all"),
+    path("data/<slug:key>/bulk-action", bulk_views.data_bulk_action, name="dash-data-bulk-action"),
 ]

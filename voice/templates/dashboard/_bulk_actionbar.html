@@ -1,0 +1,22 @@
+{# Row actions over the ticked rows. The checkboxes live in the table and point here with form="bulk-form". #}
+<form id="bulk-form" method="post" action="{% url 'dash-data-bulk-action' ds.key %}" class="row"
+      style="gap:8px;margin:8px 0" x-data="{ setting: false }" data-testid="bulk-actionbar">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next_url }}">
+  <span class="muted">With the ticked rows:</span>
+  {% if ds.active_field %}
+    <button class="btn" type="submit" name="action" value="activate" hx-post="{% url 'dash-data-bulk-action' ds.key %}" hx-vals='{"action":"activate"}' hx-swap="none">Activate</button>
+    <button class="btn" type="submit" name="action" value="deactivate" hx-post="{% url 'dash-data-bulk-action' ds.key %}" hx-vals='{"action":"deactivate"}' hx-swap="none">Deactivate</button>
+  {% endif %}
+  <button class="btn" type="submit" name="action" value="delete" style="color:var(--action)"
+          hx-post="{% url 'dash-data-bulk-action' ds.key %}" hx-vals='{"action":"delete"}' hx-swap="none"
+          hx-confirm="Delete all the ticked rows? This cannot be undone.">Delete</button>
+  <button class="btn" type="button" x-on:click="setting = !setting">Set a field...</button>
+  <span x-show="setting" x-cloak class="row" style="gap:6px">
+    <select name="field" style="width:auto">
+      {% for name, label in settable %}<option value="{{ name }}">{{ label }}</option>{% endfor %}
+    </select>
+    <input name="value" placeholder="new value (yes / no for tick boxes)" style="width:220px">
+    <button class="btn btn-primary" type="submit" name="action" value="set" hx-post="{% url 'dash-data-bulk-action' ds.key %}" hx-vals='{"action":"set"}' hx-swap="none">Set on ticked rows</button>
+  </span>
+</form>

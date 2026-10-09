@@ -218,3 +218,25 @@ class JobRun(models.Model):
             cls.objects.filter(name=name).order_by("-started_at", "-id").values_list("pk", flat=True)[: cls.KEEP]
         )
         cls.objects.filter(name=name).exclude(pk__in=keep).delete()
+
+
+class BulkBatchLog(models.Model):
+    """Audit trail for one bulk write (CSV upload, Edit all, a row action over a selection): which
+    dataset, who, and how many rows -- never the rows themselves."""
+
+    dataset = models.CharField(max_length=64)
+    action = models.CharField(max_length=32)  # upload | edit-all | bulk-action
+    username = models.CharField(max_length=150, blank=True)
+    rows = models.PositiveIntegerField(default=0)
+    created = models.PositiveIntegerField(default=0)
+    updated = models.PositiveIntegerField(default=0)
+    deleted = models.PositiveIntegerField(default=0)
+    unchanged = models.PositiveIntegerField(default=0)
+    errors = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"BulkBatchLog<{self.dataset} {self.action} by {self.username or '?'}>"

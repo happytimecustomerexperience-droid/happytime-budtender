@@ -34,33 +34,27 @@ Every other vendor talks to the AI vendor agent: it asks them to hold, tries the
 </div>
 
 <div class="card">
-  <h2>Numbers</h2>
-  <div class="table-wrap">
+  <div class="row between"><h2>Numbers</h2>
+    <a class="btn" href="{% url 'dash-vendor-allowlist' %}#add-vendor" hx-get="{% url 'dash-data-row-new' ds.key %}" hx-target="#new-row-host" hx-swap="innerHTML">+ New number</a></div>
+  {% include "dashboard/_bulk_toolbar.html" %}
+  {% include "dashboard/_bulk_actionbar.html" %}
+  <div class="table-wrap" id="data-list">
   <table>
-    <tr><th>Name</th><th>Number</th><th>Store</th><th>Note</th><th>State</th><th>Last match</th><th>Matches</th><th></th></tr>
-    {% for e in entries %}
-      <tr data-testid="allowlist-row-{{ e.pk }}">
-        <td>{{ e.name }}</td>
-        <td>{{ e.phone_display }}</td>
-        <td>{{ e.get_store_display }}</td>
-        <td>{{ e.note|default:'—' }}</td>
-        <td><span class="badge {% if e.active %}green{% else %}slate{% endif %}">{{ e.active|yesno:"active,off" }}</span></td>
-        <td>{{ e.last_matched_at|default:'never' }}</td>
-        <td>{{ e.match_count }}</td>
-        <td class="row" style="gap:6px">
-          <a class="btn" href="{% url 'dash-vendor-allowlist-edit' e.pk %}">Edit</a>
-          <form method="post" action="{% url 'dash-vendor-allowlist-toggle' e.pk %}">{% csrf_token %}<button class="btn">{% if e.active %}Deactivate{% else %}Reactivate{% endif %}</button></form>
-          <form method="post" action="{% url 'dash-vendor-allowlist-delete' e.pk %}" onsubmit="return confirm('Delete this number?')">{% csrf_token %}<button class="btn" style="color:var(--action)">Delete</button></form>
-        </td>
-      </tr>
+    <tr><th style="width:28px"><input type="checkbox" aria-label="Select all rows" style="width:auto"
+        onclick="var on = this.checked; document.querySelectorAll('input[name=ids][form=bulk-form]').forEach(function (c) { c.checked = on })"></th>
+      <th>Name</th><th>Number</th><th>Store</th><th>Note</th><th>State</th><th>Last match</th><th>Matches</th><th></th></tr>
+    <tbody id="new-row-host"></tbody>
+    <tbody>
+    {% for e in entries %}{% include ds.row_template with r=e %}
     {% empty %}
-      <tr><td colspan="8" class="muted">No vendors on the list yet.</td></tr>
+      <tr><td colspan="9" class="muted">No vendors on the list yet.</td></tr>
     {% endfor %}
+    </tbody>
   </table>
   </div>
 </div>
 
-<div class="card">
+<div class="card" id="add-vendor">
   <h2>Add a vendor</h2>
   <form method="post" action="{% url 'dash-vendor-allowlist-add' %}" data-testid="allowlist-add">
     {% csrf_token %}

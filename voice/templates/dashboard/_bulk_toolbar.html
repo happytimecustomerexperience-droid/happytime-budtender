@@ -1,0 +1,15 @@
+{% comment %}Download template | Export current | Bulk upload | Edit all  -- on every registered list page.
+   needs: ds, tool_qs, edit_qs, next_url; optional csv_ds (the dataset whose CSV to offer when the
+   page's rows span several datasets).{% endcomment %}
+{% with c=csv_ds|default:ds %}
+<div class="row" style="gap:8px;margin:10px 0" data-testid="bulk-toolbar">
+  {% if c.csv %}
+    <a class="btn" href="{% url 'dash-data-template' c.key %}" data-testid="bulk-template">Download template</a>
+    <a class="btn" href="{% url 'dash-data-export' c.key %}{% if tool_qs %}?{{ tool_qs }}{% endif %}" data-testid="bulk-export">Export current</a>
+    <a class="btn" href="{% url 'dash-data-upload' c.key %}" data-testid="bulk-upload">Bulk upload</a>
+  {% endif %}
+  <a class="btn" data-testid="bulk-edit-all"
+     href="{% url 'dash-data-edit-all' ds.key %}?{{ edit_qs }}{% if edit_qs %}&amp;{% endif %}next={{ next_url|urlencode }}"
+     hx-get="{% url 'dash-data-edit-all' ds.key %}?{{ edit_qs }}" hx-target="#data-list" hx-swap="innerHTML">Edit all</a>
+</div>
+{% endwith %}

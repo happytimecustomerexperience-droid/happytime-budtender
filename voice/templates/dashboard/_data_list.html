@@ -1,0 +1,28 @@
+{# The editable table + action bar + pager. needs: ds, rows, next_url, settable, [page_obj, querystring] #}
+{% include "dashboard/_bulk_actionbar.html" %}
+<div class="card">
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:28px"><input type="checkbox" aria-label="Select all rows" style="width:auto"
+            onclick="var on = this.checked; document.querySelectorAll('input[name=ids][form=bulk-form]').forEach(function (c) { c.checked = on })"></th>
+        {% for h in ds.headers %}<th>{{ h }}</th>{% endfor %}
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="new-row-host"></tbody>
+    <tbody>
+      {% for r in rows %}{% include ds.row_template %}
+      {% empty %}<tr><td colspan="{{ ds.colspan }}" class="muted">No rows.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% if page_obj.has_other_pages %}
+<div class="row">
+  {% if page_obj.has_previous %}<a class="btn" href="?page={{ page_obj.previous_page_number }}&{{ querystring }}">← Prev</a>{% endif %}
+  <span class="muted">Page {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}<a class="btn" href="?page={{ page_obj.next_page_number }}&{{ querystring }}">Next →</a>{% endif %}
+</div>
+{% endif %}

@@ -355,6 +355,28 @@ rules, **not** the Vapi squad prompts. With `VAPI_PUBLIC_KEY` set, a "Start Vapi
 a real browser call to the faq agent only; such a call skips the phone number, so it gets no name
 greeting, no memory and no allowlist.
 
+### 8.6 Bulk upload and bulk edit
+Every list page (**Specials**, **KB** lists, **Policies**, **Vendor allowlist**) has a toolbar:
+**Download template | Export current | Bulk upload | Edit all**. A ready-made specials sheet is also in
+`docs/templates/specials-template.csv`.
+* **Spreadsheet round trip:** Download template (or Export current) -> fill it in Excel or Sheets ->
+  save as CSV -> **Bulk upload**. Step 1 only *checks* the file and shows how many rows would be new,
+  updated, unchanged or wrong (each error names its spreadsheet row); nothing is saved. Step 2,
+  **Apply**, saves every good row in one go. Limits: 1 MB, 2,000 rows.
+* **Rows are matched on their key** (specials/hours: store + label; FAQ: key; vendor: phone...). A row
+  missing from your file is never deleted. To delete, put `yes` in that row's `delete` cell **and**
+  tick "Allow deletes". Leave a yes/no or number cell blank to keep the current value.
+* The two example rows in a template are switched off (`is_active` = no), so uploading it untouched
+  adds nothing the agent will say. Rows labelled "Dutchie #..." are overwritten by the Dutchie sync;
+  edit those in Dutchie.
+* Text starting with `=` or `@` is refused (a spreadsheet could run it); put an apostrophe in front
+  if it really is text. Downloads add that apostrophe and uploads remove it.
+* **In place:** Edit swaps a row into a form, Save keeps you on the page, **+ New row** adds at the
+  top. Tick rows for Activate / Deactivate / Delete / Set a field on all of them. **Edit all** turns
+  every visible row into inputs; **Save all** saves nothing unless every row is valid.
+* Each bulk write adds one line to the `BulkBatchLog` table (who, which list, how many rows, never the
+  data) and sends the budtender store-facts refresh once, not once per row.
+
 ---
 
 ## 9. Test calls (each costs Vapi minutes; you approve them)

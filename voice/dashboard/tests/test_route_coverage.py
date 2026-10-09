@@ -294,3 +294,32 @@ def test_call_fetch_full_degrades_when_vapi_unconfigured(client_staff, one_call,
     resp = client_staff.post(reverse("dash-call-fetch-full", args=[one_call.pk]))
     assert resp.status_code == 200
     assert "not configured" in resp["HX-Trigger"]
+
+
+# ── bulk tools (dashboard/bulk_views.py): every route renders / acts as staff ────
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "name,kwargs",
+    [
+        ("dash-data-template", {"key": "specials"}),
+        ("dash-data-template", {"key": "vendor-allowlist"}),
+        ("dash-data-export", {"key": "faq"}),
+        ("dash-data-upload", {"key": "hours"}),
+        ("dash-data-edit-all", {"key": "faq"}),
+        ("dash-data-edit-all", {"key": "policy-docs"}),
+        ("dash-data-row-new", {"key": "store-facts"}),
+    ],
+)
+def test_bulk_get_routes_render_200(client_staff, name, kwargs):
+    resp = client_staff.get(reverse(name, kwargs=kwargs), HTTP_HX_REQUEST="true")
+    assert resp.status_code == 200 and resp.content
+
+
+@pytest.mark.django_db
+def test_bulk_row_routes_act_on_a_real_row(client_staff, one_faq_row):
+    pk = one_faq_row.pk
+    assert client_staff.get(reverse("dash-data-row", args=["faq", pk]), HTTP_HX_REQUEST="true").status_code == 200
+    assert client_staff.get(reverse("dash-data-row-edit", args=["faq", pk]), HTTP_HX_REQUEST="true").status_code == 200
+    resp = client_staff.post(reverse("dash-data-row-delete", args=["faq", pk]), HTTP_HX_REQUEST="true")
+    assert resp.status_code == 200 and not type(one_faq_row).objects.filter(pk=pk).exists()
+    assert client_staff.post(reverse("dash-data-bulk-action", args=["faq"]), {"action": "delete"}).status_code == 302
