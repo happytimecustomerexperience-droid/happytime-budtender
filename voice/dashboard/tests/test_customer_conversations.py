@@ -167,6 +167,16 @@ def test_two_imported_rows_with_the_same_name_never_link(client_staff, bt, jamie
 
 
 @pytest.mark.django_db
+def test_a_same_name_row_past_500_near_misses_still_blocks_the_link(client_staff, bt, jamie):
+    CustomerProfile.objects.bulk_create(
+        CustomerProfile(customer_key=f"near-{i}", name=f"Jamie X{i} Rivera") for i in range(500))
+    CustomerProfile.objects.create(customer_key="zz-late", name="JAMIE rivera")
+    resp = page(client_staff, jamie.pk)
+    assert b"conv-unlinked" in resp.content
+    assert "name_match" not in bt.names()
+
+
+@pytest.mark.django_db
 def test_single_word_or_substring_name_never_links(client_staff, bt):
     first_only = CustomerProfile.objects.create(customer_key="cust-s", name="Jamie")
     CustomerProfile.objects.create(customer_key="cust-s2", name="Jamie Rivera Smith")

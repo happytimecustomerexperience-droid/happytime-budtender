@@ -2044,7 +2044,9 @@ class CustomerNameMatchView(APIView):
         want = " ".join(words).casefold()
         rows = CustomerProfile.objects.filter(
             merged_into__isnull=True, name__icontains=words[0]).filter(name__icontains=words[-1])
-        ids = [pk for pk, name in rows.values_list("pk", "name")[:500]
+        # Every candidate is compared: a cap here could hide the second "Maria Garcia" and report a
+        # unique name, which would link the wrong person.
+        ids = [pk for pk, name in rows.values_list("pk", "name")
                if " ".join(name.split()).casefold() == want]
         return Response({"ok": True, "count": len(ids), "id": ids[0] if len(ids) == 1 else None})
 

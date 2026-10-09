@@ -62,7 +62,8 @@ class Link:
 def _same_name_rows(name: str) -> int:
     words = str(name).split()
     rows = CustomerProfile.objects.filter(name__icontains=words[0]).filter(name__icontains=words[-1])
-    return sum(1 for n in rows.values_list("name", flat=True)[:500] if _norm(n) == _norm(name))
+    # No cap: a capped scan could miss the second row and call an ambiguous name unique.
+    return sum(1 for n in rows.values_list("name", flat=True) if _norm(n) == _norm(name))
 
 
 def _store_link(local: CustomerProfile, bt_id: int | None, kind: str) -> None:

@@ -76,6 +76,14 @@ class NameMatchTests(TestCase):
         self.assertEqual(body["count"], 2)
         self.assertIsNone(body["id"])
 
+    def test_every_candidate_is_compared_however_many_contain_both_words(self):
+        CustomerProfile.objects.bulk_create(
+            CustomerProfile(phone=f"+1509555{i:04d}", name=f"Maria X{i} Garcia") for i in range(500))
+        CustomerProfile.objects.create(phone="+15095559998", name="Maria Garcia")
+        CustomerProfile.objects.create(phone="+15095559999", name="maria  garcia")
+        body = _post(self.URL, {"name": "Maria Garcia"}).json()
+        self.assertEqual((body["count"], body["id"]), (2, None))  # ambiguous, never "unique"
+
     def test_a_merged_away_row_does_not_count(self):
         self.dup_b.merged_into = self.dup_a
         self.dup_b.save()
