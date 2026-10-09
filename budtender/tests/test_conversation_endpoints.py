@@ -78,7 +78,7 @@ class NameMatchTests(TestCase):
 
     def test_every_candidate_is_compared_however_many_contain_both_words(self):
         CustomerProfile.objects.bulk_create(
-            CustomerProfile(phone=f"+1509555{i:04d}", name=f"Maria X{i} Garcia") for i in range(500))
+            CustomerProfile(phone=f"+1208555{i:04d}", name=f"Maria X{i} Garcia") for i in range(500))
         CustomerProfile.objects.create(phone="+15095559998", name="Maria Garcia")
         CustomerProfile.objects.create(phone="+15095559999", name="maria  garcia")
         body = _post(self.URL, {"name": "Maria Garcia"}).json()
