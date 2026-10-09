@@ -359,6 +359,14 @@ rules, **not** the Vapi squad prompts. With `VAPI_PUBLIC_KEY` set, a "Start Vapi
 a real browser call to the faq agent only; such a call skips the phone number, so it gets no name
 greeting, no memory and no allowlist.
 
+To test what the **phone** itself says without a call, run the voice simulation: Gemini plays the
+concierge with exactly the prompt and tools Publish sends to Vapi, through ~73 scripted calls (hours,
+shopping, price-asks-size, under-21, vendor, defects, "I want a real person", multi-turn calls), and
+each call is scored, including a check on every spoken turn for "let me get a member that knows".
+It costs real Gemini money (about $0.70 a run):
+`docker compose exec voice-web python manage.py eval_answers --live --channel voice --trace /tmp/voice.jsonl`.
+Products come from a small test catalog, not your live menu.
+
 ### 8.6 Bulk upload and bulk edit
 Every list page (**Specials**, **KB** lists, **Policies**, **Vendor allowlist**) has a toolbar:
 **Download template | Export current | Bulk upload | Edit all**. A ready-made specials sheet is also in

@@ -156,7 +156,10 @@
   channels: [text, playground, voice]
   source_of_truth: voice/tools/suggest.py needs_size (no price without a size)
   expect_intent: product_suggestion
-  expect_tools: [suggest_products]
+  # Scored on the outcome (asks the size, says no price). The phone's prompt asks the size BEFORE any
+  # tool call (kb/seed.py "PRICE ASKS RUN THROUGH THE QUESTIONS"); the text brain reaches the same
+  # question through suggest_products' needs_size. Requiring the tool failed the phone for following its
+  # own binding rule (2026-10-08 live sim, runs 2 and 3).
   owner_note: "The agent asks the size first, then the usual questions; the price is spoken only after the size, from the tool."
 
 - id: tax-share-not-invented
@@ -561,7 +564,9 @@
   category: escalation
   question_variants:
     - "I want to talk to a real person"
-  must_include: ["(?i)(team member|store team|staff|someone|get a person)"]
+  # "message for the team": the phone tried the transfer, nobody picked up (the sim's stub), and it
+  # offered a message — section E step 3, the right next step.
+  must_include: ["(?i)(team member|store team|staff|someone|get a person|for the team)"]
   # 2026-10-08 live sim: the phone answered this with the return/refund DISPUTE apology.
   must_not_include: ["(?i)(pick it up|order online|menu online)", "(?i)(return or refund|sorry that happened)"]
   channels: [text, playground, voice, web]
