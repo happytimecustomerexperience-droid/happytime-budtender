@@ -156,10 +156,10 @@
   channels: [text, playground, voice]
   source_of_truth: voice/tools/suggest.py needs_size (no price without a size)
   expect_intent: product_suggestion
-  # Scored on the outcome (asks the size, says no price). The phone's prompt asks the size BEFORE any
-  # tool call (kb/seed.py "PRICE ASKS RUN THROUGH THE QUESTIONS"); the text brain reaches the same
-  # question through suggest_products' needs_size. Requiring the tool failed the phone for following its
-  # own binding rule (2026-10-08 live sim, runs 2 and 3).
+  # The size question must come from the TOOL (the sizes this store really has), on every channel: the
+  # phone used to ask a remembered list of sizes with no tool call (2026-10-09 live sim, runs 3-5); the
+  # concierge's section F now says to call suggest_products first with asked_price=true.
+  expect_tools: [suggest_products]
   owner_note: "The agent asks the size first, then the usual questions; the price is spoken only after the size, from the tool."
 
 - id: tax-share-not-invented

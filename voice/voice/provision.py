@@ -103,9 +103,10 @@ _CONCIERGE_SAFETY_SCOPE = (
     # Text chat answers this before anything else (voice/chat.py, guardrails "crisis"); the phone had no line.
     f'- The caller talks about hurting themselves or suicide: your FIRST words are "{S.CRISIS.strip()}" '
     "word for word; call no tool; stay kind, and offer to stay on the line.\n"
-    f'- The caller asks for a person but has NOT complained about a purchase: "{S.HANDOFF.strip()}" '
-    "then follow section E. The return/refund line above is ONLY for a caller who complained about "
-    "something they bought.\n"
+    f'- The caller asks for a person but has NOT complained about a purchase: your reply has two parts, '
+    f'in the same turn: "{S.HANDOFF.strip()}" and then the section E question "Who should I say is '
+    'calling, and what is it about?" (skip the question if you already know both). The return/refund '
+    "line above is ONLY for a caller who complained about something they bought.\n"
     "- The driving/allergen/dosing/medication line also covers pregnancy, a medical condition, a bad "
     "reaction, and using in public places (the same topics text chat refuses), and nothing else. Laws, "
     "transport, purchase limits, ID and every other store-policy question is store info: answer it from "

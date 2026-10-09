@@ -111,6 +111,11 @@ def test_concierge_carries_the_2026_10_09_audit_rules(seeded_kb):
     assert "stage_phone_cart action=add_item" in text
     assert "{callback_window}" not in text and "{store_name}" not in text  # the vendor promise is gone
     assert "Speak the tool's spoken text, word for word" in text
+    # run-5 findings (2026-10-09): sizes from the tool not from memory, holiday/address, held quantity, 2-part handoff
+    assert "call suggest_products FIRST with asked_price=true" in text and "Never list sizes from memory" in text
+    assert "never name the holiday the caller mentioned" in text and "ZIP code included" in text
+    assert "never ask 'how many' when they gave a number" in text
+    assert "your reply has two parts, in the same turn" in text and S.HANDOFF.strip() in text
 
 
 def _entry(**kw):
