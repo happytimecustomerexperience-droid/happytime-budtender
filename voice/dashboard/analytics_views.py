@@ -222,19 +222,34 @@ def sort_products(rows: list[dict], column: str, descending: bool) -> list[dict]
     return sorted(have, key=key, reverse=descending) + missing
 
 
+def _dashboard_ids(budtender_ids) -> dict[int, int]:
+    """budtender customer id -> this dashboard's ``crm.CustomerProfile`` pk, only through a stored link
+    (``budtender_customer_id``, set by the customer page's linking rule) and only when exactly one row
+    carries it. One query. The two id spaces are never mixed: no link means plain text."""
+    from collections import Counter
+
+    from crm.models import CustomerProfile
+
+    ids = {i for i in budtender_ids if isinstance(i, int)}
+    rows = list(CustomerProfile.objects.filter(budtender_customer_id__in=ids)
+                .exclude(budtender_link="").values_list("budtender_customer_id", "pk")) if ids else []
+    seen = Counter(bt for bt, _pk in rows)
+    return {bt: pk for bt, pk in rows if seen[bt] == 1}
+
+
 def _buyer_rows(rows) -> list[dict]:
+    rows = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    links = _dashboard_ids((r.get("customer") or {}).get("id") for r in rows if isinstance(r.get("customer"), dict))
     out = []
-    for r in rows if isinstance(rows, list) else []:
-        if not isinstance(r, dict):
-            continue
+    for r in rows:
         snap = r.get("snapshot") if isinstance(r.get("snapshot"), dict) else {}
         cust = r.get("customer") if isinstance(r.get("customer"), dict) else {}
         via, trusted = _IDENTITY.get(str(r.get("identity_via") or ""), (str(r.get("identity_via") or "") or "-", None))
         days = r.get("days_to_purchase")
         out.append({
-            # ``voice_id`` is the dashboard's own customer id. The budtender's customer id is a different
-            # key space, so it is never used to build a link (a wrong profile is worse than plain text).
-            "name": str(cust.get("name") or "") or "(unnamed)", "voice_id": cust.get("voice_id"),
+            # ``voice_id`` is the dashboard's own customer id, found only through a stored link; the
+            # budtender id itself is never used as a dashboard pk (a wrong profile is worse than text).
+            "name": str(cust.get("name") or "") or "(unnamed)", "voice_id": links.get(cust.get("id")),
             "suggested": str(snap.get("name") or r.get("sku") or ""), "brand": str(snap.get("brand") or ""),
             "size_label": str(snap.get("size_label") or ""), "rank": snap.get("rank"),
             "channel": _CHANNEL_LABELS.get(str(r.get("channel") or ""), str(r.get("channel") or "")),

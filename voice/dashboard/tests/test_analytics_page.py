@@ -205,10 +205,19 @@ def test_buyer_without_a_dashboard_id_is_plain_text(client_staff, budtender):
     assert "Typed on website" in html and "lower trust" in html
 
 
-def test_buyer_with_a_dashboard_id_links(client_staff, budtender):
+def test_buyer_links_only_through_one_stored_dashboard_link(client_staff, budtender):
+    from crm.models import CustomerProfile
+
     rows = [{**SUGGESTIONS["recent_buyers"][0], "customer": {"id": 77, "name": "Pat Example", "voice_id": 5}}]
     budtender.answers[analytics_views.SUGGESTIONS_PATH] = {**SUGGESTIONS, "recent_buyers": rows}
-    assert 'href="/dashboard/customers/5/"' in client_staff.get(reverse(URL)).content.decode()
+    html = client_staff.get(reverse(URL)).content.decode()
+    assert not re.search(r"/dashboard/customers/\d+/", html)  # a body-supplied id is never trusted
+    pat = CustomerProfile.objects.create(customer_key="pat", name="Pat Example", budtender_customer_id=77,
+                                         budtender_link="name_unique")
+    assert f'href="/dashboard/customers/{pat.pk}/"' in client_staff.get(reverse(URL)).content.decode()
+    CustomerProfile.objects.create(customer_key="pat2", name="Pat Example", budtender_customer_id=77,
+                                   budtender_link="manual")
+    assert not re.search(r"/dashboard/customers/\d+/", client_staff.get(reverse(URL)).content.decode())
 
 
 # ── empty vs unreachable ──────────────────────────────────────────────────────
