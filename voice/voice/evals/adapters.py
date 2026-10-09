@@ -179,50 +179,51 @@ def _generate_with_retry(client, model_id, contents, cfg, attempts: int = 5):
 def ask_voice(
     question: str, *, store: str, max_rounds: int = 4, setup_turns: list[str] | None = None
 ) -> Answer:
-    """Gemini runs the SAME system prompt Vapi is provisioned with (``AgentPrompt.body`` plus the
-    immutable runtime safety block) and the SAME tool schemas; every function call is answered by
-    our real ``dispatch()``. The member is chosen the way the squad routes an opener.
+    """Gemini runs the assistant Vapi is provisioned with — the SAME ``build_assistant_payload``
+    (system prompt incl. the runtime safety + caller blocks, model, temperature, maxTokens, tool
+    list, built-in transfer) with ``{{…}}`` filled from the SAME ``call_variables`` the webhook
+    returns — and every function call is answered by our real ``dispatch()``.
+
+    Single mode (the default): the concierge answers the whole call, exactly as on the phone. Multi
+    mode: the member is chosen the way the squad routes an opener and holds the whole flow
+    (LIMITATION: a mid-call squad handoff is not exercised — the failure the owner heard live).
 
     ``setup_turns`` are the caller's earlier turns in the same call: each one is really run
     (tools and all) and the model's reply is kept in ``contents``, so the final question is asked
-    with a history the model actually produced. LIMITATION: a real Vapi squad can transfer to a
-    different member mid-call; here the member routed from the caller's FIRST turn holds the
-    whole flow, so a mid-flow role change is not exercised."""
+    with a history the model actually produced. Not simulated: Vapi's speech layer, and Vapi's own
+    thinking setting for Google models (none exists; here thinking is 0, see decision D1)."""
     from google.genai import types
 
     from core.services.gemini import make_client
-    from kb.models import AgentPrompt
-    from voice import routing
-    from voice.provision import _with_runtime_safety
-    from voice.tools import dispatch
+    from voice import constants as C
 
     flow = list(setup_turns or []) + [question]
-    role = _ROLE_FOR_INTENT.get(routing.classify_intent(flow[0]), "faq")
-    prompt = AgentPrompt.objects.filter(role=role, is_active=True).first()
-    if prompt is None:
-        return Answer(channel="voice", text="", error=f"no AgentPrompt(role={role})")
-    system = _with_runtime_safety(prompt.body, role)
-    tool_names = list(prompt.tool_names or [])
-    if role in ("vendor", "escalation"):
-        tool_names = [_TRANSFER_TOOL, *tool_names]  # Vapi hands these members the built-in transfer
-    tools = _declarations(tool_names)
-    model_id = (prompt.vapi_model or "").strip() or "gemini-2.5-flash"
+    if C.squad_mode() == "single":
+        role = C.entry_role()
+    else:
+        from voice import routing
+
+        role = _ROLE_FOR_INTENT.get(routing.classify_intent(flow[0]), "faq")
+    spec = phone_assistant(role, store)
+    if spec is None:
+        return Answer(channel="voice", text="", error=f"no active AgentPrompt(role={role})")
+    tools = _declarations(spec["tool_names"])
 
     client, _mode = make_client()
     cfg = types.GenerateContentConfig(
-        system_instruction=system,
+        system_instruction=spec["system"],
         tools=tools or None,
-        temperature=prompt.temperature if prompt.temperature is not None else 0.3,
-        max_output_tokens=prompt.max_output_tokens or 400,
+        temperature=spec["temperature"],
+        max_output_tokens=spec["max_tokens"],
         thinking_config=types.ThinkingConfig(thinking_budget=0),
     )
+    model_id = spec["model"]
+    from voice.tools import dispatch
     ctx = {"call_id": f"sim-{uuid.uuid4().hex[:12]}", "store": store, "caller_number": ""}
     # A real call has already opened with the greeting and the 21+ confirmation before the caller
     # asks anything, so seed that exchange — otherwise every answer is "are you twenty-one?".
-    from voice.provision import entry_greeting
-
     contents = [
-        types.Content(role="model", parts=[types.Part(text=entry_greeting())]),
+        types.Content(role="model", parts=[types.Part(text=spec["greeting"])]),
         types.Content(role="user", parts=[types.Part(text="hi, yes I'm over twenty-one")]),
         types.Content(role="model", parts=[types.Part(text="Great, thanks. What can I help you with?")]),
     ]
@@ -262,6 +263,41 @@ def ask_voice(
         channel="voice", text=text, source="sim", tool_calls=called, latency_ms=ms,
         meta={"role": role, "model": model_id, "tool_args": tool_args, "turns": turns},
     )
+
+
+_VAR = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
+
+
+def phone_assistant(role: str, store: str) -> dict | None:
+    """What Vapi runs for ``role`` on a call to ``store``, read from the provisioning payload itself
+    (never re-derived here): system prompt with the per-call variables filled the way Vapi fills
+    them for an UNKNOWN caller, model/temperature/maxTokens, the tool names ``provision`` attaches
+    (same switch filter), the built-in transfer when the payload carries one, and the opener.
+    ``None`` when the role has no active prompt (provision would skip it too)."""
+    from kb.models import AgentPrompt
+    from voice import caller, capabilities
+    from voice.constants import TOOL_SPECS
+    from voice.provision import INACTIVE, _tool_names_for_role, build_assistant_payload
+    from voice.webhooks import call_variables
+
+    prompt = AgentPrompt.objects.filter(role=role, is_active=True).first()
+    payload, warnings = build_assistant_payload(role, store=store)
+    if prompt is None or INACTIVE in warnings:
+        return None
+    variables = {**call_variables(store), **caller.variable_values({})}
+    fill = lambda text: _VAR.sub(lambda m: str(variables.get(m.group(1), "")), text or "")  # noqa: E731
+    model = payload["model"]
+    names = [n for n in _tool_names_for_role(role, prompt) if n in TOOL_SPECS and capabilities.tool_allowed(n)]
+    if model.get("tools"):  # provision attached Vapi's built-in warm transfer
+        names = [_TRANSFER_TOOL, *names]
+    return {
+        "system": fill(model["messages"][0]["content"]),
+        "model": model["model"],
+        "temperature": model["temperature"],
+        "max_tokens": model["maxTokens"],
+        "tool_names": names,
+        "greeting": fill(payload.get("firstMessage") or ""),
+    }
 
 
 # ── web / web-fallback: the website view's reply function, in the ROOT project ───
