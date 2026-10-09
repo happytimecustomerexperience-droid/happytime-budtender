@@ -1692,6 +1692,7 @@ def capabilities_page(request):
     """Every declared switch, grouped, plus who can use which tool right now."""
     from kb.models import AgentPrompt
     from voice import capabilities as caps
+    from voice import constants as C
     from voice.provision import _tool_names_for_role
 
     from .models import BotCapability
@@ -1708,7 +1709,7 @@ def capabilities_page(request):
     for role in MEMBER_ROLES:  # the phone members and the tools provision attaches to each
         p = prompts.get(role)
         tools = [{"name": n, "on": caps.tool_allowed(n)} for n in _tool_names_for_role(role, p)]
-        if role in ("vendor", "escalation"):
+        if role in C.TRANSFER_ROLES:
             tools.append({"name": "transfer call", "on": on["call.transfer"]})
         members.append(
             {"name": f"Phone · {p.get_role_display() if p else role}", "on": bool(p and p.is_active), "tools": tools}

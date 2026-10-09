@@ -33,8 +33,8 @@ def test_unknown_agent_role_rejected():
     assert "unknown agent role" in err
 
 
-def test_each_of_the_five_roles_is_allowed():
-    for role in ("entry_router", "budtender", "faq", "vendor", "escalation"):
+def test_every_squad_role_is_allowed():
+    for role in ("concierge", "entry_router", "budtender", "faq", "vendor", "escalation"):
         cleaned, err = clean_graph({"nodes": [_agent("a", role)], "edges": []})
         assert err is None, role
 

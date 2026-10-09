@@ -699,6 +699,18 @@ def test_capabilities_page_renders_every_switch_and_who_can_do_what(client_staff
 
 
 @pytest.mark.django_db
+def test_capabilities_page_gives_every_transfer_role_the_transfer_tool(client_staff):
+    from dashboard.publish import MEMBER_ROLES
+    from voice import constants as C
+
+    members = client_staff.get(reverse("dash-capabilities")).context["members"]
+    for role, m in zip(MEMBER_ROLES, members[:len(MEMBER_ROLES)], strict=True):  # one per role, in order
+        has_transfer = any(t["name"] == "transfer call" for t in m["tools"])
+        assert has_transfer == (role in C.TRANSFER_ROLES), role
+    assert "concierge" in MEMBER_ROLES and "concierge" in C.TRANSFER_ROLES
+
+
+@pytest.mark.django_db
 def test_capability_toggle_flips_the_switch_and_records_who(client_staff):
     from dashboard.models import BotCapability
     from voice import capabilities as caps

@@ -24,6 +24,7 @@ _OUTCOME_BADGE = {
     "escalation": ("Escalation", "red"),
     "vendor_callback": ("Vendor callback", "amber"),
     "vendor_direct": ("Vendor sent to owner", "blue"),
+    "transfer_unavailable": ("Transfer: person unavailable", "amber"),
     "abandoned": ("Abandoned", "slate"),
     "error": ("Error", "red"),
 }
