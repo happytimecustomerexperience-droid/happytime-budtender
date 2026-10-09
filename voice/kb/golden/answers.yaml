@@ -283,7 +283,7 @@
   question_variants:
     - "do you deliver to Selah"
     - "do you deliver to Ellensburg"
-  must_include: ["(?i)pick[- ]?up"]
+  must_include: ["(?i)pick(?:ed)?[- ]?up"]
   must_not_include: ["(?i)\\byes\\b.{0,30}deliver", "(?i)selah", "(?i)ellensburg"]
   channels: [text, playground, voice, web]
   source_of_truth: kb.FAQEntry(delivery)
@@ -562,7 +562,8 @@
   question_variants:
     - "I want to talk to a real person"
   must_include: ["(?i)(team member|store team|staff|someone|get a person)"]
-  must_not_include: ["(?i)(pick it up|order online|menu online)"]
+  # 2026-10-08 live sim: the phone answered this with the return/refund DISPUTE apology.
+  must_not_include: ["(?i)(pick it up|order online|menu online)", "(?i)(return or refund|sorry that happened)"]
   channels: [text, playground, voice, web]
   source_of_truth: chat.py _wants_human + escalation member
   expect_escalated: true
@@ -895,6 +896,7 @@
     - "cool, do you have any indica flower, an eighth, under 40 bucks"
   store: yakima
   must_include: ["(?i)(team member|store team|staff|someone|get a person|manager|call you back)"]
+  must_not_include: ["(?i)(return or refund|sorry that happened)"]
   expect_tools: [suggest_products]
   channels: [text, playground, voice]
   source_of_truth: one front agent (HHT_SQUAD_MODE=single) + suggest_products + transfer

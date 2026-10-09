@@ -95,6 +95,17 @@ _OWNER_SAFETY_LINES = (
 _OWNER_SAFETY_UNDER_21_LINE = (
     f'- Caller is under 21 or buying for someone who is: "{S.UNDER_21.strip()}"\n'
 )
+# The concierge only (multi mode stays byte-identical for rollback). 2026-10-08 live-model sim: "I want
+# to talk to a real person" got the return/refund DISPUTE apology (no line fit a plain request, so the
+# model took the nearest), and a legal transport question got CANNOT_ANSWER_SAFELY. Text chat already
+# uses the signed HANDOFF line for the first case (voice/chat.py _escalation_answer, complained=False).
+_CONCIERGE_SAFETY_SCOPE = (
+    f'- The caller asks for a person but has NOT complained about a purchase: "{S.HANDOFF.strip()}" '
+    "then follow section E. The return/refund line above is ONLY for a caller who complained about "
+    "something they bought.\n"
+    "- The driving/allergen/dosing/medication line is ONLY for those four topics. Laws, transport, "
+    "purchase limits, ID and every other store-policy question is store info: answer it from faq_lookup.\n"
+)
 # Appended only while the owner has "Transfer phone calls to a person" (call.transfer) OFF — the
 # transferCall tool is then not attached, so the prompt must not promise one.
 _NO_TRANSFER_LINE = (
@@ -252,6 +263,8 @@ def _with_runtime_safety(body: str, role: str, store: str | None = None) -> str:
         safety += _AGE_GATE_SAFETY
     under_21 = "" if role == "vendor" else _OWNER_SAFETY_UNDER_21_LINE
     safety += _OWNER_SAFETY_LINES.format(under_21=under_21)
+    if role == C.CONCIERGE_ROLE:
+        safety += _CONCIERGE_SAFETY_SCOPE
     if role != "written" and not capabilities.is_enabled("call.transfer"):
         safety += _NO_TRANSFER_LINE
     elif role in C.TRANSFER_ROLES and not store:

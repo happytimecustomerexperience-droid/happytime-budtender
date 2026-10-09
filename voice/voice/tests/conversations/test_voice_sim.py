@@ -85,6 +85,21 @@ def test_a_call_runs_real_tools_and_keeps_the_concierge_throughout(seeded_kb, fa
     assert [t["role"] for t in ans.meta["turns"]] == ["user", "agent", "user", "agent"]
 
 
+@pytest.mark.django_db
+def test_only_the_concierge_gets_the_person_request_line(seeded_kb):
+    from voice import safety_copy as S
+    from voice.provision import build_assistant_payload
+
+    def system(role):
+        return build_assistant_payload(role)[0]["model"]["messages"][0]["content"]
+
+    concierge = system("concierge")
+    assert S.HANDOFF.strip() in concierge and "ONLY for a caller who complained" in concierge
+    assert "ONLY for those four topics" in concierge
+    for role in ("entry_router", "budtender", "faq", "vendor", "escalation"):  # multi mode: unchanged
+        assert S.HANDOFF.strip() not in system(role), role
+
+
 def _entry(**kw):
     return golden.Entry(id="t", category="flows", question_variants=["q"], **kw)
 
