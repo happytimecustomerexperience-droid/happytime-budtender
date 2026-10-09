@@ -182,6 +182,13 @@ voice 2398 passed / 2 xfailed, migrations clean, ruff clean (root: the 6 known).
   dedupe); website sends source chat|questionnaire (1630740). OPEN: find-similar (`/api/catalog/similar`) records
   nothing (20-item pool, no source) — moving it to budtender `products/similar` is a product call.
 - T9: only the unverified-web-summary Gemini skip (bc0fe19). T8, the rest of T9, T10: not started.
+- UPDATE 2026-10-09 (backend adc5c1c, website 28bcbc4): live sim run 5 = 69/75 (+1 cancelled-call error); fixes since:
+  sizes in any spelling are exact (a "5 pack" chip returned 10-packs), cards show live price and the pack size, a
+  bounded $100+ band stays a price gate, phone: crisis line, sync follow-up tools, holds, stock asks name picks without a
+  price like the chat (asked_price), sizes asked from the tool. Website: chips only from live options; typed text no
+  longer becomes price filters; order link uses the searched store; show-more resends excludes; pre-rolls are a category.
+  NOT re-run live after adc5c1c (needs approval, ~$0.70). Browser e2e only partly run. Open product calls: find-similar
+  records nothing; "Best match" label on the margin pick; Dutchie fallback ignores most slots.
 - Owner questions added: should "clear memory" also delete the dashboard's AI summaries (it doesn't); the pairing
   tool records a pairing even when the phone stays silent (same over-count class as T6).
 
