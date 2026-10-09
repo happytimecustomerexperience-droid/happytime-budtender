@@ -340,13 +340,17 @@ save. Live on the next call, and kept across restarts of `voice-web` (7.1); only
   this release a `Remembers:` line with a summary of past calls). They use it silently and never read
   it out. After the call, only what the customer said is sent to their profile.
 * Switch: "Remember what repeat callers like" on Capabilities.
-* **There is no memory view or "clear memory" button on the dashboard.** To clear one customer's
-  memory, run on the VPS (replace the number; this calls budtender's staff endpoint
-  `POST /api/v1/customer/memory/clear`):
-  ```bash
-  docker compose exec voice-web python manage.py shell -c "from voice.budtender_client import budtender; print(budtender()._post('/customer/memory/clear', {'phone': '+15095551212', 'actor': 'owner'}, empty={}))"
-  ```
-  It should print `{'ok': True, 'cleared': True, ...}`. **NOT VERIFIED** against a live system.
+* **To clear one customer's memory:** open **Customers**, click the customer, and press **Clear this
+  customer's memory** in the *Conversations* card (it asks you to confirm). It calls budtender's staff
+  endpoint `POST /api/v1/customer/memory/clear` with the customer's live id and your dashboard
+  username (recorded in budtender's audit log), then shows a message: cleared, "no such customer", or
+  "budtender is unreachable / refused - memory was NOT cleared". If the card says *Not linked to a live
+  customer record*, the button is not offered (the page could not tell which live customer this is
+  without guessing); nothing to run by hand. **NOT VERIFIED** against a live system.
+* The same card lists every website chat and phone call for that customer, with an AI summary button
+  per conversation and **Summarize all** (one paragraph over the latest 30). Summaries are for staff
+  only, are cached until a conversation grows (press **Regenerate** to redo one), and each press is one
+  paid Gemini call (Summarize all: up to 30 + 1).
 
 ### 8.5 The test console (before you spend call minutes)
 `/dashboard/playground/` (**Console**): type as a customer and see the answer plus which tools ran.

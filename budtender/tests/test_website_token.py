@@ -22,6 +22,8 @@ STAFF_ONLY = (
     "/api/v1/customer/caller-context",
     "/api/v1/customer/memory/learn",
     "/api/v1/customer/memory/clear",
+    "/api/v1/customer/call-ids",
+    "/api/v1/customer/name-match",
     "/api/v1/admin/ranking-weights",
     "/api/v1/analytics/funnel",
     "/api/v1/analytics/session",
@@ -60,7 +62,8 @@ class WebsiteTokenTests(TestCase):
                      views.ResumeByPhoneView, views.PhoneCartClaimView, views.ProfileUpsertView,
                      views.CallerContextView, views.MemoryLearnView, views.MemoryClearView,
                      views.AnalyticsSuggestionsView, views.AnalyticsSuggestionsListView,
-                     views.CustomerSuggestionsView):
+                     views.CustomerSuggestionsView, views.CustomerCallIdsView,
+                     views.CustomerNameMatchView):
             self.assertFalse(getattr(view, "website_ok", False), view.__name__)
 
 

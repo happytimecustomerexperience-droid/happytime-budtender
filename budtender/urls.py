@@ -32,7 +32,9 @@ urlpatterns = [
     path("customer/session-context", views.SessionContextView.as_view()),   # website: typed phone
     path("customer/memory/learn", views.MemoryLearnView.as_view()),        # voice call end / internal
     path("customer/memory/clear", views.MemoryClearView.as_view()),        # staff: wipe a customer's memory
-    path("customer/list", views.CustomerListView.as_view()),       # P7 staff roster (dashboard)
+    path("customer/call-ids", views.CustomerCallIdsView.as_view()),        # staff: a customer's Vapi call ids
+    path("customer/name-match", views.CustomerNameMatchView.as_view()),    # staff: how many customers have this exact name
+    path("customer/list",views.CustomerListView.as_view()),       # P7 staff roster (dashboard)
     path("customer/detail", views.CustomerDetailView.as_view()),   # P7 full profile (dashboard)
     path("track/", views.TrackView.as_view()),
     path("analytics/summary", views.AnalyticsSummaryView.as_view()),

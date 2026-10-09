@@ -1,0 +1,42 @@
+<div class="card" id="conv-panel" data-testid="conv-panel">
+  <div class="row between" style="gap:10px;flex-wrap:wrap">
+    <h2>Conversations <span class="muted">· staff only, never shown to the customer</span></h2>
+    {% if conv.linked %}
+    <span class="row" style="gap:8px;flex-wrap:wrap">
+      {% if conv.items %}
+      <form hx-post="{% url 'dash-customer-summarize-all' conv.pk %}" hx-target="#conv-panel" hx-swap="outerHTML" hx-indicator="#spin-all">
+        {% csrf_token %}
+        <span class="htmx-indicator conv-spin" id="spin-all" aria-label="Summarizing"></span>
+        <button class="btn btn-primary" type="submit" data-testid="conv-summarize-all">Summarize all</button>
+      </form>
+      {% endif %}
+      <form hx-post="{% url 'dash-customer-memory-clear' conv.pk %}" hx-swap="none" hx-confirm="Clear everything the bots remember about this customer? This cannot be undone.">
+        {% csrf_token %}
+        <button class="btn" type="submit" data-testid="conv-clear-memory">Clear this customer's memory</button>
+      </form>
+    </span>
+    {% endif %}
+  </div>
+
+  {% if not conv.linked %}
+  <p class="muted" data-testid="conv-unlinked">{{ conv.message }}</p>
+  {% if conv.reason %}<p class="muted" style="font-size:12px">({{ conv.reason }})</p>{% endif %}
+  {% else %}
+    {% if conv.overall %}
+    <div class="note-green" style="display:block" data-testid="conv-overall">
+      <strong>All conversations</strong> <span class="muted" style="font-size:11px">· {{ conv.overall.covers_count }} summarized · {{ conv.overall.generated_at|date:"Y-m-d" }}{% if conv.overall_new %} · conversations have changed since{% endif %}</span>
+      <div>{{ conv.overall.text }}</div>
+    </div>
+    {% endif %}
+    {% if not conv.listing.chats_ok %}<p class="note-red" data-testid="conv-chats-down">Website chats could not be loaded (budtender did not answer).</p>{% endif %}
+    {% if not conv.listing.calls_ok %}<p class="note-red" data-testid="conv-calls-down">Phone calls could not be loaded (budtender did not answer).</p>{% endif %}
+    {% if conv.items %}
+      {% for item in conv.items %}{% include "dashboard/_conversation_row.html" with item=item pk=conv.pk %}{% endfor %}
+      {% if conv.listing.chats_truncated %}<p class="muted" style="font-size:12px">Showing the latest conversations only; this customer has more website chats on record.</p>{% endif %}
+      {% if conv.listing.missing_calls %}<p class="muted" style="font-size:12px">{{ conv.listing.missing_calls }} phone call{{ conv.listing.missing_calls|pluralize }} on this customer have no stored call record here.</p>{% endif %}
+      <p class="muted" style="font-size:12px">"Summarize all" covers the latest {{ conv.max_conversations }}.</p>
+    {% elif conv.listing.chats_ok and conv.listing.calls_ok %}
+    <p class="muted" data-testid="conv-none">No website chats or phone calls on record for this customer.</p>
+    {% endif %}
+  {% endif %}
+</div>

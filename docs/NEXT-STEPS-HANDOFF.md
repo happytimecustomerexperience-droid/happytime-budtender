@@ -212,7 +212,7 @@ Build a clearly better analytics page: KPI row; **suggestion-to-purchase** secti
 - `voice/dashboard/views.py` capabilities page (~l.1698-1725): list the `concierge` member and show the transfer tool for `C.TRANSFER_ROLES` (currently only vendor/escalation).
 - `voice/dashboard/monitor.py _OUTCOME_BADGE`: add `transfer_unavailable` (and check `vendor_direct`) so they are not raw grey text.
 - `voice/dashboard/flowgraph.py`: add `concierge` to the role list (canvas is documentation only).
-- Add a "Clear this customer's memory" button on the customer page calling the staff-only `memory/clear` endpoint (today the tutorial gives a shell command instead).
+- ~~Add a "Clear this customer's memory" button on the customer page~~ DONE (T4): `voice/dashboard/customer_conversations.py`, with the customer's chats/calls and AI summaries.
 
 ### T8. (P2) Product decisions that need code once the owner answers (section 7)
 - D2 SMS verification (new `identity_via="web_verified"`: send/verify endpoints, per-number and per-IP rate limits, code expiry, provider adapter, no code in logs, UI step in the chat, tests).

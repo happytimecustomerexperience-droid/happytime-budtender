@@ -2013,6 +2013,42 @@ class MemoryClearView(APIView):
         return Response({"ok": True, "cleared": True, "sessions_cleared": sessions})
 
 
+class CustomerCallIdsView(APIView):
+    """``POST /customer/call-ids`` (staff: backend token only; NOT website_ok): ``{customer_id}`` ->
+    the Vapi call ids of that customer's phone calls, parsed from their ``vc-<call id>`` session
+    tokens. Only ``vc-`` tokens are read, and no other token is ever returned. The voice dashboard
+    joins these to its own call log. ``{limit<=500 default 200}``, newest first."""
+
+    def post(self, request):
+        data = request.data if isinstance(request.data, dict) else {}
+        cid = _bounded_int(data.get("customer_id"), default=0, lo=0, hi=2**31)
+        limit = _bounded_int(data.get("limit"), default=200, lo=1, hi=500)
+        tokens = (ChatSession.objects.filter(customer_id=cid, session_token__startswith="vc-")
+                  .order_by("-last_active_at").values_list("session_token", flat=True)) if cid else []
+        ids = [t[3:] for t in tokens if _CALL_ID.fullmatch(t[3:])]
+        return Response({"ok": True, "customer_id": cid, "total": len(ids), "call_ids": ids[:limit]})
+
+
+class CustomerNameMatchView(APIView):
+    """``POST /customer/name-match`` (staff: backend token only; NOT website_ok): ``{name}`` -> how
+    many live (not merged-away) customers carry EXACTLY that name, compared case- and
+    whitespace-insensitively: ``{ok, count, id}`` where ``id`` is set only when ``count == 1``.
+    Never a substring or first-name match. Lets the dashboard link its imported profile to a
+    live customer only when the name is unambiguous."""
+
+    def post(self, request):
+        data = request.data if isinstance(request.data, dict) else {}
+        words = str(data.get("name") or "").split()[:12]
+        if not words:
+            return Response({"ok": True, "count": 0, "id": None})
+        want = " ".join(words).casefold()
+        rows = CustomerProfile.objects.filter(
+            merged_into__isnull=True, name__icontains=words[0]).filter(name__icontains=words[-1])
+        ids = [pk for pk, name in rows.values_list("pk", "name")[:500]
+               if " ".join(name.split()).casefold() == want]
+        return Response({"ok": True, "count": len(ids), "id": ids[0] if len(ids) == 1 else None})
+
+
 class PersonaRefreshView(APIView):
     """Force a fresh persona fetch from the voice service. Auth: ServiceTokenPermission.
 

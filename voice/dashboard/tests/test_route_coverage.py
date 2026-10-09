@@ -166,6 +166,27 @@ def test_customer_detail_renders_for_local_profile(client_staff, one_customer):
 
 
 @pytest.mark.django_db
+def test_customer_detail_shows_the_unlinked_conversations_panel(client_staff, one_customer):
+    # Budtender unconfigured in the test env -> the row cannot be linked: the page says so, and the
+    # summary / clear-memory controls are not offered.
+    resp = client_staff.get(reverse("dash-customer-detail", args=[one_customer.pk]))
+    html = resp.content.decode()
+    assert "Not linked to a live customer record — conversations unavailable." in html
+    assert "conv-summarize-all" not in html and "conv-clear-memory" not in html
+
+
+@pytest.mark.django_db
+def test_customer_conversation_actions_degrade_to_a_toast_when_unlinked(client_staff, one_customer):
+    for name, args in (
+        ("dash-customer-summarize-all", [one_customer.pk]),
+        ("dash-customer-conv-summary", [one_customer.pk, "chat", "5"]),
+        ("dash-customer-memory-clear", [one_customer.pk]),
+    ):
+        resp = client_staff.post(reverse(name, args=args))
+        assert resp.status_code == 204 and '"error"' in resp["HX-Trigger"]
+
+
+@pytest.mark.django_db
 def test_customer_detail_no_mojibake_in_favorite_brands_and_purchase_history(
     client_staff, one_customer, monkeypatch
 ):
@@ -180,7 +201,10 @@ def test_customer_detail_no_mojibake_in_favorite_brands_and_purchase_history(
         "purchase_history": [{"product": "Blue Dream", "brand": None, "last_price": None}],
     }
     monkeypatch.setattr(
-        budtender_client, "budtender", lambda: type("B", (), {"get_customer": lambda *a, **k: live_profile})()
+        budtender_client,
+        "budtender",
+        lambda: type("B", (), {"get_customer": lambda *a, **k: live_profile,
+                               "customer_name_match": lambda *a, **k: None})(),
     )
     resp = client_staff.get(reverse("dash-customer-detail", args=[one_customer.pk]))
     content = resp.content.decode("utf-8")

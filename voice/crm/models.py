@@ -17,6 +17,7 @@ from __future__ import annotations
 from datetime import date
 
 from django.db import models
+from django.utils import timezone
 
 
 def phone_hash(phone: str) -> str:
@@ -164,6 +165,14 @@ def brands_text(brands) -> str:
     return f"|{'|'.join(seen)}|" if seen else ""
 
 
+LINK_CHOICES = [
+    ("", "not linked"),
+    ("phone", "phone"),
+    ("name_unique", "unique exact name"),
+    ("manual", "manual"),
+]
+
+
 class CustomerProfile(models.Model):
     """Staff-facing customer intelligence imported from the POS analytics export (P6).
 
@@ -211,6 +220,13 @@ class CustomerProfile(models.Model):
     hourly_pattern = models.JSONField(default=list, blank=True)  # [24]
     day_pattern = models.JSONField(default=list, blank=True)  # [7]
     store_affinity = models.JSONField(default=list, blank=True)  # [{location,revenue}]
+    # The live budtender customer this row is (conversations, memory). Filled lazily by the customer
+    # page (dashboard/customer_conversations.py); NULL = not linked, never a guess. budtender_link
+    # says how: phone | name_unique (exactly one live and one imported customer carry the exact
+    # name) | manual.
+    budtender_customer_id = models.IntegerField(null=True, blank=True, db_index=True)
+    # db_default: code from before this column (a rolling deploy, the 0006 backfill test) can still insert.
+    budtender_link = models.CharField(max_length=16, blank=True, choices=LINK_CHOICES, default="", db_default="")
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -270,3 +286,37 @@ class AlertDelivery(models.Model):
 
     def __str__(self) -> str:
         return f"AlertDelivery<{self.voice_call_id}/{self.sink}={self.status}>"
+
+
+class ConversationSummary(models.Model):
+    """The AI summary of ONE conversation on the customer page (staff only; never shown or said to
+    the customer). Cached per ``(kind, ref)``: ``chat`` = budtender session id, ``call`` = Vapi call
+    id. Regenerated only when ``message_count`` changes or staff press Regenerate. Holds the
+    validated summary text (no price, phone number or email), never the transcript."""
+
+    KIND_CHOICES = [("chat", "Website chat"), ("call", "Phone call")]
+
+    kind = models.CharField(max_length=8, choices=KIND_CHOICES)
+    ref = models.CharField(max_length=64)
+    text = models.TextField()
+    message_count = models.IntegerField(default=0)
+    generated_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = [("kind", "ref")]
+
+    def __str__(self) -> str:
+        return f"ConversationSummary<{self.kind}/{self.ref}>"
+
+
+class CustomerSummary(models.Model):
+    """The "Summarize all" paragraph for one live (budtender) customer, built from the
+    per-conversation summaries. ``covers_count`` = how many conversations it was built from."""
+
+    budtender_customer_id = models.IntegerField(unique=True)
+    text = models.TextField()
+    covers_count = models.IntegerField(default=0)
+    generated_at = models.DateTimeField(default=timezone.now)
+
+    def __str__(self) -> str:
+        return f"CustomerSummary<{self.budtender_customer_id}>"

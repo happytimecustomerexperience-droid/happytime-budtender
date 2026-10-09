@@ -1040,8 +1040,11 @@ def customer_detail(request, pk: int):
     )
     feed = suggestions.build_feed(feed_input, baskets_index=_baskets_index())
     pairs = [s for s in feed if s.get("kind") == "pair"]
+    from . import customer_conversations  # chats + calls + AI summaries + clear memory (staff only)
+
     return render(request, "dashboard/customer_detail.html",
-                  {"c": detail, "feed": feed, "pairs": pairs, "source": source})
+                  {"c": detail, "feed": feed, "pairs": pairs, "source": source,
+                   "conv": customer_conversations.build_panel(pk, local)})
 
 
 # Lazily-loaded frequently-bought-with index (optional; only if the owner dropped baskets.json in).

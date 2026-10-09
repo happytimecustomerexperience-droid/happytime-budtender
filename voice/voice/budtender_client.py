@@ -335,6 +335,77 @@ class BudtenderClient:
             return out["customer"]
         return None
 
+    # ── staff conversations panel (customer page): every method answers a typed empty ──
+    def customer_name_match(self, name: str) -> dict | None:
+        """``POST /customer/name-match``: ``{count, id}`` = how many live customers carry exactly this
+        name (case/whitespace-insensitive); ``id`` only when ``count == 1``. ``None`` when budtender
+        could not answer (unreachable / refused): UNKNOWN, never "no match"."""
+        if not str(name or "").strip():
+            return None
+        out = self._post("/customer/name-match", {"name": str(name)}, empty={})
+        if isinstance(out, dict) and out.get("ok") and isinstance(out.get("count"), int):
+            return {"count": out["count"], "id": out.get("id")}
+        return None
+
+    def customer_chat_sessions(self, customer_id, *, limit: int = 100) -> dict:
+        """``POST /chat/history {customer_id}``: that customer's sessions as metadata (no bodies, no
+        tokens). ``{ok, sessions: [...], total}``; graceful-empty ``{ok: False, sessions: [], total: 0}``."""
+        empty = {"ok": False, "sessions": [], "total": 0}
+        out = self._post("/chat/history", {"customer_id": customer_id, "limit": limit}, empty={})
+        if not isinstance(out, dict) or not out.get("ok") or not isinstance(out.get("sessions"), list):
+            return dict(empty)
+        return {"ok": True, "sessions": out["sessions"], "total": out.get("total", len(out["sessions"]))}
+
+    def customer_chat_session(self, customer_id, session_id, *, message_limit: int = 500) -> dict | None:
+        """``POST /chat/history {id, customer_id}``: one transcript, returned only if the session
+        belongs to that customer. ``None`` when missing / not theirs / unreachable."""
+        out = self._post(
+            "/chat/history",
+            {"id": session_id, "customer_id": customer_id, "message_limit": message_limit, "limit": 1},
+            empty={},
+        )
+        sessions = out.get("sessions") if isinstance(out, dict) else None
+        return sessions[0] if isinstance(sessions, list) and sessions and isinstance(sessions[0], dict) else None
+
+    def customer_call_ids(self, customer_id) -> dict:
+        """``POST /customer/call-ids``: the Vapi call ids of that customer's phone calls.
+        ``{ok, call_ids: [...]}``; graceful-empty ``{ok: False, call_ids: []}`` (unknown, not "none")."""
+        empty = {"ok": False, "call_ids": []}
+        out = self._post("/customer/call-ids", {"customer_id": customer_id}, empty={})
+        if not isinstance(out, dict) or not out.get("ok") or not isinstance(out.get("call_ids"), list):
+            return dict(empty)
+        return {"ok": True, "call_ids": [str(c) for c in out["call_ids"]]}
+
+    def memory_clear(self, customer_id, actor: str) -> dict:
+        """``POST /customer/memory/clear {id, actor}`` (staff). ``{status, sessions_cleared}`` with
+        status ``cleared`` | ``not_found`` | ``error`` (budtender refused) | ``unreachable``, so the
+        dashboard can say which. Never raises."""
+        if not self._token or not self.base_url:
+            return {"status": "unreachable", "sessions_cleared": 0}
+        try:
+            resp = self._session.post(
+                self._url("/customer/memory/clear"),
+                json={"id": customer_id, "actor": str(actor or "dashboard")[:128]},
+                headers=self._headers(),
+                timeout=(self._connect_timeout, self.timeout),
+            )
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            logger.warning("budtender memory/clear unreachable: %s", type(exc).__name__)
+            return {"status": "unreachable", "sessions_cleared": 0}
+        except Exception:  # noqa: BLE001
+            logger.warning("budtender memory/clear failed", exc_info=True)
+            return {"status": "unreachable", "sessions_cleared": 0}
+        if resp.status_code == 404:
+            return {"status": "not_found", "sessions_cleared": 0}
+        try:
+            body = resp.json() if resp.status_code < 300 else {}
+        except ValueError:
+            body = {}
+        if resp.status_code >= 300 or not (isinstance(body, dict) and body.get("cleared")):
+            logger.warning("budtender memory/clear -> HTTP %s", resp.status_code)
+            return {"status": "error", "sessions_cleared": 0}
+        return {"status": "cleared", "sessions_cleared": int(body.get("sessions_cleared") or 0)}
+
     # ── returning-caller handshake (§7) ───────────────────────────────────────
     def resume_by_phone(
         self,

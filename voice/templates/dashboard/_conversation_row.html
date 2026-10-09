@@ -1,0 +1,22 @@
+<div class="conv" id="conv-{{ item.dom_id }}" data-testid="conv-{{ item.dom_id }}" style="border-top:1px solid var(--border);padding:10px 0">
+  <div class="row between" style="gap:10px;flex-wrap:wrap">
+    <div>
+      <span class="badge {% if item.kind == 'call' %}blue{% else %}slate{% endif %}">{{ item.kind_label }}</span>
+      <a href="{{ item.href }}">{{ item.when|date:"Y-m-d H:i" }}</a>
+      {% if item.store %}<span class="muted">· {{ item.store }}</span>{% endif %}
+      <span class="muted">· {{ item.size }}{% if item.outcome %} · {{ item.outcome }}{% endif %}</span>
+    </div>
+    <form hx-post="{% url 'dash-customer-conv-summary' pk item.kind item.ref %}" hx-target="#conv-{{ item.dom_id }}" hx-swap="outerHTML" hx-indicator="#spin-{{ item.dom_id }}" class="row" style="gap:6px">
+      {% csrf_token %}
+      {% if item.summary %}<input type="hidden" name="regenerate" value="1">{% endif %}
+      <span class="htmx-indicator conv-spin" id="spin-{{ item.dom_id }}" aria-label="Summarizing"></span>
+      <button class="btn" type="submit" data-testid="conv-summarize-{{ item.dom_id }}">{% if not item.summary %}Summarize{% elif item.stale %}Update summary{% else %}Regenerate{% endif %}</button>
+    </form>
+  </div>
+  {% if item.summary %}
+  <div style="margin-top:6px" data-testid="conv-summary-{{ item.dom_id }}">{{ item.summary.text }}
+    {% if item.stale %}<span class="badge amber">changed since this summary</span>{% endif %}
+    <span class="muted" style="font-size:11px">· {{ item.summary.generated_at|date:"Y-m-d" }}</span>
+  </div>
+  {% endif %}
+</div>

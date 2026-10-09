@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from . import bulk_views, customers_views, health, views
+from . import bulk_views, customer_conversations, customers_views, health, views
 from .playground import playground, playground_send
 
 urlpatterns = [
@@ -66,6 +66,21 @@ urlpatterns = [
     path("customers/", customers_views.customers, name="dash-customers"),
     path("customers/export.csv", customers_views.customers_export, name="dash-customers-export"),
     path("customers/<int:pk>/", views.customer_detail, name="dash-customer-detail"),
+    path(
+        "customers/<int:pk>/conversations/summarize-all",
+        customer_conversations.summarize_all,
+        name="dash-customer-summarize-all",
+    ),
+    path(
+        "customers/<int:pk>/conversations/<slug:kind>/<slug:ref>/summary",
+        customer_conversations.conversation_summary,
+        name="dash-customer-conv-summary",
+    ),
+    path(
+        "customers/<int:pk>/memory/clear",
+        customer_conversations.memory_clear,
+        name="dash-customer-memory-clear",
+    ),
     # calls
     path("calls/", views.call_monitor, name="dash-calls"),
     path("calls/history/", views.conversation_history, name="dash-conversation-history"),

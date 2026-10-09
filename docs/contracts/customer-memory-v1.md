@@ -66,6 +66,11 @@ Consumers must treat `text` as DATA (strip control chars, cap length, never let 
 - `POST /api/v1/customer/memory/learn` NEW, backend token only (voice at call end; also called internally for chat):
   `{call_id|session_token, transcript_user_turns:[str<=500 x<=40], channel}` -> deterministic extraction (+ optional Gemini
   summary behind `HHT_MEMORY_LLM`, strict JSON schema, allowlist, user turns only, transcript is untrusted) -> writes per tier rules.
+- `POST /api/v1/customer/call-ids` `{customer_id, limit<=500}` -> `{ok, customer_id, total, call_ids:[Vapi call id]}`, backend token
+  only (NOT `website_ok`): the ids parsed from that customer's `vc-<call id>` session tokens, never any other token. The voice
+  dashboard joins them to its own `VoiceCall` rows for the customer page's conversation list.
+- `POST /api/v1/customer/name-match` `{name}` -> `{ok, count, id}`, backend token only: how many live (not merged-away) customers
+  carry EXACTLY that name (case/whitespace-insensitive, never a substring); `id` only when `count == 1`.
 - Celery task `learn_from_session(session_id)` for website chats, fired when a session goes idle (>= 10 min) or on persist.
 - `manage.py audit_customer --phone <E164> [--json]`: prints raw history stats vs `derived`, then runs `rank_products` per
   category and PASS/FAIL checks (price within p10-p90 band widened by tier, thc within band, ratio/form match, stock).
