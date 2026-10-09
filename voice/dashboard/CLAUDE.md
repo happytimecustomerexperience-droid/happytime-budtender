@@ -20,6 +20,20 @@ bulk path cannot accept what the single-row editor refuses.
   apostrophe and rejects unmarked `=`/`@`-leading (and non-numeric `+`/`-`) cells.
 - Never log file contents; `BulkBatchLog` keeps counts + username only.
 
+## Analytics page (`analytics_views.py`, `analytics_calls.py`)
+One page, one GET filter row (days 7/30/90/custom N, store, channel). Budtender sections (suggestions,
+chat funnel, zero-result searches) call `views._budtender_post` in parallel and render an "analytics service
+unreachable" note on failure; an authoritative empty says "no suggestions" instead. Calls come from `VoiceCall`
+in six grouped queries (TIME_ZONE buckets). Charts are server-built inline SVG (`stacked_columns`, `heatmap`).
+- Conversion = bought / (bought + not bought); pending and unattributable are shown, never folded in.
+- Customer links need a dashboard `voice_id`; the budtender customer id is another key space, so no link is built.
+- Chosen from a short operator-KPI read (Cova, Korona, Indica Online, 2026-10): conversion of recommendations
+  by channel/store/rank, products pushed vs never bought, hour x weekday call load (peak hours drive staffing),
+  transfer outcomes, search misses. Left out because the data cannot back them: per-budtender sales, basket
+  size, retention, revenue/margin per suggestion, period-over-period deltas, FAQ gaps and deals asked.
+- Gotcha: the funnel API has no channel filter, so the chat funnel is not narrowed by channel.
+- Tests: `DJANGO_DEBUG=1 uv run pytest -q -p no:cacheprovider dashboard/tests/test_analytics_page.py`
+
 ## Scripts & commands
     cd voice
     DJANGO_DEBUG=1 uv run pytest -q -p no:cacheprovider dashboard/tests/test_bulk.py

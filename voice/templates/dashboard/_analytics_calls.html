@@ -1,0 +1,61 @@
+<section class="card" id="calls">
+  <h2>Calls</h2>
+  {% if calls is None %}
+    <p class="empty">Calls are phone calls, so they are left out while the channel filter is set to something other than Phone.</p>
+  {% elif calls.empty %}
+    <p class="empty">No calls in this window{% if f.store %} for this store{% endif %}.</p>
+  {% else %}
+    <p class="sub">From the call log, in store time. {{ calls.total }} call{{ calls.total|pluralize }}; duration is known for {{ calls.duration.n }}.</p>
+    <div class="kpis five">
+      <div class="tile"><div class="l">Median call</div><div class="n">{{ calls.median }}</div><div class="s">half of calls are shorter</div></div>
+      <div class="tile"><div class="l">90th percentile call</div><div class="n">{{ calls.p90 }}</div><div class="s">9 in 10 calls are shorter</div></div>
+      <div class="tile"><div class="l">Transfers connected</div><div class="n">{{ calls.transfer_rate }}</div><div class="s">{{ calls.transfers.connected }} of {{ calls.transfers.attempts }} attempted</div></div>
+      <div class="tile"><div class="l">Vendor callbacks</div><div class="n">{{ calls.vendor_callbacks }}</div><div class="s">{{ calls.vendor_direct }} vendor call{{ calls.vendor_direct|pluralize }} sent straight to the owner</div></div>
+      <div class="tile"><div class="l">Transfer: person unavailable</div><div class="n">{{ calls.transfer_unavailable }}</div><div class="s">asked a person, nobody took it</div></div>
+    </div>
+
+    <h3>Calls per {{ calls.volume.unit }}</h3>
+    {% include "dashboard/_analytics_columns.html" with chart=calls.volume aria="Calls per day" %}
+
+    <h3>When the phones ring (day of week by hour){% if calls.peak_text %}: busiest {{ calls.peak_text }}{% endif %}</h3>
+    <div class="chart-scroll">
+    <svg class="chart heat" viewBox="0 0 {{ calls.heatmap.w }} {{ calls.heatmap.h }}" role="img" aria-label="Calls by day of week and hour">
+      {% for l in calls.heatmap.ylabels %}<text x="30" y="{{ l.y }}" text-anchor="end">{{ l.text }}</text>{% endfor %}
+      {% for c in calls.heatmap.cells %}<rect class="h{{ c.level }}" x="{{ c.x }}" y="{{ c.y }}" width="{{ calls.heatmap.cw }}" height="{{ calls.heatmap.ch }}" rx="3"><title>{{ c.title }}</title></rect>{% endfor %}
+      {% for l in calls.heatmap.xlabels %}<text x="{{ l.x }}" y="{{ calls.heatmap.label_y }}" text-anchor="middle">{{ l.text }}</text>{% endfor %}
+    </svg>
+    </div>
+    <div class="scale">fewer <i class="sw-h0"></i><i class="sw-h1"></i><i class="sw-h2"></i><i class="sw-h3"></i><i class="sw-h4"></i><i class="sw-h5"></i> more (up to {{ calls.heatmap.peak }} in one hour slot)</div>
+    <details class="tv"><summary>Table view</summary>
+    <div class="table-wrap"><table>
+      <tr><th>Day</th>{% for l in calls.heatmap.xlabels %}<th class="num">{{ l.text }}+</th>{% endfor %}<th class="num">Total</th></tr>
+      {% for r in calls.heatmap.table %}<tr><td>{{ r.day }}</td>{% for n in r.hours_by3 %}<td class="num">{{ n }}</td>{% endfor %}<td class="num">{{ r.total }}</td></tr>{% endfor %}
+    </table></div>
+    <p class="sub">Columns group three hours each (the "6a+" column is 6a to 8:59a).</p>
+    </details>
+
+    <div class="three">
+      <div>
+        <h3>By store</h3>
+        {% if calls.by_store %}<div class="table-wrap"><table>
+          <tr><th>Store</th><th class="num">Calls</th></tr>
+          {% for s in calls.by_store %}<tr><td>{{ s.store }}</td><td class="num">{{ s.n }}</td></tr>{% endfor %}
+        </table></div>{% else %}<p class="muted">No store-tagged calls.</p>{% endif %}
+      </div>
+      <div>
+        <h3>Outcomes</h3>
+        <div class="table-wrap"><table>
+          <tr><th>Outcome</th><th class="num">Calls</th><th>Share</th></tr>
+          {% for o in calls.outcomes %}<tr><td><span class="badge {{ o.color }}">{{ o.label }}</span></td><td class="num">{{ o.n }}</td><td><div class="bar1" title="{{ o.share }}"><i style="width:{{ o.bar }}%"></i></div></td></tr>{% endfor %}
+        </table></div>
+      </div>
+      <div>
+        <h3>Transfers</h3>
+        {% if calls.transfers.rows %}<div class="table-wrap"><table>
+          <tr><th>How the transfer ended</th><th class="num">Calls</th></tr>
+          {% for t in calls.transfers.rows %}<tr><td>{{ t.label }}</td><td class="num">{{ t.n }}</td></tr>{% endfor %}
+        </table></div>{% else %}<p class="muted">No transfers were attempted.</p>{% endif %}
+      </div>
+    </div>
+  {% endif %}
+</section>

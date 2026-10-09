@@ -294,7 +294,7 @@ Pages you asked about (all under `/dashboard/`):
 | Calls live / call log / history / one call + transcript | **Calls**, **History** | `/dashboard/calls/`, `/dashboard/calls/log/`, `/dashboard/calls/history/` (click a call for its transcript and "fetch full conversation") |
 | Website chat history | **Chat** | `/dashboard/calls/chatbot/` |
 | Escalations (people who wanted a human / complaints) | **Escalations** | `/dashboard/escalations/` |
-| Analytics and the chat funnel | **Analytics** | `/dashboard/analytics/`, `/dashboard/analytics/chat/` |
+| Do AI suggestions turn into purchases, plus calls (volume, busiest hours, outcomes, transfers), the chat funnel and search misses; filter by days, store, channel | **Analytics** | `/dashboard/analytics/` (full chat funnel: `/dashboard/analytics/chat/`) |
 | Background jobs health | **Health** | `/dashboard/health/` (service health: `https://voice.happytimeweed.com/healthz`) |
 | Keys and numbers | **Credentials** (owner only) | `/dashboard/credentials/` |
 | Ranking weights | **Weights** | `/dashboard/weights/` |

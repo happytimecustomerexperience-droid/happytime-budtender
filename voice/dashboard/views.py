@@ -108,72 +108,6 @@ def overview(request):
     return render(request, "dashboard/overview.html", ctx)
 
 
-@staff_member_required
-def analytics_dashboard(request):
-    """Call-volume + outcome funnel + escalation/vendor rates over ``days∈{7,30,90}``."""
-    from datetime import timedelta
-
-    from django.db.models import Count
-    from django.utils import timezone
-
-    from voice.models import VoiceCall
-
-    days = _bounded_int(request.GET.get("days"), default=30, lo=1, hi=365)
-    days = days if days in (7, 30, 90) else 30
-    since = timezone.now() - timedelta(days=days)
-    qs = VoiceCall.objects.filter(created_at__gte=since)
-    total = qs.count()
-    funnel = list(qs.exclude(outcome="").values("outcome").annotate(n=Count("id")).order_by("-n"))
-    ctx = {
-        "days": days,
-        "total": total,
-        "funnel": funnel,
-        "by_store": list(
-            qs.exclude(store="").values("store").annotate(n=Count("id")).order_by("-n")
-        ),
-        "top_asks": _top_product_asks(qs),
-        "escalations": qs.filter(outcome="escalation").count(),
-        "vendor_callbacks": qs.filter(outcome="vendor_callback").count(),
-        "suggested": qs.filter(outcome="suggested").count(),
-        "chatbot": _chatbot_analytics(days),
-    }
-    return render(request, "dashboard/analytics.html", ctx)
-
-
-def _chatbot_analytics(days: int) -> dict:
-    """Fetch budtender's chatbot/menu analytics summary for this dashboard.
-
-    The service token stays server-side. Missing config or transport failures degrade
-    to a small status object instead of breaking the voice dashboard.
-    """
-    import logging
-
-    import requests
-    from django.conf import settings
-
-    logger = logging.getLogger(__name__)
-    base = (getattr(settings, "HHT_BUDTENDER_BASE_URL", "") or "").rstrip("/")
-    token = getattr(settings, "HHT_BACKEND_TOKEN", "") or ""
-    if not base or not token:
-        return {"ok": False, "reason": "budtender analytics not configured"}
-    try:
-        resp = requests.post(
-            f"{base}/api/v1/analytics/summary",
-            json={"days": days},
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            timeout=(2.0, int(getattr(settings, "HHT_BUDTENDER_TIMEOUT", 8) or 8)),
-        )
-        if resp.status_code >= 300:
-            return {"ok": False, "reason": f"budtender HTTP {resp.status_code}"}
-        data = resp.json() if resp.content else {}
-        return {"ok": True, "summary": data if isinstance(data, dict) else {}}
-    except (requests.Timeout, requests.ConnectionError) as exc:
-        return {"ok": False, "reason": f"budtender unreachable ({type(exc).__name__})"}
-    except Exception:
-        logger.warning("budtender analytics fetch failed", exc_info=True)
-        return {"ok": False, "reason": "budtender analytics fetch failed"}
-
-
 def _budtender_post(path: str, payload: dict) -> dict:
     """POST to budtender with the server-side service token; ``{"ok": False, "reason": …}`` on any trouble."""
     import logging
@@ -277,22 +211,6 @@ def _chatbot_history_for_payload(payload: dict) -> dict:
     except Exception:
         logger.warning("budtender chat history fetch failed", exc_info=True)
         return {"ok": False, "reason": "budtender history fetch failed", "sessions": []}
-
-
-def _top_product_asks(qs, limit: int = 10) -> list[dict]:
-    """Top product asks = the most-suggested SKUs across the window's calls — a REAL count over the
-    durable ``VoiceCall.suggested_skus`` lists (Numbers-Guard: a count of real rows, no LLM math, no
-    fabrication). Leak-safe by construction (a SKU is an id, never cost/margin). Returns
-    ``[{sku, n}…]`` ranked desc. The "top categories" rollup at this scale (no per-call category
-    column on ``VoiceCall``) — extend with a category field if/when one is captured per call."""
-    from collections import Counter
-
-    counter: Counter = Counter()
-    for skus in qs.values_list("suggested_skus", flat=True):
-        for sku in skus or []:
-            if sku:
-                counter[str(sku)] += 1
-    return [{"sku": sku, "n": n} for sku, n in counter.most_common(limit)]
 
 
 # ── Agents editor (port agent_config/agent_save/agent_detail + voice fields) ───

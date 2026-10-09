@@ -1,84 +1,114 @@
 {% extends "dashboard/base.html" %}
 {% block title %}Analytics — Happy Time Voice{% endblock %}
 {% block content %}
-<div class="row between">
-  <h1>Analytics</h1>
-  <div class="row">
-    <a class="btn" href="{% url 'dash-chat-funnel' %}?days={{ days }}">Chat funnel &amp; drop-off</a>
-    <a class="btn {% if days == 7 %}btn-primary{% endif %}" href="?days=7">7d</a>
-    <a class="btn {% if days == 30 %}btn-primary{% endif %}" href="?days=30">30d</a>
-    <a class="btn {% if days == 90 %}btn-primary{% endif %}" href="?days=90">90d</a>
+<style>
+  /* Chart tokens (dataviz reference palette, light). The staff shell is light-only, so there is no dark set here. */
+  .an { --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --faint:#898781; --grid:#e1e0d9; --axis:#c3c2b7;
+        --c-exact:#2a78d6; --c-sibling:#1baf7a; --c-not:#6f6e69; --c-pending:#a9a89f; --c-unattr:#d6d5cd; --c-calls:#2a78d6;
+        --h0:#f0efec; --h1:#cde2fb; --h2:#86b6ef; --h3:#3987e5; --h4:#1c5cab; --h5:#0d366b; }
+  .an .c-exact { fill: var(--c-exact); background: var(--c-exact); }
+  .an .c-sibling { fill: var(--c-sibling); background: var(--c-sibling); }
+  .an .c-not { fill: var(--c-not); background: var(--c-not); }
+  .an .c-pending { fill: var(--c-pending); background: var(--c-pending); }
+  .an .c-unattr { fill: var(--c-unattr); background: var(--c-unattr); }
+  .an .c-calls { fill: var(--c-calls); background: var(--c-calls); }
+  .an .h0 { fill: var(--h0); } .an .h1 { fill: var(--h1); } .an .h2 { fill: var(--h2); }
+  .an .h3 { fill: var(--h3); } .an .h4 { fill: var(--h4); } .an .h5 { fill: var(--h5); }
+  .an .sw-h0 { background: var(--h0); } .an .sw-h1 { background: var(--h1); } .an .sw-h2 { background: var(--h2); }
+  .an .sw-h3 { background: var(--h3); } .an .sw-h4 { background: var(--h4); } .an .sw-h5 { background: var(--h5); }
+
+  .an th, .an td { padding: 7px 6px; }
+  .an h2 { margin-bottom: 2px; }
+  .an h3 { font-size: 13px; margin: 14px 0 6px; color: var(--ink2); }
+  .an .sub { color: var(--faint); font-size: 12px; margin: 0 0 10px; }
+  .an .filters { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin: 12px 0;
+                 display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; }
+  .an .filters label { margin: 0; }
+  .an .filters select { width: auto; min-width: 9em; }
+  .an .filters input[type=number] { width: 5em; display: inline-block; }
+  .an .range { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+  .an .range label { position: relative; }
+  .an .range input { position: absolute; opacity: 0; inset: 0; width: 100%; margin: 0; cursor: pointer; }
+  .an .range span { display: block; padding: 7px 12px; border-right: 1px solid var(--border); }
+  .an .range label:last-child span { border-right: 0; }
+  .an .range input:checked + span { background: var(--primary); color: #fff; }
+  .an .range input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: -2px; }
+  .an .caveats { margin: 0 0 12px; padding: 0; list-style: none; color: var(--ink2); font-size: 12px; }
+  .an .caveats li { padding: 2px 0 2px 14px; position: relative; }
+  .an .caveats li::before { content: ""; position: absolute; left: 2px; top: 8px; width: 5px; height: 5px; border-radius: 50%; background: var(--faint); }
+
+  .an .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+  @media (min-width: 1000px) { .an .kpis { grid-template-columns: repeat(6, 1fr); } }
+  @media (max-width: 599px) { .an .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .an .kpis.five { grid-template-columns: repeat(2, 1fr); }
+  @media (min-width: 720px) { .an .kpis.five { grid-template-columns: repeat(5, 1fr); } }
+  .an .tile { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .an .tile .l { color: var(--ink2); font-size: 12px; }
+  .an .tile .n { font-size: 28px; font-weight: 600; line-height: 1.2; margin: 2px 0; }
+  .an .tile .s { color: var(--faint); font-size: 11px; line-height: 1.3; }
+  .an .tile.muted .n { color: var(--faint); }
+
+  .an .note-amber { background: var(--amber-bg); border: 1px solid #fde68a; color: #92400e; padding: 10px 14px; border-radius: 8px; margin: 8px 0; }
+  .an .empty { color: var(--ink2); padding: 8px 0; }
+
+  .an .stack { display: flex; gap: 2px; height: 16px; margin: 6px 0 8px; }
+  .an .stack span { display: block; min-width: 2px; }
+  .an .stack span:first-child { border-radius: 4px 0 0 4px; } .an .stack span:last-child { border-radius: 0 4px 4px 0; }
+  .an .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; color: var(--ink2); margin: 4px 0 8px; }
+  .an .legend i, .an .dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .an .legend b { color: var(--ink); font-weight: 600; }
+
+  .an .rate { display: flex; align-items: center; gap: 8px; min-width: 130px; }
+  .an .rate .track { position: relative; flex: 1; height: 12px; background: var(--h1); border-radius: 4px; }
+  .an .rate .track i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--c-exact); border-radius: 4px; }
+  .an .rate b { font-size: 12px; font-weight: 600; min-width: 3.6em; text-align: right; font-variant-numeric: tabular-nums; }
+  .an td.prod { min-width: 190px; }
+  .an .bar1 { position: relative; height: 14px; background: var(--h1); border-radius: 4px; min-width: 90px; }
+  .an .bar1 i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--c-exact); border-radius: 4px; }
+  .an td.num, .an th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .an td.sm, .an .sm { font-size: 12px; color: var(--ink2); }
+  .an th a { color: var(--muted); } .an th a:hover { color: var(--ink); text-decoration: none; }
+  .an th.active a { color: var(--ink); }
+  .an tr.subtotal td { font-weight: 600; background: var(--bg); }
+  .an .lowtrust { color: #92400e; }
+
+  .an .chart-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .an svg.chart { display: block; width: 100%; min-width: 640px; height: auto; font-family: inherit; }
+  .an svg.chart text { font-size: 11px; fill: var(--faint); }
+  .an svg.chart .grid-line { stroke: var(--grid); stroke-width: 1; }
+  .an svg.chart .axis-line { stroke: var(--axis); stroke-width: 1; }
+  .an svg.chart .hit { fill: transparent; }
+  .an svg.chart g.col:hover .hit { fill: rgba(11,11,11,.05); }
+  .an svg.heat text { font-size: 12px; }
+  .an details.tv { margin-top: 8px; font-size: 12px; }
+  .an details.tv summary { cursor: pointer; color: var(--primary); }
+  .an .scale { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--faint); margin-top: 6px; }
+  .an .scale i { width: 18px; height: 10px; border-radius: 2px; display: inline-block; }
+  .an .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .an .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .an .two > div, .an .three > div { min-width: 0; }
+  @media (max-width: 720px) { .an .two, .an .three { grid-template-columns: 1fr; } .an .tile .n { font-size: 24px; } }
+</style>
+
+<div class="an">
+  <div class="row between">
+    <h1>Analytics</h1>
+    <a class="btn" href="{% url 'dash-chat-funnel' %}{{ chat_link }}">Full chat funnel &amp; drop-off</a>
   </div>
-</div>
+  {% include "dashboard/_analytics_filters.html" %}
 
-<div class="pills" style="margin:16px 0">
-  <div class="pill"><div class="n">{{ total }}</div><div class="l">Calls ({{ days }}d)</div></div>
-  <div class="pill"><div class="n">{{ suggested }}</div><div class="l">Suggestions</div></div>
-  <div class="pill"><div class="n">{{ escalations }}</div><div class="l">Escalations</div></div>
-  <div class="pill"><div class="n">{{ vendor_callbacks }}</div><div class="l">Vendor callbacks</div></div>
-  {% if chatbot.ok %}
-    <div class="pill"><div class="n">{{ chatbot.summary.chat.opens|default:"0" }}</div><div class="l">Chat opens</div></div>
-    <div class="pill"><div class="n">{{ chatbot.summary.conversions.shop_now_clicks|default:"0" }}</div><div class="l">Shop clicks</div></div>
-  {% endif %}
-</div>
+  <ul class="caveats">
+    <li>Phone suggestions recorded before the <code>suggestions/shown</code> release include every fetched result (up to 12 per question); since then only the 3 spoken picks are recorded, so for older phone rows compare rank 3 and under.</li>
+    <li>A phone number typed on the website is lower-trust attribution than caller ID; buyers below show how each was identified.</li>
+    <li>Outcomes are only as fresh as the 6-hourly transaction sync plus 1 day of grace, so recent suggestions read as pending.</li>
+  </ul>
 
-<div class="grid" style="grid-template-columns:1fr 1fr">
-  <div class="card">
-    <h2>Outcome funnel</h2>
-    <table>
-      <tr><th>Outcome</th><th>Count</th></tr>
-      {% for row in funnel %}<tr><td>{{ row.outcome }}</td><td>{{ row.n }}</td></tr>{% empty %}<tr><td colspan="2" class="muted">No calls in window.</td></tr>{% endfor %}
-    </table>
+  <div class="kpis">
+    {% for k in kpis %}<div class="tile{% if k.muted %} muted{% endif %}"><div class="l">{{ k.label }}</div><div class="n">{{ k.value }}</div><div class="s">{{ k.sub }}</div></div>{% endfor %}
   </div>
 
-  <div class="card">
-    <h2>By store</h2>
-    <table>
-      <tr><th>Store</th><th>Calls</th></tr>
-      {% for row in by_store %}<tr><td>{{ row.store }}</td><td>{{ row.n }}</td></tr>{% empty %}<tr><td colspan="2" class="muted">No store-tagged calls.</td></tr>{% endfor %}
-    </table>
-  </div>
-</div>
-
-<div class="grid" style="grid-template-columns:1fr 1fr">
-  <div class="card">
-    <h2>Chatbot funnel</h2>
-    {% if chatbot.ok %}
-      <table>
-        <tr><th>Metric</th><th>Count</th></tr>
-        <tr><td>Unique visitors</td><td>{{ chatbot.summary.unique_visitors|default:"0" }}</td></tr>
-        <tr><td>Chat opens</td><td>{{ chatbot.summary.chat.opens|default:"0" }}</td></tr>
-        <tr><td>User messages</td><td>{{ chatbot.summary.chat.user_messages_sent|default:"0" }}</td></tr>
-        <tr><td>Recommendation views</td><td>{{ chatbot.summary.chat.recommendation_views|default:"0" }}</td></tr>
-        <tr><td>Shop-now clicks</td><td>{{ chatbot.summary.conversions.shop_now_clicks|default:"0" }}</td></tr>
-      </table>
-    {% else %}
-      <p class="muted">{{ chatbot.reason }}</p>
-    {% endif %}
-  </div>
-
-  <div class="card">
-    <h2>Channel totals</h2>
-    <table>
-      <tr><th>Channel</th><th>Primary interactions</th></tr>
-      <tr><td>Voice calls</td><td>{{ total }}</td></tr>
-      {% if chatbot.ok %}
-        <tr><td>Chat sessions opened</td><td>{{ chatbot.summary.chat.opens|default:"0" }}</td></tr>
-        <tr><td>Menu product views</td><td>{{ chatbot.summary.menu_embed.product_views|default:"0" }}</td></tr>
-      {% else %}
-        <tr><td>Chatbot</td><td class="muted">Unavailable</td></tr>
-      {% endif %}
-    </table>
-  </div>
-</div>
-
-<div class="card">
-  <h2>Top product asks</h2>
-  <p class="muted">The most-suggested SKUs in the window — a real count over the durable call log
-    (no estimate). Leak-safe: a SKU is an id, never cost/margin.</p>
-  <table>
-    <tr><th>#</th><th>SKU</th><th>Times suggested</th></tr>
-    {% for row in top_asks %}<tr><td>{{ forloop.counter }}</td><td>{{ row.sku }}</td><td>{{ row.n }}</td></tr>{% empty %}<tr><td colspan="3" class="muted">No suggestions in window.</td></tr>{% endfor %}
-  </table>
+  {% include "dashboard/_analytics_suggestions.html" %}
+  {% include "dashboard/_analytics_calls.html" %}
+  {% include "dashboard/_analytics_chat.html" %}
 </div>
 {% endblock %}

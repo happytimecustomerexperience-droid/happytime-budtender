@@ -1,0 +1,41 @@
+<section class="card" id="chat">
+  <h2>Chat funnel</h2>
+  {% if chat is None %}
+    <p class="empty">The chat funnel covers website chat, so it is left out while the channel filter is set to Phone.</p>
+  {% elif chat.state == "unreachable" %}
+    {% include "dashboard/_analytics_unreachable.html" with what="The chat funnel is" reason=chat.reason %}
+  {% elif chat.state == "empty" %}
+    <p class="empty">No chat sessions in this window{% if f.store %} for this store{% endif %}. That is a real zero, not a missing connection.</p>
+  {% else %}
+    <p class="sub">{{ chat.sessions }} session{{ chat.sessions|pluralize }} from {{ chat.visitors }} visitor{{ chat.visitors|pluralize }}, {{ chat.searches }} search{{ chat.searches|pluralize:"es" }}; {{ chat.bounces }} bounced{% if chat.bounce_rate != None %} ({{ chat.bounce_rate }}){% endif %}. Not narrowed by channel. Questionnaire steps, per-session timelines and store/day tables are on the <a href="{% url 'dash-chat-funnel' %}{{ chat_link }}">full chat funnel page</a>.</p>
+    <div class="table-wrap"><table>
+      <tr><th>Stage</th><th class="num">Sessions</th><th>Of the first stage</th></tr>
+      {% for s in chat.stages %}<tr><td>{{ s.stage }}</td><td class="num">{{ s.sessions }}</td><td><div class="bar1" title="{{ s.bar }}%"><i style="width:{{ s.bar }}%"></i></div></td></tr>{% endfor %}
+    </table></div>
+  {% endif %}
+</section>
+
+<section class="card" id="demand">
+  <h2>Demand signals</h2>
+  <p class="sub">What chat shoppers look for, and what they search for and do not find.</p>
+  {% if chat is None %}
+    <p class="empty">Chat searches are left out while the channel filter is set to Phone.</p>
+  {% elif chat.state == "unreachable" %}
+    {% include "dashboard/_analytics_unreachable.html" with what="Search demand is" reason=chat.reason %}
+  {% else %}
+    <div class="two">
+      <div>
+        <h3>Searches with zero results</h3>
+        {% if chat.zero %}<div class="table-wrap"><table><tr><th>What they asked for</th><th class="num">Searches</th></tr>
+          {% for z in chat.zero %}<tr><td>{{ z.what }}</td><td class="num">{{ z.n }}</td></tr>{% endfor %}</table></div>
+        {% else %}<p class="muted">None in this window: every search found something.</p>{% endif %}
+      </div>
+      <div>
+        <h3>Top categories searched</h3>
+        {% if chat.categories %}<div class="table-wrap"><table><tr><th>Category</th><th class="num">Searches</th></tr>
+          {% for z in chat.categories %}<tr><td>{{ z.what }}</td><td class="num">{{ z.n }}</td></tr>{% endfor %}</table></div>
+        {% else %}<p class="muted">No searches in this window.</p>{% endif %}
+      </div>
+    </div>
+  {% endif %}
+</section>

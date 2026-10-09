@@ -334,31 +334,7 @@ def test_specials_hours_edits_route_through_kb_crud(client_staff):
     assert row.value == "online 30% — Tuesday"
 
 
-# ── Analytics top product asks (item 7) ────────────────────────────────────────
-@pytest.mark.django_db
-def test_analytics_top_product_asks(client_staff):
-    """Top asks = a real count over VoiceCall.suggested_skus (no fabrication, leak-safe)."""
-    from voice.models import Outcome, VoiceCall
-
-    VoiceCall.objects.create(
-        call_id="c1", store="yakima", outcome=Outcome.SUGGESTED, suggested_skus=["SKU-A", "SKU-B"]
-    )
-    VoiceCall.objects.create(
-        call_id="c2", store="yakima", outcome=Outcome.SUGGESTED, suggested_skus=["SKU-A"]
-    )
-    resp = client_staff.get(reverse("dash-analytics") + "?days=30")
-    assert resp.status_code == 200
-    content = resp.content.decode()
-    assert "Top product asks" in content
-    assert "SKU-A" in content  # the most-suggested SKU appears
-    # SKU-A appeared in 2 calls; the count is real
-    from dashboard.views import _top_product_asks
-
-    rows = _top_product_asks(VoiceCall.objects.all())
-    assert rows[0] == {"sku": "SKU-A", "n": 2}
-    assert {"sku": "SKU-B", "n": 1} in rows
-
-
+# ── Analytics (the full page is covered in test_analytics_page.py) ───────────
 @pytest.mark.django_db
 def test_analytics_by_store_breakdown(client_staff):
     from voice.models import Outcome, VoiceCall
@@ -369,46 +345,6 @@ def test_analytics_by_store_breakdown(client_staff):
     content = resp.content.decode()
     assert "By store" in content
     assert "yakima" in content and "pullman" in content
-
-
-@pytest.mark.django_db
-def test_analytics_combines_chatbot_summary_server_side(client_staff, settings, monkeypatch):
-    """The voice dashboard pulls chatbot analytics through the server-side Bearer seam."""
-
-    import requests
-
-    settings.HHT_BUDTENDER_BASE_URL = "https://budtender.internal"
-    settings.HHT_BACKEND_TOKEN = "secret-token"
-
-    calls = []
-
-    class Resp:
-        status_code = 200
-        content = b"{}"
-
-        def json(self):
-            return {
-                "unique_visitors": 7,
-                "chat": {"opens": 5, "user_messages_sent": 12, "recommendation_views": 3},
-                "conversions": {"shop_now_clicks": 2},
-                "menu_embed": {"product_views": 9},
-            }
-
-    def fake_post(url, **kwargs):
-        calls.append({"url": url, **kwargs})
-        return Resp()
-
-    monkeypatch.setattr(requests, "post", fake_post)
-
-    resp = client_staff.get(reverse("dash-analytics") + "?days=7")
-    assert resp.status_code == 200
-    assert calls[0]["url"] == "https://budtender.internal/api/v1/analytics/summary"
-    assert calls[0]["json"] == {"days": 7}
-    assert calls[0]["headers"]["Authorization"] == "Bearer secret-token"
-    content = resp.content.decode()
-    assert "Chatbot funnel" in content
-    assert "Unique visitors" in content
-    assert ">7<" in content
 
 
 @pytest.mark.django_db

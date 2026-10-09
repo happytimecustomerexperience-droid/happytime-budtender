@@ -1,0 +1,10 @@
+{# One breakdown of suggestions -> purchases. Inputs: title, first (column header), rows, subtotal (optional). #}
+<h3>{{ title }}</h3>
+{% if rows %}
+<div class="table-wrap"><table>
+  <tr><th>{{ first }}</th><th class="num">Suggested</th><th class="num">Exact</th><th class="num">Sibling</th><th class="num">Not bought</th><th class="num">Pending</th><th class="num">Unattrib.</th><th>Conversion</th></tr>
+  {% for r in rows %}<tr><td>{{ r.label }}</td><td class="num">{{ r.suggested }}</td><td class="num">{{ r.bought_exact }}</td><td class="num">{{ r.bought_sibling }}</td><td class="num">{{ r.not_bought }}</td><td class="num">{{ r.pending }}</td><td class="num">{{ r.unattributable }}</td>
+    <td>{% if r.has_rate %}<div class="rate" title="{{ r.rate }} of decided suggestions were bought"><div class="track"><i style="width:{{ r.bar }}%"></i></div><b>{{ r.rate }}</b></div>{% else %}<span class="muted" title="Nothing decided yet">-</span>{% endif %}</td></tr>{% endfor %}
+  {% if subtotal %}<tr class="subtotal"><td>{{ subtotal.label }}</td><td class="num">{{ subtotal.suggested }}</td><td class="num">{{ subtotal.bought_exact }}</td><td class="num">{{ subtotal.bought_sibling }}</td><td class="num">{{ subtotal.not_bought }}</td><td class="num">{{ subtotal.pending }}</td><td class="num">{{ subtotal.unattributable }}</td><td>{{ subtotal.rate }}</td></tr>{% endif %}
+</table></div>
+{% else %}<p class="muted">No rows.</p>{% endif %}

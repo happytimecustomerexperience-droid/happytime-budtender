@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from . import bulk_views, customer_conversations, customers_views, health, views
+from . import analytics_views, bulk_views, customer_conversations, customers_views, health, views
 from .playground import playground, playground_send
 
 urlpatterns = [
@@ -16,7 +16,7 @@ urlpatterns = [
     # agent test console — text / browser mic / real Vapi web call
     path("playground/", playground, name="dash-playground"),
     path("playground/send", playground_send, name="dash-playground-send"),
-    path("analytics/", views.analytics_dashboard, name="dash-analytics"),
+    path("analytics/", analytics_views.analytics_dashboard, name="dash-analytics"),
     path("analytics/chat/", views.chat_funnel, name="dash-chat-funnel"),
     path("analytics/chat/session/", views.chat_timeline, name="dash-chat-timeline"),
     # agents
