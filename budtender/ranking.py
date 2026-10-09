@@ -209,36 +209,62 @@ def size_label(unit_weight: float | None, potency_mg: float | None, category: st
     return ""
 
 
+_SIZE_WORDS = {
+    "gram": "1g", "a gram": "1g", "half gram": "0.5g", "half-gram": "0.5g", "eighth": "3.5g", "an eighth": "3.5g",
+    "1/8": "3.5g", "quarter": "7g", "a quarter": "7g", "1/4": "7g", "half ounce": "14g", "half oz": "14g",
+    "1/2 oz": "14g", "ounce": "28g", "an ounce": "28g", "oz": "28g", "zip": "28g", "single": "single",
+}
+_OPEN_SIZES = ("any", "stock-up", "disposable")
+
+
+def normalize_size(raw) -> str | None:
+    """A size as a customer, a chip or a model wrote it → the canonical value the sizes endpoint emits
+    ('5pk', 'single', '3.5g', '10mg', '20mg+'), or None when it is not a size we can read. Never a guess:
+    '5 pack' / '5-pack' / '5 ct' → '5pk'; 'an eighth' → '3.5g'; 'large' → None."""
+    if not isinstance(raw, str):
+        return None
+    s = " ".join(raw.strip().lower().split())
+    if s in _OPEN_SIZES or s == "20mg+":
+        return s
+    if s in _SIZE_WORDS:
+        return _SIZE_WORDS[s]
+    m = re.fullmatch(r"(\d{1,3}) ?-? ?(?:pk|pks|pack|packs|ct|count|pc|pcs|piece|pieces)", s)
+    if m:
+        return f"{int(m.group(1))}pk" if 1 <= int(m.group(1)) <= 100 else None
+    m = re.fullmatch(r"(\d+(?:\.\d+)?) ?(g|grams?|mg)", s)
+    if m:
+        return f"{float(m.group(1)):g}{'mg' if m.group(2) == 'mg' else 'g'}"
+    return None
+
+
 def _size_match(p: Product, size: str | None) -> bool:
     """Match a product to the requested size. Uses Dutchie's real unitWeight
     (grams) / effectivePotencyMg (dose) when present, falling back to a
-    name-substring match. Returns True (no opinion) when size is open-ended."""
-    if not size or size in ("any", "stock-up", "disposable"):
+    name-substring match. True (no opinion) only when size is open-ended; a size
+    we cannot read matches NOTHING, never everything (a '5 pack' chip once
+    returned 10-packs because an unread size meant "no filter")."""
+    if not size or size in _OPEN_SIZES:
         return True
-    # Pre-roll PACK sizes: 'single' (no pack marker) or 'Npk' (exact pack count).
+    size = normalize_size(size) or size
+    # PACK sizes: 'single' (no pack marker) or 'Npk' (exact pack count).
     if size == "single":
         return parse_pack_count(p.name) is None
-    if size.endswith("pk"):
-        try:
-            want = int(size[:-2])
-        except ValueError:
-            want = None
-        if want is not None:
-            return parse_pack_count(p.name) == want
-    tgt = _parse_size_target(size)
+    m = re.fullmatch(r"(\d{1,3})pk", size)
+    if m:
+        return parse_pack_count(p.name) == int(m.group(1))
+    tgt = _parse_size_target(size) if re.fullmatch(r"\d+(?:\.\d+)?(?:g|mg)\+?", size) else None
     if tgt:
         unit, val = tgt
         if unit == "g":
             eg = _effective_grams(p)
             return eg is not None and abs(eg - val) <= 0.3
-        if unit == "mg" and p.potency_mg:
+        if p.potency_mg:
             return float(p.potency_mg) >= 20 if val >= 20 else abs(float(p.potency_mg) - val) <= 2.5
-    # No structured field → fall back to matching size tokens in the name.
-    toks = _SIZE_SYNONYMS.get(size)
-    if not toks:
-        return True
-    hay = (p.name or "").lower()
-    return any(t in hay for t in toks)
+        # No stored dose → the dose written in the name, or no match.
+        toks = _SIZE_SYNONYMS.get(size) or (f"{val:g}mg", f"{val:g} mg")
+        hay = (p.name or "").lower()
+        return any(t in hay for t in toks)
+    return False
 
 
 # ── Granular product subtypes (rosin, gummies, lollipops, …) ─────────────────
@@ -476,8 +502,10 @@ def _slug_value(v) -> str:
 def effective_size(slots: dict) -> str | None:
     """`size`, else the `pack` slot as a size value: 5 / "5" / "5pk" -> "5pk", "single" -> "single"."""
     size = slots.get("size")
-    if isinstance(size, str) and size:
-        return size
+    if isinstance(size, str) and size.strip():
+        # Canonical when readable; an unreadable size is kept as sent so it matches nothing (fail
+        # closed) — dropping it would search every size, the "5 pack → 10-packs" bug.
+        return normalize_size(size) or size.strip()
     pack = slots.get("pack")
     if isinstance(pack, bool) or pack in (None, ""):
         return None
@@ -754,10 +782,10 @@ def rank_products(location: str, slots: dict, profile: CustomerProfile | None,
                       if (eg := _effective_grams(p)) is not None
                       and 0.5 * target_g <= eg <= 2.0 * target_g]
             nearby.sort(key=lambda p: (abs((_effective_grams(p) or 1e9) - target_g), -float(p.margin)))
-        elif size == "single" or size.endswith("pk"):
-            nearby = []   # a pack count is an exact choice ("5-pack" never fills with singles)
         else:
-            nearby = rest
+            # A pack count or a dose is an exact choice: "5-pack" never fills with 10-packs or singles,
+            # "10mg" never with 100mg. Only a gram weight borrows its nearest neighbour (above).
+            nearby = []
         if exact:
             candidates = exact
         elif nearby:
