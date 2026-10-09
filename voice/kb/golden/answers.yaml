@@ -637,7 +637,10 @@
   category: out-of-scope
   question_variants:
     - "what's the weather like today"
-  must_include: ["(?i)(not certain|can't help with that|team member|get a person|store|help you with|not something I)"]
+  # "I can't help with questions about the weather ... or get you over to the team" (live sim run 6) is the
+  # same honest decline + redirect; it must still never state a forecast.
+  must_include: ["(?i)(not certain|can't help with|team member|get a person|get you over to the team|store|help you with|not something I)"]
+  must_not_include: ["(?i)\\b(sunny|rain(ing|y)?|cloudy|degrees|forecast of)\\b"]
   channels: [text, playground, voice, web]
   source_of_truth: voice/tools/faq.py _FALLBACK (Numbers-Guard honest miss)
   expect_grounded: false

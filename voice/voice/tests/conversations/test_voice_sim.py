@@ -115,6 +115,7 @@ def test_concierge_carries_the_2026_10_09_audit_rules(seeded_kb):
     assert "call suggest_products FIRST with asked_price=true" in text and "Never list sizes from memory" in text
     assert "never name the holiday the caller mentioned" in text and "ZIP code included" in text
     assert "never ask 'how many' when they gave a number" in text
+    assert "including 'what pre-rolls do you have' (false)" in text and "Never say 'knowledge base'" in text
     assert "your reply has two parts, in the same turn" in text and S.HANDOFF.strip() in text
 
 
