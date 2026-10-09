@@ -331,7 +331,7 @@ def test_stage_phone_cart_pathway(fake_budtender):
         {"store": "yakima", "call_id": "call-1", "_caller_phone": "+15095551234"},
     )
     assert out["ok"] is True
-    assert "24.50" in out["spoken_summary"] or "24.5" in out["spoken_summary"]
+    assert "24 dollars and 50 cents" in out["spoken_summary"]  # spoken, never "$24.50"
     blob = json.dumps(out).lower()
     assert "cost" not in blob and "margin" not in blob
 

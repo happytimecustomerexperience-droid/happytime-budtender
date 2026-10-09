@@ -59,8 +59,9 @@ def test_stage_phone_cart_quotes_total_and_release(monkeypatch):
         ctx,
     )
 
-    assert "current staged estimate is $60.00" in quoted["spoken_summary"]
+    assert "current staged estimate is 60 dollars" in quoted["spoken_summary"]  # words, never "$60.00"
     assert "released the staged phone cart" in released["spoken_summary"]
+    assert "pc-1" not in released["spoken_summary"], "an internal token is never read to a caller"
     assert "draft_token" not in fake.upserts[0], "nothing staged yet on this call, so the arg is dropped"
     assert fake.releases[0]["draft_token"] == "pc-1", "the token this call's own staging returned"
 

@@ -107,7 +107,8 @@ def test_continuous_conversation_switches_product_specials_policy_cart_quote_rel
     assert specials["grounded"] is True and "special" in specials["answer"].lower()
     assert policy["grounded"] is True and "defective" in policy["answer"].lower()
     assert add["ok"] is True
-    assert "current staged estimate is $60.00" in quote["spoken_summary"]
+    assert "current staged estimate is 60 dollars" in quote["spoken_summary"]  # words, never "$60.00"
+    assert "$" not in quote["spoken_summary"] and "pc-real" not in release["spoken_summary"]
     assert release["draft"]["status"] == "released"
     assert fake.upserts[0]["call_id"] == "call-real-script"
     assert fake.upserts[0]["phone"] == "+15095551234"

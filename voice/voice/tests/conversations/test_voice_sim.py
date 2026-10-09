@@ -95,9 +95,22 @@ def test_only_the_concierge_gets_the_person_request_line(seeded_kb):
 
     concierge = system("concierge")
     assert S.HANDOFF.strip() in concierge and "ONLY for a caller who complained" in concierge
-    assert "ONLY for those four topics" in concierge
+    assert "the same topics text chat refuses), and nothing else" in concierge
     for role in ("entry_router", "budtender", "faq", "vendor", "escalation"):  # multi mode: unchanged
         assert S.HANDOFF.strip() not in system(role), role
+
+
+@pytest.mark.django_db
+def test_concierge_carries_the_2026_10_09_audit_rules(seeded_kb):
+    from voice import safety_copy as S
+    from voice.provision import build_assistant_payload
+
+    text = build_assistant_payload("concierge")[0]["model"]["messages"][0]["content"]
+    assert S.CRISIS.strip() in text  # text chat's crisis line, now on the phone too
+    assert "F) GETTING THE DETAILS RIGHT" in text and "category pre-roll, never flower" in text
+    assert "stage_phone_cart action=add_item" in text
+    assert "{callback_window}" not in text and "{store_name}" not in text  # the vendor promise is gone
+    assert "Speak the tool's spoken text, word for word" in text
 
 
 def _entry(**kw):

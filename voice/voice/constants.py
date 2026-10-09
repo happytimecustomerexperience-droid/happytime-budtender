@@ -327,7 +327,9 @@ TOOL_SPECS = {
             },
             "required": ["store", "reason", "summary"],
         },
-        "async": True,
+        # Synchronous: the agent must hear the tool's own `spoken` (FOLLOWUP_NOT_CONFIRMED when the
+        # alert did not go out). With async Vapi does not wait, so the agent promised a callback blind.
+        "async": False,
     },
     "notify_n8n": {
         "description": (
@@ -395,7 +397,7 @@ TOOL_SPECS = {
             },
             "required": ["store", "summary"],
         },
-        "async": True,
+        "async": False,  # same reason as notify_vendor_callback: speak what really happened
     },
     "remember_caller": {
         "description": (
