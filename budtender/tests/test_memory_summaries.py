@@ -143,6 +143,16 @@ class WriteTests(SummaryBase):
             self.assertEqual(memory_summary.summarize_session(sess.pk, ALICE_TURNS)["stored"], "none")
         self.assertEqual(g.calls, [])
 
+    def test_unverified_session_is_not_summarised_while_web_summaries_are_off(self):
+        sess = self.web(self.alice)
+        with FakeGemini({"t": ALICE_SUMMARY}) as g:
+            out = memory_summary.summarize_session(sess.pk, ALICE_TURNS)
+        self.assertEqual((out["stored"], out.get("reason")), ("none", "web_summaries_off"))
+        self.assertEqual(g.calls, [])  # nothing would read it: no paid model call
+        sess.refresh_from_db()
+        self.assertNotIn("summaries", sess.learned)
+
+    @override_settings(HHT_MEMORY_WEB_SUMMARIES=True)
     def test_unverified_summary_stays_on_the_session_and_is_wiped_with_it(self):
         sess = self.web(self.alice)
         with FakeGemini({"t": ALICE_SUMMARY}):

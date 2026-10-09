@@ -172,8 +172,13 @@ def summarize_session(session_id: int, turns: object = None, channel: str = "") 
     lock = f"mem-summary:{session_id}"
     try:
         session = ChatSession.objects.filter(pk=session_id).select_related("customer").first()
-        if session is None or identity.tier(session) == memory.ANONYMOUS or not enabled():
+        tier = identity.tier(session) if session is not None else memory.ANONYMOUS
+        if tier == memory.ANONYMOUS or not enabled():
             return {"ok": True, "stored": "none"}
+        # An unverified (typed website phone) summary is only ever read while the owner's
+        # HHT_MEMORY_WEB_SUMMARIES is on, so with it off the model call would be paid for and unread.
+        if tier == memory.UNVERIFIED and not memory.web_summaries_enabled():
+            return {"ok": True, "stored": "none", "reason": "web_summaries_off"}
         if not cache.add(lock, 1, LOCK_SECONDS):
             return {"ok": True, "stored": "none", "reason": "locked"}
         try:
