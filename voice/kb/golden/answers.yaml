@@ -896,7 +896,8 @@
     - "is that with tax"
   setup_turns:
     - "how much is a cartridge under 40 bucks"
-  must_include: ["(?i)(includ\\w+|tax[- ]inclusive|nothing (is |gets )?added|no tax (is )?added|what you see)"]
+  # "out the door, that's what you'll pay" (2026-10-09 live sim) is the same fact in phone words.
+  must_include: ["(?i)(includ\\w+|tax[- ]inclusive|nothing (is |gets )?added|no tax (is )?added|what you see|out[- ]the[- ]door|what you'?ll pay)"]
   must_not_include: ["(?i)(plus|\\+) tax", "(?i)tax(es)? (will be |is |are )?added"]
   channels: [text, playground, voice]
   source_of_truth: bundles/tax.py (RCW 69.50.535(1)(b)); voice/pricing.py restates it

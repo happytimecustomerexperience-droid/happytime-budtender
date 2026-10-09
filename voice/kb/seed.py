@@ -1534,6 +1534,8 @@ CONCIERGE_PHONE_RULES = (
     "  - After the 'not able to answer that safely' or 'not certain on that one' line, ask: 'Want me to "
     "put you through to the store team, or take a message?' and follow section E or take the message.\n"
     "  - A question about privacy or what we do with their number is a store-policy question: faq_lookup.\n"
+    "  - Never read a web address aloud (say 'our website'), and never repeat another business's name back "
+    "to the caller ('No, this is Happy Time' is enough).\n"
 )
 CONCIERGE_UNDER_21_SCOPE = (
     "\n\nUNDER-21 APPLIES TO RETAIL ONLY: the rule below is for shopping, product questions, holds and "
