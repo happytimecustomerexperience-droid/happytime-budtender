@@ -253,6 +253,11 @@ class VendorCallbackForm(forms.ModelForm):
 
 
 PHONE_HELP = "A full US number, e.g. (509) 555-1212. Saved as +15095551212 and matched exactly."
+# The `store` on an allowlist entry is read by nothing that routes a call (voice/vendor_allowlist.py).
+STORE_NOTE_HELP = (
+    "A note for you only: which store this vendor deals with. It does NOT restrict which store line "
+    "the vendor is sent to; a listed number rings the owner whichever store line it called."
+)
 
 
 class VendorAllowlistEntryForm(forms.ModelForm):
@@ -262,7 +267,7 @@ class VendorAllowlistEntryForm(forms.ModelForm):
     class Meta:
         model = VendorAllowlistEntry
         fields = ["name", "phone", "store", "note", "active"]
-        help_texts = {"phone": PHONE_HELP, "store": "A label only: which store this vendor serves."}
+        help_texts = {"phone": PHONE_HELP, "store": STORE_NOTE_HELP}
 
     def clean_phone(self) -> str:
         from voice.vendor_allowlist import normalize_us_e164

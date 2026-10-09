@@ -4,7 +4,9 @@
 <h1>Vendor allowlist</h1>
 <p class="muted" style="max-width:760px">A call from a number on this list skips the AI and rings the owner's phone directly.
 Every other vendor talks to the AI vendor agent: it asks them to hold, tries the store line, and takes a callback
-(<a href="{% url 'dash-vendor-queue' %}">Vendor callbacks</a>) if nobody answers. Only the exact number matches.</p>
+(<a href="{% url 'dash-vendor-queue' %}">Vendor callbacks</a>) if nobody answers. Only the exact number matches.
+The <strong>Store</strong> column is a note for you only: it does not restrict which store line a listed vendor
+is sent to (a listed number rings the owner whichever store line it called).</p>
 
 <div class="{% if routing.active %}note-green{% else %}note-red{% endif %}" data-testid="allowlist-status">
   {% if routing.active %}
@@ -42,7 +44,7 @@ Every other vendor talks to the AI vendor agent: it asks them to hold, tries the
   <table>
     <tr><th style="width:28px"><input type="checkbox" aria-label="Select all rows" style="width:auto"
         onclick="var on = this.checked; document.querySelectorAll('input[name=ids][form=bulk-form]').forEach(function (c) { c.checked = on })"></th>
-      <th>Name</th><th>Number</th><th>Store</th><th>Note</th><th>State</th><th>Last match</th><th>Matches</th><th></th></tr>
+      <th>Name</th><th>Number</th><th title="A note only: it does not restrict which store line the vendor is sent to">Store (note)</th><th>Note</th><th>State</th><th>Last match</th><th>Matches</th><th></th></tr>
     <tbody id="new-row-host"></tbody>
     <tbody>
     {% for e in entries %}{% include ds.row_template with r=e %}

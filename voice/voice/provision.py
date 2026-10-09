@@ -28,6 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from django.conf import settings
+from django.db import transaction
 
 from core.services import vapi
 from voice import caller, capabilities, consult
@@ -979,7 +980,22 @@ def _provisioned_members() -> dict[str, str]:
     return out
 
 
-def provision_all(
+def provision_all(**kwargs) -> ProvisionReport:
+    """``_provision_all``, and a DRY RUN (asked for, or auto when no ``VAPI_PRIVATE_KEY``) writes
+    NOTHING to the database. The dry run still chains its synthetic ``dryrun-…`` ids from step to
+    step (tool → assistant → squad → phone) so the plan reads whole, but they live in a transaction
+    that is rolled back: a stored one would feed the live call path an assistant id that does not
+    exist, and a stored hash would make the next real run read "nodrift". Covers every write path
+    (tools, files, assistants, squads, phone, per store), including any added later."""
+    if not (kwargs.get("dry_run") or not vapi.configured()):
+        return _provision_all(**kwargs)
+    with transaction.atomic():
+        report = _provision_all(**{**kwargs, "dry_run": True})
+        transaction.set_rollback(True)
+    return report
+
+
+def _provision_all(
     *,
     dry_run: bool = False,
     only: str | None = None,

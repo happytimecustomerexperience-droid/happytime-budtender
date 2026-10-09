@@ -197,3 +197,22 @@ def test_credentials_page_refuses_a_non_us_owner_phone():
     assert cred.validate("HHT_OWNER_PHONE", "+15095550111") is None
     assert cred.validate("HHT_OWNER_PHONE", "(509) 555-0111")  # must be written as E.164 there
     assert cred.validate("HHT_OWNER_PHONE", "+442079460000")
+
+
+@pytest.mark.django_db
+def test_the_store_field_is_documented_as_a_note_and_really_is_one(staff_client):
+    """``store`` is a label: the page, the form help and the bulk-sheet help say so, and a vendor
+    labelled for Pullman is routed exactly like one with no store (the matcher never sees it)."""
+    from dashboard.forms import STORE_NOTE_HELP, VendorAllowlistEntryForm
+    from dashboard.models import VendorAllowlistEntry
+    from voice import vendor_allowlist
+
+    assert "does NOT restrict which store line" in STORE_NOTE_HELP
+    assert VendorAllowlistEntryForm().fields["store"].help_text == STORE_NOTE_HELP
+    body = staff_client.get(reverse("dash-vendor-allowlist")).content.decode()
+    assert "does not restrict which store line a listed vendor" in body
+
+    labelled = VendorAllowlistEntry.objects.create(name="Acme", phone="+15095550142", store="pullman")
+    unlabelled = VendorAllowlistEntry.objects.create(name="Beta", phone="+15095550143", store="")
+    assert vendor_allowlist.evaluate(labelled.phone).route is True
+    assert vendor_allowlist.evaluate(unlabelled.phone).route is True

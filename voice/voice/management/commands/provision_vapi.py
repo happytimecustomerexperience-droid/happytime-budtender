@@ -167,7 +167,7 @@ class Command(BaseCommand):
                 label, number_id = provision.phone_number_target(store)
                 if number_id:
                     squad = VapiObject.objects.filter(kind="squad", name=provision.squad_name(store)).first()
-                    squad_id = provision.pinned_squad_id(store) or (squad.vapi_id if squad else "<squad id>")
+                    squad_id = provision.pinned_squad_id(store) or (squad.vapi_id if squad else "dryrun-squad")
                     payload = provision.phone_number_payload(label, squad_id)
                     blocks.append(self._block(f"PATCH /phone-number/{number_id}  ({label})", payload))
 

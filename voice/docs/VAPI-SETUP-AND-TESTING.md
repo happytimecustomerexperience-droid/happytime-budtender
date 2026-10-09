@@ -325,7 +325,9 @@ save. Live on the next call, and kept across restarts of `voice-web` (7.1); only
   hold and your phone rings. You hear "Hi, it's the Happy Time phone line. Acme Distribution is
   calling Happy Time, about <the entry's note>. Do you want to take the call?" Say yes to be
   connected; say no (or let it ring out) and the vendor hears you are not available and is asked
-  for a message, which lands on **Vendor** callbacks. Only exact numbers match. With
+  for a message, which lands on **Vendor** callbacks. Only exact numbers match. The **Store** column
+  on an entry is a note for you only: it does not restrict which store line the vendor is sent to (a
+  listed number rings you whichever store line it called). With
   `HHT_TRANSFER_CONSULT=0` it is the old direct forward ("Connecting you now, one moment.").
 * Anyone else who says they are a vendor talks to the AI vendor agent: it asks them to hold, tries
   the store line, and if nobody answers takes a callback (it appears on **Vendor** callbacks).

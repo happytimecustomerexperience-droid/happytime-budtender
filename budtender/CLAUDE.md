@@ -41,11 +41,16 @@ Postgres host `db` only resolves inside docker, so run tests on in-memory sqlite
   phone that names someone other than the session's customer ranks for the caller and writes no
   picks into that session (`_own_session`). `session-context` is also capped per `X-HHT-Client-IP`.
   Analytics `phone_hash` is an HMAC under SECRET_KEY, not a bare sha256.
+- **Menu reads are capped per shopper** (`_menu_throttled`, 180/min per `X-HHT-Client-IP`, one bucket for search,
+  facets/categories/specify-more and similar; website token only, no header = uncapped, backend token never).
+  **Under-21 carries** (`age_gate.py`): a first-person "I'm 19" in any earlier user turn of the session makes a
+  later SHOPPING ask in `ChatReplyView` get the fixed decline (`source: guard`); general questions still reach the brain.
 - **Conversations are kept forever.** `ChatSession`/`ChatMessage`/`SuggestedProduct`/`AnalyticsEvent`/`Feedback`
   are Postgres rows (named volume `pgdata`, nightly `db-backup` dump). `PersistView` is append-only; no job
   deletes them; `reset_analytics --yes` also needs `HHT_ALLOW_ANALYTICS_RESET=1`; `purge_pii` never touches
   them. Only `prune_site_noise` deletes (web-vitals/scroll beacons older than 90 days). Redis holds only
-  disposable state (caps, caches, broker, the ranking-weight override) and runs with AOF.
+  disposable state (caps, caches, broker) and runs with AOF. The owner's ranking-weight override is the
+  `Setting(key="ranking_weights")` row (audited `ranking_weights.set`); the cache is only a copy of it.
 - `TrackView` stores only `analytics.EVENT_WHITELIST` names (contract events + names the site sends today);
   add a new event name there. `analytics/funnel` and `analytics/session` (backend token only) feed the
   voice dashboard's "Chat funnel" pages.

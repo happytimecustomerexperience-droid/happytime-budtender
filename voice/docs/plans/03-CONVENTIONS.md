@@ -78,7 +78,6 @@ Every var with a description + example/placeholder. Source files: `swedish-bot/.
 | `VAPI_SQUAD_ID` | Id of the provisioned Squad (written back by the provision script). | `(set by provision_vapi.py)` |
 | `VAPI_PHONE_NUMBER_ID` | Inbound number id fronting the Squad. **O-4 placeholder.** | `(owner-supplied)` |
 | `VAPI_VOICE_ID` | Cartesia sonic-3 voice id (Koptza). | `a3520a8f-226a-428d-9fcd-b0a4711a6829` |
-| `VAPI_ASSISTANT_MODEL` | Single intentional assistant model (ADR-010). | `gpt-4.1-mini` |
 
 ### 3.4 budtender microservice (`HHT_*`)
 | Var | Description | Example / placeholder |

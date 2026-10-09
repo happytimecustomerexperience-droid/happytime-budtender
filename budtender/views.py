@@ -12,6 +12,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.cache import cache
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework.response import Response
@@ -20,11 +21,11 @@ from rest_framework.views import APIView
 from bundles import caps
 from pos_core.ratelimit import _client_ip
 
-from .models import (STORES, AnalyticsEvent, ChatMessage, ChatSession,
+from .models import (STORES, AdminAudit, AnalyticsEvent, ChatMessage, ChatSession,
                      CustomerProfile, Feedback, PhoneCartDraft, Product,
-                     SuggestedProduct)
+                     Setting, SuggestedProduct)
 from .pairing import pair_for
-from . import analytics, facets, identity, lab_enrich, live_stock, memory, suggestions
+from . import age_gate, analytics, facets, identity, lab_enrich, live_stock, memory, suggestions
 from .auth import is_website
 from .fire import fire
 from .gemini_chat import (fetch_persona, generate_chat_reply_with_source,
@@ -70,6 +71,8 @@ _STORE_ALIASES = {"mt-vernon": "mount-vernon", "mt vernon": "mount-vernon", "mou
 _PHONEISH_RE = re.compile(r"(?<!\w)(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})(?!\w)")
 _PII_PROP_KEYS = {"phone", "phone_number", "email", "contact_email"}
 _RANKING_WEIGHTS_CACHE_KEY = "budtender:ranking_weights:v1"
+_RANKING_WEIGHTS_SETTING_KEY = "ranking_weights"   # the Setting row that is the truth; the cache is a copy
+_RANKING_WEIGHTS_CACHE_TTL = 300   # a worker with its own cache (LocMem) converges on the row within this
 
 
 def _safe_location(value, default: str = "yakima") -> str:
@@ -659,10 +662,15 @@ class ChatReplyView(APIView):
         )
 
         history = list(session.messages.order_by("ts", "id"))
-        reply, source, brain_intent = generate_chat_reply_with_source(history, store=session.location_slug)
-        reply = _safe_chat_text(reply)
-        if _recites_memory(reply, session):
-            reply, source = _NEUTRAL_REPLY, "guard"
+        if age_gate.must_decline(history, raw_message):
+            # Said "I'm 19" on an earlier turn of this session and now asks to shop: the brain is
+            # never asked (it sees one message at a time) - the fixed decline, no data requested.
+            reply, source, brain_intent = age_gate.UNDER_21_DECLINE, "guard", ""
+        else:
+            reply, source, brain_intent = generate_chat_reply_with_source(history, store=session.location_slug)
+            reply = _safe_chat_text(reply)
+            if _recites_memory(reply, session):
+                reply, source = _NEUTRAL_REPLY, "guard"
 
         # Classify the turn — trust the brain's own classification when it answered,
         # so the offline regex in intents.py is only ever the fallback path.
@@ -833,8 +841,32 @@ class CustomerDetailView(APIView):
         return Response({"ok": True, "customer": customer_detail(profile)})
 
 
+# Menu reads (search, facets/categories/specify-more, similar) cost DB + ranker time, not a brain call,
+# so the cap is far looser than a chat turn (12/session/min): 180 requests a minute per shopper IP is
+# 3 a second sustained — more than paging results and tapping facet chips ever produces. Keyed on the
+# IP the website vouches for (X-HHT-Client-IP, like session-context), never the socket address (that is
+# the website's proxy, one bucket for everyone). Website token only: the voice service (backend token)
+# has no client IP and is never capped. No/invalid header = no per-visitor key = uncapped, the same
+# convention as session-context's per-IP bucket; a cache error propagates like chat's `caps.take`.
+MENU_REQUESTS_PER_IP = 180
+MENU_WINDOW = 60
+
+
+def _menu_throttled(request):
+    """A 429 Response when this website shopper is over the menu cap, else None."""
+    if not is_website(request):
+        return None
+    visitor = _vouched_visitor_ip(request)
+    if visitor and not caps.take("menu-ip", MENU_REQUESTS_PER_IP, MENU_WINDOW, visitor):
+        return Response({"ok": False, "error": "rate_limited"}, status=429,
+                        headers={"Retry-After": str(MENU_WINDOW)})
+    return None
+
+
 class ProductSearchView(APIView):
     def post(self, request):
+        if (throttled := _menu_throttled(request)) is not None:
+            return throttled
         slots = _bounded_slots(request.data.get("slots"))
         limit = _bounded_int(request.data.get("limit"), default=5, lo=1, hi=SEARCH_CAP)
         # Search v2 paging: "show 5 more" re-sends the SAME slots with offset += 5. The ranking is
@@ -858,7 +890,7 @@ class ProductSearchView(APIView):
         # alone and read the store's margin order off the results — so that token gets the owner's.
         ranking_weights = None if is_website(request) else request.data.get("ranking_weights")
         if ranking_weights is None:
-            ranking_weights = cache.get(_RANKING_WEIGHTS_CACHE_KEY)
+            ranking_weights = _owner_ranking_weights()
 
         # `labs` is the request's one memo of batch labs: the ranker fills it (one bulk read for
         # the picks, plus the few null-THC candidates when sorting by potency) and the serializer
@@ -949,17 +981,38 @@ class SuggestionsShownView(APIView):
         return Response({"ok": True, "recorded": len(created)})
 
 
+def _owner_ranking_weights() -> dict | None:
+    """The owner's ranking-weights override, or None when never set. Read-through: the cache first,
+    else the ``Setting`` row (re-cached). An absent row is not cached, so a later save is seen at once."""
+    cached = cache.get(_RANKING_WEIGHTS_CACHE_KEY)
+    if cached is not None:
+        return cached
+    row = Setting.objects.filter(key=_RANKING_WEIGHTS_SETTING_KEY).first()
+    if row is None or not row.value:
+        return None
+    cache.set(_RANKING_WEIGHTS_CACHE_KEY, row.value, _RANKING_WEIGHTS_CACHE_TTL)
+    return row.value
+
+
 class AdminRankingWeightsView(APIView):
     """Dashboard admin hook: accept owner ranking levers from the voice dashboard.
 
-    Bearer auth is still the global service-token gate. Stored in cache only; use
-    env/DB config if multiple independent budtender processes need distinct values.
+    Bearer auth is still the global service-token gate. Stored in the ``Setting`` table (survives a
+    restart or cache eviction), served through the cache, audited in ``AdminAudit`` as
+    ``ranking_weights.set`` with the key names only (never the values).
     """
 
     def post(self, request):
-        applied = _clean_ranking_weights(request.data or {})
-        # ponytail: cache-backed override; move to a model if multi-process admin edits need audit history.
-        cache.set(_RANKING_WEIGHTS_CACHE_KEY, applied, None)
+        data = request.data if isinstance(request.data, dict) else {}
+        applied = _clean_ranking_weights(data)
+        with transaction.atomic():
+            _, created = Setting.objects.update_or_create(
+                key=_RANKING_WEIGHTS_SETTING_KEY, defaults={"value": applied})
+            AdminAudit.objects.create(
+                actor=str(data.get("actor") or "dashboard")[:128], action="ranking_weights.set",
+                target=_RANKING_WEIGHTS_SETTING_KEY, before={"had_override": not created},
+                after={"keys": sorted(applied)})
+        cache.set(_RANKING_WEIGHTS_CACHE_KEY, applied, _RANKING_WEIGHTS_CACHE_TTL)
         return Response({"ok": True, "applied": applied})
 
 
@@ -1072,6 +1125,8 @@ class CategoriesView(APIView):
     website_ok = True
 
     def post(self, request):
+        if (throttled := _menu_throttled(request)) is not None:
+            return throttled
         location, slots = _facet_request(request)
         return Response(facets.category_options(location, slots))
 
@@ -1086,6 +1141,8 @@ class FacetsView(APIView):
     website_ok = True
 
     def post(self, request):
+        if (throttled := _menu_throttled(request)) is not None:
+            return throttled
         location, slots = _facet_request(request)
         data = request.data if isinstance(request.data, dict) else {}
         name = data.get("facet") if request.method != "GET" else request.query_params.get("facet")
@@ -1103,6 +1160,8 @@ class SpecifyMoreView(APIView):
     website_ok = True
 
     def post(self, request):
+        if (throttled := _menu_throttled(request)) is not None:
+            return throttled
         location, slots = _facet_request(request)
         return Response(facets.specify_more(location, slots))
 
@@ -1123,6 +1182,8 @@ class SimilarView(APIView):
     def post(self, request):
         from .product_similarity import similar_products
 
+        if (throttled := _menu_throttled(request)) is not None:
+            return throttled
         data = request.data if isinstance(request.data, dict) else {}
         slots = _bounded_slots(data.get("slots"))
         location = _safe_location(data.get("store") or data.get("location") or slots.get("store"))

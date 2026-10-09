@@ -48,6 +48,7 @@ from django.db.models import ProtectedError, Q
 
 from dashboard.forms import (
     KB_FORMS,
+    STORE_NOTE_HELP,
     BlogDocForm,
     EducationDocForm,
     FAQEntryForm,
@@ -445,7 +446,7 @@ _register(Dataset(
     key="vendor-allowlist", label="Vendor allowlist", form_cls=VendorAllowlistEntryForm,
     model=VendorAllowlistEntry, key_fields=("phone",), phone_key=True,
     help={"phone": "A full US number. (509) 555-1212 and +15095551212 both work; this is the key.",
-          "store": "A label only: which store the vendor serves (blank, yakima, mount-vernon or pullman).",
+          "store": STORE_NOTE_HELP + " (blank, yakima, mount-vernon or pullman)",
           "active": "yes = this number rings the owner; no = kept but ignored."},
     examples=(
         {"name": "Example Distribution", "phone": "(509) 555-0100", "store": "", "note": "rep: Sam",
