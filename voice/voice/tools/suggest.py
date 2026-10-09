@@ -541,9 +541,16 @@ def handle_suggest_products(args: dict, ctx: dict) -> dict:
 
     if gated and picks:
         options = _size_options(results)  # every real size the search found, not just the three shown
+        # Like text chat (chat.py, owner 2026-10-09 "match the chatbot"): only a PRICE ask leads with the
+        # size question; any other ask hears about the picks, just without a price.
+        # Opt-in: only an explicit asked_price=false (the concierge) skips the question; a caller that
+        # does not send the flag (multi-mode budtender, older prompts) keeps the size-first behaviour.
+        asks_price = args.get("asked_price") is not False or args.get("sort_by") == "price_asc" or (
+            isinstance(args.get("price_max"), (int, float)) and args.get("sort_by") != "potency")
+        question = size_question(options)
         return {
-            "picks": picks, "needs_size": True, "size_options": options,
-            "spoken_summary": size_question(options),
+            "picks": picks, "needs_size": True, "size_options": options, "size_question": question,
+            "spoken_summary": question if asks_price else _spoken_summary(picks),
         }
     return {"picks": picks, "spoken_summary": _spoken_summary(picks)}
 

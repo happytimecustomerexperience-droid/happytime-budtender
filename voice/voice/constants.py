@@ -201,6 +201,12 @@ TOOL_SPECS = {
                 # THE gate on every price (suggest.py): a size-required category searched with NO size
                 # carries no price at all. A price_max ceiling alone does not stand in for it.
                 "size": {"type": "string"},
+                # Did the caller ask a price ("how much", "what do they run")? With no size, only then is
+                # the answer the size question; otherwise the picks are named without a price (as chat).
+                "asked_price": {
+                    "type": "boolean",
+                    "description": "true when the caller asked a price or how much something costs.",
+                },
                 "price_tier": {"type": "string", "enum": ["value", "mid", "top"]},
                 "price_min": {"type": "number"},
                 "price_max": {"type": "number"},

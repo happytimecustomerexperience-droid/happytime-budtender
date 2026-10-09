@@ -110,6 +110,27 @@ def test_no_price_key_survives_without_a_size_for_every_size_required_category(f
 
 
 @pytest.mark.parametrize("category", sorted(C.SIZE_REQUIRED_CATEGORIES))
+def test_a_stock_ask_names_the_picks_without_a_price_or_the_size_question(fake_bt, category):
+    """"Match the chatbot" (owner 2026-10-09): asked_price=false -> the picks, no price, no size question
+    (text chat does the same for any ask that is not a price ask). The gate itself is unchanged."""
+    out = suggest.handle_suggest_products({"store": "yakima", "category": category, "asked_price": False},
+                                          dict(CTX))
+    assert out["needs_size"] is True and out["size_options"] == ["1g", "3.5g", "28g"]
+    assert not suggest.is_size_question(out["spoken_summary"])
+    assert out["spoken_summary"].startswith("My top pick is")
+    assert out["size_question"].startswith("Prices depend on the size")  # still there for a later price ask
+    _assert_no_price(out)
+
+
+@pytest.mark.parametrize("extra", [{}, {"asked_price": True}, {"asked_price": False, "price_max": 40},
+                                   {"asked_price": False, "sort_by": "price_asc"}])
+def test_a_price_ask_or_a_caller_that_does_not_say_still_gets_the_size_question(fake_bt, extra):
+    out = suggest.handle_suggest_products({"store": "yakima", "category": "flower", **extra}, dict(CTX))
+    assert suggest.is_size_question(out["spoken_summary"])
+    _assert_no_price(out)
+
+
+@pytest.mark.parametrize("category", sorted(C.SIZE_REQUIRED_CATEGORIES))
 def test_with_a_size_nothing_changes(fake_bt, category):
     out = suggest.handle_suggest_products({"store": "yakima", "category": category, "size": "3.5g"}, dict(CTX))
 

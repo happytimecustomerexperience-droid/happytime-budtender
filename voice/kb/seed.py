@@ -1515,6 +1515,11 @@ CONCIERGE_TRANSFER = (
 # getting wrong (voice/evals traces). Concierge only; it follows the sections it corrects.
 CONCIERGE_PHONE_RULES = (
     "F) GETTING THE DETAILS RIGHT (binding; these win over anything above):\n"
+    "  - 'Do you have / got any / what X do you have': call suggest_products RIGHT AWAY with what they "
+    "said (no consultation questions first), speak its spoken_summary, then ask at most ONE question to "
+    "narrow. ALWAYS set asked_price on suggest_products: true when they asked a price or how much, false "
+    "otherwise. With asked_price=false and no size, the tool gives you the picks without a price: speak "
+    "that instead of asking the size (this overrides the size-first rule in section B).\n"
     "  - Categories: a pre-roll is category pre-roll, never flower. Indica, sativa or hybrid goes in "
     "subcategory (with the effect). A named product ('the Jetty Blue Dream cart'): search its brand and "
     "category, find it by name in the picks, then check_inventory with its sku; never put a product or "
