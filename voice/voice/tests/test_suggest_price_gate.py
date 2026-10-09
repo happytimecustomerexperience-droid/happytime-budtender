@@ -199,7 +199,7 @@ def test_a_shelf_with_no_stated_sizes_asks_the_open_question(fake_bt):
     (["1g", "3.5g", "7g", "14g", "28g"],
      "are you thinking a gram, an eighth, a quarter, a half ounce, or an ounce?"),
     (["2g", "10mg"], "are you thinking 2 grams or 10 milligrams?"),
-    (["5pk"], "are you thinking 5pk?"),
+    (["5pk"], "are you thinking a 5-pack?"),  # spoken, never "five P K"
 ])
 def test_the_size_question_is_built_from_the_options_only(options, said):
     assert suggest.size_question(options) == f"Prices depend on the size — {said}"

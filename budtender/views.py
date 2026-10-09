@@ -522,6 +522,13 @@ def _session_customer(request, session: ChatSession | None) -> CustomerProfile |
     return identity.trusted(identity.follow(session.customer))
 
 
+def _live_rows(location: str):
+    """``p -> live stock row or None``: the card's price/stock come from the same sales-floor pull the
+    ranker gated on (a card printed the table price while the budget filter used the live one)."""
+    live = live_stock.stock_map(location)
+    return lambda p: live.get(p.sku, p.product_id) if live.usable else None
+
+
 def _search_identity(request, location: str):
     """``(session, profile, caller)`` for a search-shaped request: the one identity rule that search and
     ``suggestions/shown`` share."""
@@ -879,8 +886,9 @@ class ProductSearchView(APIView):
         # One bulk read of the stored product info; whatever lab/info is missing or stale is handed to
         # ONE deduped warm task for the next viewer. The request itself never calls Dutchie.
         labs, details = lab_enrich.for_picks(location, [p for p, _ in ranked], labs)
+        row = _live_rows(location)
         results = [public_product(p, rank=offset + i + 1, why_this=why, lab=labs.get(p.batch_id),
-                                  info=details.get(p.product_id))
+                                  info=details.get(p.product_id), live=row(p))
                    for i, (p, why) in enumerate(ranked)]
 
         # Every suggestion is kept with its full card (docs/contracts/suggestion-analytics-v1.md): a
@@ -920,6 +928,7 @@ class SuggestionsShownView(APIView):
         location = _safe_location(request.data.get("location"))
         session, profile, caller = _search_identity(request, location)
         by_sku = {p.sku: p for p in Product.objects.filter(location_slug=location, sku__in=[s for s in skus if s])}
+        row = _live_rows(location)
         shown = []
         for i, (pick, sku) in enumerate(zip(picks, skus)):
             product = by_sku.get(sku)
@@ -927,7 +936,7 @@ class SuggestionsShownView(APIView):
                 continue
             rank = _bounded_int(pick.get("rank"), default=i + 1, lo=1, hi=SEARCH_CAP)
             why = pick.get("why_this") if isinstance(pick.get("why_this"), str) else None
-            shown.append((product, public_product(product, rank=rank, why_this=why)))
+            shown.append((product, public_product(product, rank=rank, why_this=why, live=row(product))))
         source = request.data.get("source")
         created = []
         if shown and (session or profile is not None or suggestions.clean_source(source)):
@@ -1128,8 +1137,9 @@ class SimilarView(APIView):
         ranked = similar_products(location, anchor, slots=slots, labs=labs, limit=SEARCH_CAP)
         page = ranked[offset:offset + limit]
         labs, details = lab_enrich.for_picks(location, [p for p, _ in page], labs)
+        row = _live_rows(location)
         results = [public_product(p, rank=offset + i + 1, why_this=why, lab=labs.get(p.batch_id),
-                                  info=details.get(p.product_id))
+                                  info=details.get(p.product_id), live=row(p))
                    for i, (p, why) in enumerate(page)]
         # Find-similar picks are suggestions too (suggestion-analytics-v1): kept for the visitor's
         # session (an unknown token in the minted shape starts one, as search does) or when labelled.
@@ -1407,7 +1417,8 @@ class PairingView(APIView):
             isinstance(token, str) and token.strip()) else None
         session = _own_session(session, profile)  # a caller's pairing never lands in another person's session
         labs, details = lab_enrich.for_picks(location, [pair])
-        card = public_product(pair, lab=labs.get(pair.batch_id), info=details.get(pair.product_id))
+        card = public_product(pair, lab=labs.get(pair.batch_id), info=details.get(pair.product_id),
+                              live=_live_rows(location)(pair))
         source = request.data.get("source")
         suggestions.record_safely(
             session=session, customer=profile or _session_customer(request, session), location=location,

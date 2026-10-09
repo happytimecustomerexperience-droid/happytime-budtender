@@ -10,7 +10,7 @@ from decimal import Decimal
 from . import lab_enrich, product_detail
 from .models import Product
 from .new_drops import cached_coa, menu_slug
-from .ranking import _effective_grams
+from .ranking import _effective_grams, parse_pack_count, size_dimension
 
 # Categories whose unit_weight is a real per-unit gram weight. Everything else (edibles, beverages,
 # tinctures, topicals, capsules, mints...) has no trustworthy per-unit figure: ranking.py itself calls
@@ -34,6 +34,12 @@ def exact_size(p: Product) -> str | None:
     "1g" and edible doses to 5/10/20mg buckets, which is right for filtering and wrong on a card). The
     gram figure is the one the size filter trusts: a real weight in the name beats a mis-synced
     unit_weight. None when the category has no per-unit gram weight or none is on file."""
+    # A pack is shown as the pack ("5pk"): the card printed the total grams (pre-rolls) or nothing
+    # (edibles) and hid the 5-pack/10-pack difference the customer chose on (2026-10-09). A single
+    # pre-roll keeps its weight.
+    n = parse_pack_count(p.name) if (size_dimension(p.category) == "pack" or p.category == "edibles") else None
+    if n:
+        return f"{n}pk"
     if p.category not in _GRAM_CATEGORIES:
         return None
     grams = _effective_grams(p)

@@ -62,3 +62,9 @@ def test_nothing_found_reports_nothing(fake_bt):
     fb = fake_bt([])
     out = suggest.handle_suggest_products({"store": "yakima", "category": "flower"}, {"call_id": ""})
     assert out["picks"] == [] and fb.shown == []
+
+
+def test_pack_sizes_are_spoken_as_words():
+    """budtender cards state packs as "5pk" (2026-10-09): the phone says "a 5-pack", never "five P K"."""
+    assert [suggest._size_phrase(s) for s in ("5pk", "10pk", "single", "3.5g")] == [
+        "a 5-pack", "a 10-pack", "a single", "an eighth"]

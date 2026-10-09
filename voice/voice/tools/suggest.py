@@ -290,6 +290,11 @@ def needs_size(args: dict) -> bool:
 def _size_phrase(size: str) -> str:
     if size in _SIZE_SPOKEN:
         return _SIZE_SPOKEN[size]
+    pack = re.fullmatch(r"(\d{1,3})pk", size)
+    if pack:  # budtender cards state packs as "5pk" (2026-10-09); never read "five P K" aloud
+        return f"a {pack[1]}-pack"
+    if size == "single":
+        return "a single"
     match = _SIZE_RE.fullmatch(size)
     return f"{match[1]} {'grams' if match[2] == 'g' else 'milligrams'}" if match else size
 

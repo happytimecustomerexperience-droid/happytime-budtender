@@ -595,7 +595,9 @@ def price_window(slots: dict) -> tuple[float, float, bool]:
         hi = _num(slots.get("price_max"), 0, 1e9) or 1e9   # 0 / missing = open-ended, as it always was
     else:
         lo, hi = price_tier_bounds(slots.get("price_tier"))
-    return float(lo), float(hi), (slots.get("price_tier") == "top") or (lo >= 100)
+    # "$100 & up" (no ceiling) is premium; "$100–$150" is a bounded range like any other and stays a hard
+    # gate (it used to skip the gate and return $200 items, 2026-10-09 audit).
+    return float(lo), float(hi), (slots.get("price_tier") == "top") or (lo >= 100 and hi >= 1e9)
 
 
 # slot groups `eligible(ignore=...)` can leave out (a facet ignores the step it is asking about)
