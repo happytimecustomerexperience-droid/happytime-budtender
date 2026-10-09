@@ -169,6 +169,22 @@ docker compose ps
 
 For every task: add tests first or alongside, keep suites green, update `voice/docs/VAPI-SETUP-AND-TESTING.md` if the owner-visible behaviour changes, commit, push, report.
 
+**STATUS 2026-10-08 (local agent, this branch at 8da7848; website branch at 1630740).** Suites: root 984 passed,
+voice 2398 passed / 2 xfailed, migrations clean, ruff clean (root: the 6 known). Nothing deployed, nothing merged.
+- T1: NOT done live (needs the section 5 deploy). Done offline: the voice simulator now runs the provisioned
+  concierge (`eval_answers --live --channel voice --trace X`); 3 owner-approved real-Gemini runs: 0 calls (creds) /
+  66/73 / 68/73. Fixed from them: "real person" got the refund apology; a transport question got the
+  can't-answer-safely line; cannabis basics refused as medical. 8da7848 is not yet re-run live.
+- T2 bulk/CSV/inline edit: done (9cf71a4). T3 customers page: done (84d0144; spend-in-range NOT possible, the export
+  has no per-order history). T4 conversations + summaries + clear-memory button: done (7c21b02, name-match cap fix
+  8ca4123). T5 analytics: done (f207a97, buyer links f561717). T7: done (50fa601).
+- T6: phone records only the spoken picks via new `suggestions/shown` (96ba03d; the "limit 3" idea would have broken
+  dedupe); website sends source chat|questionnaire (1630740). OPEN: find-similar (`/api/catalog/similar`) records
+  nothing (20-item pool, no source) — moving it to budtender `products/similar` is a product call.
+- T9: only the unverified-web-summary Gemini skip (bc0fe19). T8, the rest of T9, T10: not started.
+- Owner questions added: should "clear memory" also delete the dashboard's AI summaries (it doesn't); the pairing
+  tool records a pairing even when the phone stays silent (same over-count class as T6).
+
 ### T1. (P0) Re-test the phone line after deploy and fix what the real calls show
 The owner's first live test was "dog shit": the entry agent said "let me get a member that knows" and then went silent, routing was unreliable, answers felt made up. The single-agent redesign was built to remove handoffs but was never heard. After section 5, make the test calls and for each defect: read the transcript, find whether it is prompt (`kb/seed.py` concierge sections), tool (`voice/voice/tools/*`), data (KB rows) or Vapi config, fix, re-publish through `provision_vapi` (never edit the live Vapi assistant by hand). Ask the owner for a transcript/call id of any "made-up answer": without it nothing can be diagnosed. Keep the banned-phrase tests (no "member/specialist/someone who knows/transferring you to our budtender") green.
 
