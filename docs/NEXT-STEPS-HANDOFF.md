@@ -189,6 +189,15 @@ voice 2398 passed / 2 xfailed, migrations clean, ruff clean (root: the 6 known).
   longer becomes price filters; order link uses the searched store; show-more resends excludes; pre-rolls are a category.
   NOT re-run live after adc5c1c (needs approval, ~$0.70). Browser e2e only partly run. Open product calls: find-similar
   records nothing; "Best match" label on the margin pick; Dutchie fallback ignores most slots.
+- FINAL 2026-10-09 (backend 0958763+, website 1c46a9f): live sim run 6 (full) = 72/75, 0 errors; run-6 misses fixed after
+  (not re-run). Also done: server-side menu rate caps (180/min/visitor IP), under-21 carry in the website chat, ranking
+  weights persisted in Setting, dry-run provisioning writes nothing (rolled back), website `next` 16.4.0 (Vercel previews
+  built OK; local `next build` cannot finish on the 16 GB dev box), every /api/chat response private+no-store, chat
+  bubbles masked in PostHog, e2e suite run to completion (only events-calendar red: needs a live third-party webhook).
+  STILL OPEN (owner/VPS): section 5 deploy + 13 real calls; compose/Redis/Traefik/harden-vps hardening (not testable
+  offline); D1-D8; find-similar records nothing; "Best match" label; analytics/summary is uncapped for the website token
+  (a Python loop over up to 365 days of events); Dutchie outage fallback ignores most slots; remaining 8 npm audit items
+  need the tailwind major bump.
 - Owner questions added: should "clear memory" also delete the dashboard's AI summaries (it doesn't); the pairing
   tool records a pairing even when the phone stays silent (same over-count class as T6).
 
